@@ -11,6 +11,12 @@ export interface Card {
     manaCost?: string;
     type?: string;
     text?: string;
+    imageUrl?: string;
+    price?: number;
+    priceHistory?: {
+        date: string;
+        price: number;
+    }[];
 }
 
 class DatabaseService {

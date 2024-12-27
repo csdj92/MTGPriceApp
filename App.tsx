@@ -6,10 +6,15 @@
  */
 
 import React from 'react';
-import StartScreen from './src/screens/StartScreen';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AppNavigator from './src/navigation/AppNavigator';
 
-function App(): React.JSX.Element {
-  return <StartScreen />;
-}
+const App = () => {
+  return (
+    <SafeAreaProvider>
+      <AppNavigator />
+    </SafeAreaProvider>
+  );
+};
 
 export default App;

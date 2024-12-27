@@ -20,6 +20,7 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        vectorDrawables.useSupportLibrary = true
     }
 
     signingConfigs {
@@ -54,4 +55,12 @@ dependencies {
     } else {
         implementation "org.webkit:android-jsc:+"
     }
+
+    implementation project(':react-native-vector-icons')
 }
+
+project.ext.vectoricons = [
+    iconFontNames: [ 'MaterialCommunityIcons.ttf' ]
+]
+
+apply from: "../../node_modules/react-native-vector-icons/fonts.gradle"

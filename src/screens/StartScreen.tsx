@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
-import { databaseService, Card } from '../services/DatabaseService';
+import { scryfallService, ExtendedCard } from '../services/ScryfallService';
 import CardList from '../components/CardList';
 
 const StartScreen = () => {
     const [isLoading, setIsLoading] = useState(false);
-    const [cards, setCards] = useState<Card[]>([]);
+    const [cards, setCards] = useState<ExtendedCard[]>([]);
     const [showList, setShowList] = useState(false);
 
     const fetchCards = async () => {
         setIsLoading(true);
         try {
             console.log('Starting to fetch cards...');
-            const fetchedCards = await databaseService.getFirst100Cards();
+            const fetchedCards = await scryfallService.searchCards('set:fdn');
             console.log('Fetched cards:', fetchedCards);
             setCards(fetchedCards);
             setShowList(true);
