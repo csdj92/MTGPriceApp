@@ -1,6 +1,22 @@
-pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
-plugins { id("com.facebook.react.settings") }
-extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
-rootProject.name = 'MTGPriceApp'
-include ':app'
+pluginManagement {
+    includeBuild("../node_modules/@react-native/gradle-plugin")
+}
+
+plugins {
+    id("com.facebook.react.settings")
+}
+
+extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
+    ex.autolinkLibrariesFromCommand()
+}
+
+rootProject.name = "MTGPriceApp"
+
+include ":app"
+
+// Include react-native-sqlite-storage
+include ":react-native-sqlite-storage"
+project(":react-native-sqlite-storage").projectDir = new File(rootProject.projectDir, "../node_modules/react-native-sqlite-storage/platforms/android")
+
+// Include the React Native Gradle plugin
 includeBuild('../node_modules/@react-native/gradle-plugin')

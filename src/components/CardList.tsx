@@ -5,6 +5,7 @@ import {
     FlatList,
     StyleSheet,
     ActivityIndicator,
+    TouchableOpacity,
 } from 'react-native';
 import type { Card } from '../services/DatabaseService';
 
@@ -13,71 +14,121 @@ interface CardListProps {
     isLoading: boolean;
 }
 
-const CardList: React.FC<CardListProps> = ({ cards, isLoading }) => {
+const CardItem = ({ card }: { card: Card }) => (
+    <TouchableOpacity style={styles.card}>
+        <View style={styles.cardHeader}>
+            <Text style={styles.cardName}>{card.name}</Text>
+            <Text style={styles.manaCost}>{card.manaCost || ''}</Text>
+        </View>
+        <View style={styles.cardDetails}>
+            <Text style={styles.setCode}>Set: {card.setCode}</Text>
+            <Text style={[styles.rarity, styles[card.rarity.toLowerCase() as keyof typeof styles]]}>
+                {card.rarity}
+            </Text>
+        </View>
+        <Text style={styles.type}>{card.type}</Text>
+        {card.text && <Text style={styles.text}>{card.text}</Text>}
+    </TouchableOpacity>
+);
+
+const CardList = ({ cards, isLoading }: CardListProps) => {
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#3498db" />
+                <ActivityIndicator size="large" color="#2196F3" />
+                <Text style={styles.loadingText}>Loading cards...</Text>
             </View>
         );
     }
 
-    const renderCard = ({ item }: { item: Card }) => (
-        <View style={styles.card}>
-            <Text style={styles.cardName}>{item.name}</Text>
-            <Text style={styles.setName}>{item.set_name}</Text>
-            <Text style={styles.price}>${item.price?.toFixed(2) || 'N/A'}</Text>
-        </View>
-    );
-
     return (
         <FlatList
             data={cards}
-            renderItem={renderCard}
-            keyExtractor={item => item.id.toString()}
+            renderItem={({ item }) => <CardItem card={item} />}
+            keyExtractor={item => item.uuid}
             contentContainerStyle={styles.listContainer}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
     );
 };
 
 const styles = StyleSheet.create({
+    listContainer: {
+        padding: 16,
+    },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    listContainer: {
-        padding: 16,
+    loadingText: {
+        marginTop: 8,
+        fontSize: 16,
+        color: '#666',
     },
     card: {
         backgroundColor: 'white',
-        padding: 16,
-        marginBottom: 12,
         borderRadius: 8,
+        padding: 16,
         elevation: 2,
         shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 1,
-        },
-        shadowOpacity: 0.22,
-        shadowRadius: 2.22,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
     },
     cardName: {
         fontSize: 18,
         fontWeight: 'bold',
-        color: '#2c3e50',
+        flex: 1,
     },
-    setName: {
-        fontSize: 14,
-        color: '#7f8c8d',
-        marginTop: 4,
-    },
-    price: {
+    manaCost: {
         fontSize: 16,
-        color: '#27ae60',
-        fontWeight: '600',
-        marginTop: 8,
+        fontWeight: '500',
+        marginLeft: 8,
+    },
+    cardDetails: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    setCode: {
+        fontSize: 14,
+        color: '#666',
+    },
+    rarity: {
+        fontSize: 14,
+        fontWeight: '500',
+    },
+    common: {
+        color: '#666',
+    },
+    uncommon: {
+        color: '#607D8B',
+    },
+    rare: {
+        color: '#FFD700',
+    },
+    mythic: {
+        color: '#FF4500',
+    },
+    type: {
+        fontSize: 14,
+        color: '#444',
+        marginBottom: 8,
+    },
+    text: {
+        fontSize: 14,
+        color: '#666',
+        lineHeight: 20,
+    },
+    separator: {
+        height: 12,
     },
 });
 

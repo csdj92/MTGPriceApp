@@ -1,42 +1,42 @@
 import React, { useState } from 'react';
-import {
-    View,
-    Text,
-    TouchableOpacity,
-    StyleSheet,
-    SafeAreaView,
-} from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
 import { databaseService, Card } from '../services/DatabaseService';
 import CardList from '../components/CardList';
 
 const StartScreen = () => {
-    const [cards, setCards] = useState<Card[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [cards, setCards] = useState<Card[]>([]);
     const [showList, setShowList] = useState(false);
 
-    const handleShowCards = async () => {
+    const fetchCards = async () => {
+        setIsLoading(true);
         try {
-            setIsLoading(true);
+            console.log('Starting to fetch cards...');
             const fetchedCards = await databaseService.getFirst100Cards();
+            console.log('Fetched cards:', fetchedCards);
             setCards(fetchedCards);
             setShowList(true);
         } catch (error) {
             console.error('Error fetching cards:', error);
+            setCards([]);
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleBack = () => {
+        setShowList(false);
+        setCards([]);
     };
 
     if (showList) {
         return (
             <SafeAreaView style={styles.container}>
                 <View style={styles.header}>
-                    <Text style={styles.title}>MTG Cards</Text>
-                    <TouchableOpacity
-                        style={styles.backButton}
-                        onPress={() => setShowList(false)}>
-                        <Text style={styles.backButtonText}>Back</Text>
+                    <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+                        <Text style={styles.backButtonText}>← Back</Text>
                     </TouchableOpacity>
+                    <Text style={styles.headerTitle}>MTG Cards ({cards.length})</Text>
                 </View>
                 <CardList cards={cards} isLoading={isLoading} />
             </SafeAreaView>
@@ -48,10 +48,13 @@ const StartScreen = () => {
             <View style={styles.content}>
                 <Text style={styles.title}>MTG Price Tracker</Text>
                 <TouchableOpacity
-                    style={styles.button}
-                    onPress={handleShowCards}
-                    activeOpacity={0.7}>
-                    <Text style={styles.buttonText}>Show First 100 Cards</Text>
+                    style={[styles.button, isLoading && styles.buttonDisabled]}
+                    onPress={fetchCards}
+                    disabled={isLoading}
+                >
+                    <Text style={styles.buttonText}>
+                        Show First 100 Cards
+                    </Text>
                 </TouchableOpacity>
             </View>
         </SafeAreaView>
@@ -77,40 +80,46 @@ const styles = StyleSheet.create({
         borderBottomColor: '#e0e0e0',
         backgroundColor: 'white',
     },
-    title: {
-        fontSize: 32,
+    headerTitle: {
+        fontSize: 20,
         fontWeight: 'bold',
-        color: '#2c3e50',
-        marginBottom: 40,
+        color: '#333',
+        flex: 1,
         textAlign: 'center',
+        marginRight: 40, // To offset the back button and center the title
+    },
+    title: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        marginBottom: 30,
+        color: '#333',
     },
     button: {
-        backgroundColor: '#3498db',
-        paddingHorizontal: 30,
-        paddingVertical: 15,
-        borderRadius: 25,
+        backgroundColor: '#2196F3',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 8,
         elevation: 3,
         shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
+        shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
+        minWidth: 200,
+        alignItems: 'center',
+    },
+    buttonDisabled: {
+        backgroundColor: '#ccc',
     },
     buttonText: {
-        color: '#ffffff',
-        fontSize: 18,
+        color: '#fff',
+        fontSize: 16,
         fontWeight: '600',
-        textAlign: 'center',
     },
     backButton: {
-        position: 'absolute',
-        left: 16,
         padding: 8,
     },
     backButtonText: {
-        color: '#3498db',
+        color: '#2196F3',
         fontSize: 16,
         fontWeight: '600',
     },
