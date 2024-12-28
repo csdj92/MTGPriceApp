@@ -11,16 +11,18 @@ import WatchlistScreen from '../screens/watchlist/WatchlistScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import CardDetailsScreen from '../screens/card/CardDetailsScreen';
 import PriceLookupScreen from '../screens/price/PriceLookupScreen';
-import { ExtendedCard } from '../services/ScryfallService';
+import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScreen';
+import type { ExtendedCard } from '../types/card';
 
 export type RootStackParamList = {
     MainTabs: undefined;
-    CardDetails: { card: ExtendedCard };
-    Collection: undefined;
     Search: undefined;
+    Collection: undefined;
+    CardDetails: { card: ExtendedCard };
+    PriceLookup: undefined;
     Watchlist: undefined;
     Settings: undefined;
-    PriceLookup: undefined;
+    CollectionDetails: { collectionId: string };
 };
 
 export type MainTabParamList = {
@@ -82,6 +84,21 @@ const AppNavigator = () => (
                 name="CardDetails"
                 component={CardDetailsScreen}
                 options={{ title: 'Card Details' }}
+            />
+            <Stack.Screen
+                name="Collection"
+                component={CollectionScreen}
+                options={{ title: 'Collections' }}
+            />
+            <Stack.Screen
+                name="CollectionDetails"
+                component={CollectionDetailsScreen}
+                options={{ title: 'Collection' }}
+            />
+            <Stack.Screen
+                name="PriceLookup"
+                component={PriceLookupScreen}
+                options={{ title: 'Price Lookup' }}
             />
         </Stack.Navigator>
     </NavigationContainer>

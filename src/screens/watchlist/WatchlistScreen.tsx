@@ -7,7 +7,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { ExtendedCard } from '../../services/ScryfallService';
+import type { ExtendedCard } from '../../types/card';
 import CardList from '../../components/CardList';
 
 const WatchlistScreen = () => {

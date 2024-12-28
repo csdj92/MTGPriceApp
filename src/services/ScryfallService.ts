@@ -1,4 +1,4 @@
-import { Card } from './DatabaseService';
+import { Card, ExtendedCard } from '../types/card';
 
 const SCRYFALL_API_BASE = 'https://api.scryfall.com';
 const CACHE_EXPIRY = 1000 * 60 * 60; // 1 hour
@@ -55,34 +55,6 @@ interface PriceData {
     timestamp: number;
 }
 
-export interface ExtendedCard extends Card {
-    id: string;
-    oracleId: string;
-    multiverseIds?: number[];
-    mtgoId?: number;
-    arenaId?: number;
-    tcgplayerId?: number;
-    cardmarketId?: number;
-    setName: string;
-    collectorNumber?: string;
-    prices: {
-        usd?: number;
-        usdFoil?: number;
-        usdEtched?: number;
-        eur?: number;
-        eurFoil?: number;
-        tix?: number;
-    };
-    purchaseUrls: {
-        tcgplayer?: string;
-        cardmarket?: string;
-        cardhoarder?: string;
-    };
-    legalities: {
-        [format: string]: string;
-    };
-}
-
 class ScryfallService {
     private priceCache: Map<string, PriceData> = new Map();
     private requestQueue: Promise<any>[] = [];
@@ -136,7 +108,6 @@ class ScryfallService {
     }
 
     private transformScryfallCard(scryfallCard: ScryfallCard): ExtendedCard {
-        console.log('Purchase URIs from Scryfall:', scryfallCard.purchase_uris);
         return {
             uuid: scryfallCard.oracle_id,
             id: scryfallCard.id,
@@ -221,14 +192,15 @@ class ScryfallService {
         }
 
         const card = await this.getCardById(cardId);
-        if (card.price !== undefined) {
+        const price = card.prices?.usd;
+        if (price !== undefined) {
             this.priceCache.set(cardId, {
-                price: card.price,
+                price: Number(price),
                 timestamp: Date.now(),
             });
         }
 
-        return card.price;
+        return price ? Number(price) : undefined;
     }
 
     async getCardsBySet(setCode: string): Promise<ExtendedCard[]> {

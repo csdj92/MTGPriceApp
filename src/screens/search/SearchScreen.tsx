@@ -13,7 +13,8 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { scryfallService, ExtendedCard } from '../../services/ScryfallService';
+import { scryfallService } from '../../services/ScryfallService';
+import type { ExtendedCard } from '../../types/card';
 import CardList from '../../components/CardList';
 import debounce from 'lodash/debounce';
 

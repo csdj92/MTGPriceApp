@@ -10,12 +10,14 @@ import {
     Modal,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import type { ExtendedCard } from '../services/ScryfallService';
-
+import type { ExtendedCard } from '../types/card';
 interface CardListProps {
     cards: ExtendedCard[];
     isLoading: boolean;
     onCardPress?: (card: ExtendedCard) => void;
+    onEndReached?: () => void;
+    onEndReachedThreshold?: number;
+    ListFooterComponent?: React.ComponentType<any> | React.ReactElement | null;
 }
 
 const PriceDisplay = ({ prices }: { prices: ExtendedCard['prices'] }) => (
@@ -234,7 +236,7 @@ const CardItem = ({ card, onPress }: { card: ExtendedCard; onPress?: () => void 
     </TouchableOpacity>
 );
 
-const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress }) => {
+const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onEndReached, onEndReachedThreshold, ListFooterComponent }) => {
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
@@ -290,6 +292,9 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress }) =>
                     <Text style={styles.emptyText}>No cards found</Text>
                 </View>
             }
+            onEndReached={onEndReached}
+            onEndReachedThreshold={onEndReachedThreshold}
+            ListFooterComponent={ListFooterComponent}
         />
     );
 };

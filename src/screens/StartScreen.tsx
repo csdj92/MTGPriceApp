@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
-import { scryfallService, ExtendedCard } from '../services/ScryfallService';
+import { scryfallService } from '../services/ScryfallService';
+import type { ExtendedCard } from '../types/card';
 import CardList from '../components/CardList';
 
 const StartScreen = () => {
@@ -13,7 +14,6 @@ const StartScreen = () => {
         try {
             console.log('Starting to fetch cards...');
             const fetchedCards = await scryfallService.searchCards('set:fdn');
-            console.log('Fetched cards:', fetchedCards);
             setCards(fetchedCards);
             setShowList(true);
         } catch (error) {

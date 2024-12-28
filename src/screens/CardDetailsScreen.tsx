@@ -8,11 +8,11 @@ import {
     Image,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { Card } from '../services/DatabaseService';
 import { scryfallService } from '../services/ScryfallService';
+import type { ExtendedCard } from '../types/card';
 
 const CardDetailsScreen = () => {
-    const [card, setCard] = useState<Card | null>(null);
+    const [card, setCard] = useState<ExtendedCard | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const route = useRoute();
     const navigation = useNavigation();
@@ -71,9 +71,9 @@ const CardDetailsScreen = () => {
                     <Text style={styles.setCode}>Set: {card.setCode}</Text>
                     <Text style={styles.rarity}>{card.rarity}</Text>
                 </View>
-                {card.price !== undefined && (
+                {card.prices?.usd !== undefined && (
                     <Text style={styles.price}>
-                        Price: ${card.price.toFixed(2)}
+                        Price: ${Number(card.prices.usd).toFixed(2)}
                     </Text>
                 )}
             </View>

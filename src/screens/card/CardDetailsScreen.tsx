@@ -9,9 +9,9 @@ import {
     Linking,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import type { ExtendedCard } from '../../services/ScryfallService';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
+import type { ExtendedCard } from '../../types/card';
 
 type CardDetailsScreenProps = NativeStackScreenProps<RootStackParamList, 'CardDetails'>;
 
