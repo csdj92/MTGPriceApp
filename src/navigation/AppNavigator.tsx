@@ -9,12 +9,18 @@ import CollectionScreen from '../screens/collection/CollectionScreen';
 import SearchScreen from '../screens/search/SearchScreen';
 import WatchlistScreen from '../screens/watchlist/WatchlistScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
-import CardDetailsScreen from '../screens/CardDetailsScreen';
+import CardDetailsScreen from '../screens/card/CardDetailsScreen';
 import PriceLookupScreen from '../screens/price/PriceLookupScreen';
+import { ExtendedCard } from '../services/ScryfallService';
 
 export type RootStackParamList = {
     MainTabs: undefined;
-    CardDetails: { cardId: string };
+    CardDetails: { card: ExtendedCard };
+    Collection: undefined;
+    Search: undefined;
+    Watchlist: undefined;
+    Settings: undefined;
+    PriceLookup: undefined;
 };
 
 export type MainTabParamList = {

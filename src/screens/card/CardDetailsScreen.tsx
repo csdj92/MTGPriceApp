@@ -1,73 +1,132 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
     View,
     Text,
     StyleSheet,
     ScrollView,
-    ActivityIndicator,
-    Alert,
+    Image,
+    TouchableOpacity,
+    Linking,
 } from 'react-native';
-import { RouteProp, useRoute } from '@react-navigation/native';
-import { ExtendedCard, scryfallService } from '../../services/ScryfallService';
-import CardList from '../../components/CardList';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import type { ExtendedCard } from '../../services/ScryfallService';
+import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../navigation/AppNavigator';
 
-type RootStackParamList = {
-    CardDetails: { cardId: string };
-};
+type CardDetailsScreenProps = NativeStackScreenProps<RootStackParamList, 'CardDetails'>;
 
-type CardDetailsScreenRouteProp = RouteProp<RootStackParamList, 'CardDetails'>;
+const CardDetailsScreen: React.FC<CardDetailsScreenProps> = ({ route, navigation }) => {
+    const { card } = route.params;
 
-const CardDetailsScreen = () => {
-    const [isLoading, setIsLoading] = useState(false);
-    const [cardDetails, setCardDetails] = useState<ExtendedCard | null>(null);
-    const route = useRoute<CardDetailsScreenRouteProp>();
+    const openPurchaseLink = async (url: string | undefined) => {
+        if (!url) {
+            return;
+        }
 
-    useEffect(() => {
-        loadCard();
-    }, [route.params?.cardId]);
-
-    const loadCard = async () => {
-        if (!route.params?.cardId) return;
-
-        setIsLoading(true);
         try {
-            console.log(`[CardDetailsScreen] Loading card details for ID: ${route.params.cardId}`);
-            const card = await scryfallService.getCardById(route.params.cardId);
-            if (card) {
-                console.log('[CardDetailsScreen] Card details loaded:', card);
-                setCardDetails(card);
-            } else {
-                console.error('[CardDetailsScreen] Card not found');
-                Alert.alert('Error', 'Card not found');
+            let targetUrl = url;
+
+            // Handle TCGPlayer affiliate links
+            if (url.includes('partner.tcgplayer.com')) {
+                const redirectMatch = url.match(/[?&]u=([^&]+)/);
+                if (redirectMatch) {
+                    targetUrl = decodeURIComponent(redirectMatch[1]);
+                }
             }
+
+            // Ensure URL has a scheme
+            if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                targetUrl = 'https://' + targetUrl;
+            }
+
+            console.log('Opening URL:', targetUrl);
+            await Linking.openURL(targetUrl);
         } catch (error) {
-            console.error('[CardDetailsScreen] Error loading card details:', error);
-            Alert.alert('Error', 'Failed to load card details');
-        } finally {
-            setIsLoading(false);
+            console.error('Error opening URL:', error);
+            // If all else fails, try opening a search URL
+            try {
+                const cardName = url.split('/').pop()?.split('?')[0] || '';
+                const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(cardName + ' mtg card price')}`;
+                await Linking.openURL(searchUrl);
+            } catch (fallbackError) {
+                console.error('Fallback error:', fallbackError);
+            }
         }
     };
 
-    if (isLoading) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#2196F3" />
-                <Text style={styles.loadingText}>Loading card details...</Text>
-            </View>
-        );
-    }
-
-    if (!cardDetails) {
-        return (
-            <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>No card details available</Text>
-            </View>
-        );
-    }
-
     return (
         <ScrollView style={styles.container}>
-            <CardList cards={[cardDetails]} isLoading={false} />
+            <View style={styles.header}>
+                <TouchableOpacity
+                    style={styles.backButton}
+                    onPress={() => navigation.goBack()}
+                >
+                    <Icon name="arrow-left" size={24} color="#666" />
+                </TouchableOpacity>
+                <Text style={styles.title}>{card.name}</Text>
+            </View>
+
+            {card.imageUrl && (
+                <Image
+                    source={{ uri: card.imageUrl }}
+                    style={styles.cardImage}
+                    resizeMode="contain"
+                />
+            )}
+
+            <View style={styles.detailsContainer}>
+                <Text style={styles.setInfo}>
+                    {card.setName} ({card.setCode.toUpperCase()})
+                </Text>
+
+                <View style={styles.priceContainer}>
+                    <Text style={styles.sectionTitle}>Prices</Text>
+                    {card.prices?.usd && (
+                        <Text style={styles.price}>USD: ${card.prices.usd}</Text>
+                    )}
+                    {card.prices?.eur && (
+                        <Text style={styles.price}>EUR: €{card.prices.eur}</Text>
+                    )}
+                    {card.prices?.tix && (
+                        <Text style={styles.price}>MTGO: {card.prices.tix} tix</Text>
+                    )}
+                </View>
+
+                <View style={styles.purchaseContainer}>
+                    <Text style={styles.sectionTitle}>Purchase Options</Text>
+                    {card.purchaseUrls?.tcgplayer && (
+                        <TouchableOpacity
+                            style={styles.purchaseButton}
+                            onPress={() => openPurchaseLink(card.purchaseUrls.tcgplayer)}
+                        >
+                            <Text style={styles.purchaseButtonText}>Buy on TCGPlayer</Text>
+                        </TouchableOpacity>
+                    )}
+                    {card.purchaseUrls?.cardmarket && (
+                        <TouchableOpacity
+                            style={styles.purchaseButton}
+                            onPress={() => openPurchaseLink(card.purchaseUrls.cardmarket)}
+                        >
+                            <Text style={styles.purchaseButtonText}>Buy on Cardmarket</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+
+                <View style={styles.legalitiesContainer}>
+                    <Text style={styles.sectionTitle}>Format Legalities</Text>
+                    {Object.entries(card.legalities || {}).map(([format, legality]) => (
+                        <View key={format} style={styles.legalityRow}>
+                            <Text style={styles.formatName}>{format}:</Text>
+                            <Text style={[
+                                styles.legality,
+                                { color: legality === 'legal' ? '#4CAF50' : '#f44336' }
+                            ]}>
+                                {legality}
+                            </Text>
+                        </View>
+                    ))}
+                </View>
+            </View>
         </ScrollView>
     );
 };
@@ -75,28 +134,78 @@ const CardDetailsScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#fff',
     },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
+    header: {
+        flexDirection: 'row',
         alignItems: 'center',
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e0e0e0',
     },
-    loadingText: {
-        marginTop: 16,
+    backButton: {
+        marginRight: 16,
+    },
+    title: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        flex: 1,
+    },
+    cardImage: {
+        width: '100%',
+        height: 400,
+        marginVertical: 16,
+    },
+    detailsContainer: {
+        padding: 16,
+    },
+    setInfo: {
         fontSize: 16,
         color: '#666',
+        marginBottom: 16,
     },
-    errorContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 20,
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 8,
     },
-    errorText: {
+    priceContainer: {
+        marginBottom: 24,
+    },
+    price: {
         fontSize: 16,
-        color: '#666',
+        marginBottom: 4,
+    },
+    purchaseContainer: {
+        marginBottom: 24,
+    },
+    purchaseButton: {
+        backgroundColor: '#2196F3',
+        padding: 12,
+        borderRadius: 8,
+        marginBottom: 8,
+    },
+    purchaseButtonText: {
+        color: 'white',
+        fontSize: 16,
         textAlign: 'center',
+        fontWeight: '500',
+    },
+    legalitiesContainer: {
+        marginBottom: 24,
+    },
+    legalityRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 4,
+    },
+    formatName: {
+        fontSize: 16,
+        textTransform: 'capitalize',
+    },
+    legality: {
+        fontSize: 16,
+        fontWeight: '500',
     },
 });
 

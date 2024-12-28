@@ -1,4 +1,5 @@
 import SQLite, { SQLError, ResultSet, Transaction } from 'react-native-sqlite-storage';
+import { ExtendedCard } from './ScryfallService';
 
 SQLite.enablePromise(true);
 SQLite.DEBUG(true);
@@ -51,12 +52,18 @@ class DatabaseService {
 
         try {
             const tableCheck = await this.database.executeSql(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='cards'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('cards', 'collection_cache')"
             );
 
-            if (tableCheck[0].rows.length === 0) {
-                console.error('Cards table not found in database');
-                throw new Error('Database schema invalid: cards table not found');
+            if (tableCheck[0].rows.length < 2) {
+                console.log('Creating collection_cache table...');
+                await this.database.executeSql(`
+                    CREATE TABLE IF NOT EXISTS collection_cache (
+                        uuid TEXT PRIMARY KEY,
+                        card_data TEXT NOT NULL,
+                        last_updated INTEGER NOT NULL
+                    )
+                `);
             }
 
             const tableInfo = await this.database.executeSql('PRAGMA table_info(cards)');
@@ -65,9 +72,64 @@ class DatabaseService {
             const countResult = await this.database.executeSql('SELECT COUNT(*) as count FROM cards');
             const count = countResult[0].rows.item(0).count;
             console.log(`Database contains ${count} cards`);
-
         } catch (error) {
             console.error('Database verification error:', error);
+            throw error;
+        }
+    }
+
+    async saveCollectionCache(cards: ExtendedCard[]): Promise<void> {
+        if (!this.database) {
+            await this.initDatabase();
+        }
+
+        try {
+            // First clear old cache
+            await this.database!.executeSql('DELETE FROM collection_cache');
+
+            // Then insert new cache data in batches
+            const batchSize = 20;
+            for (let i = 0; i < cards.length; i += batchSize) {
+                const batch = cards.slice(i, i + batchSize);
+                await this.database!.transaction(async (tx) => {
+                    for (const card of batch) {
+                        await tx.executeSql(
+                            'INSERT INTO collection_cache (uuid, card_data, last_updated) VALUES (?, ?, ?)',
+                            [card.uuid, JSON.stringify(card), Date.now()]
+                        );
+                    }
+                });
+            }
+            console.log(`Collection cache updated successfully with ${cards.length} cards`);
+        } catch (error) {
+            console.error('Error saving collection cache:', error);
+            throw error;
+        }
+    }
+
+    async getCollectionCache(): Promise<ExtendedCard[]> {
+        if (!this.database) {
+            await this.initDatabase();
+        }
+
+        try {
+            const results = await this.database!.executeSql(
+                'SELECT card_data FROM collection_cache'
+            );
+
+            if (!results[0].rows.length) {
+                return [];
+            }
+
+            const cards: ExtendedCard[] = [];
+            for (let i = 0; i < results[0].rows.length; i++) {
+                const row = results[0].rows.item(i);
+                cards.push(JSON.parse(row.card_data));
+            }
+
+            return cards;
+        } catch (error) {
+            console.error('Error getting collection cache:', error);
             throw error;
         }
     }
@@ -95,7 +157,6 @@ class DatabaseService {
 
             for (let i = 0; i < rows.length; i++) {
                 const row = rows.item(i);
-                console.log(`Processing row ${i}:`, row);
                 cards.push(row);
             }
 

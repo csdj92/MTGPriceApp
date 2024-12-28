@@ -90,37 +90,77 @@ const LegalitiesDropdown = ({ legalities }: { legalities: ExtendedCard['legaliti
     );
 };
 
-const PurchaseLinks = ({ urls }: { urls: ExtendedCard['purchaseUrls'] }) => (
-    <View style={styles.purchaseLinksContainer}>
-        {urls.tcgplayer && (
-            <TouchableOpacity
-                key="tcgplayer"
-                style={styles.purchaseButton}
-                onPress={() => Linking.openURL(urls.tcgplayer!)}
-            >
-                <Text style={styles.purchaseButtonText}>TCGplayer</Text>
-            </TouchableOpacity>
-        )}
-        {urls.cardmarket && (
-            <TouchableOpacity
-                key="cardmarket"
-                style={styles.purchaseButton}
-                onPress={() => Linking.openURL(urls.cardmarket!)}
-            >
-                <Text style={styles.purchaseButtonText}>Cardmarket</Text>
-            </TouchableOpacity>
-        )}
-        {urls.cardhoarder && (
-            <TouchableOpacity
-                key="cardhoarder"
-                style={styles.purchaseButton}
-                onPress={() => Linking.openURL(urls.cardhoarder!)}
-            >
-                <Text style={styles.purchaseButtonText}>Cardhoarder</Text>
-            </TouchableOpacity>
-        )}
-    </View>
-);
+const PurchaseLinks = ({ urls }: { urls: ExtendedCard['purchaseUrls'] }) => {
+    const handlePurchaseLink = async (url: string | undefined) => {
+        console.log('Attempting to open purchase URL:', url);
+        if (!url) {
+            console.log('No purchase URL available');
+            return;
+        }
+
+        try {
+            let targetUrl = url;
+
+            // Handle TCGPlayer affiliate links
+            if (url.includes('partner.tcgplayer.com')) {
+                const redirectMatch = url.match(/[?&]u=([^&]+)/);
+                if (redirectMatch) {
+                    targetUrl = decodeURIComponent(redirectMatch[1]);
+                }
+            }
+
+            // Ensure URL has a scheme
+            if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+                targetUrl = 'https://' + targetUrl;
+            }
+
+            console.log('Opening URL:', targetUrl);
+            await Linking.openURL(targetUrl);
+        } catch (error) {
+            console.error('Error opening URL:', error);
+            // If all else fails, try opening a search URL
+            try {
+                const cardName = url.split('/').pop()?.split('?')[0] || '';
+                const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(cardName + ' mtg card price')}`;
+                await Linking.openURL(searchUrl);
+            } catch (fallbackError) {
+                console.error('Fallback error:', fallbackError);
+            }
+        }
+    };
+
+    return (
+        <View style={styles.purchaseLinksContainer}>
+            {urls.tcgplayer && (
+                <TouchableOpacity
+                    key="tcgplayer"
+                    style={styles.purchaseButton}
+                    onPress={() => handlePurchaseLink(urls.tcgplayer)}
+                >
+                    <Text style={styles.purchaseButtonText}>TCGplayer</Text>
+                </TouchableOpacity>
+            )}
+            {urls.cardmarket && (
+                <TouchableOpacity
+                    key="cardmarket"
+                    style={styles.purchaseButton}
+                    onPress={() => handlePurchaseLink(urls.cardmarket)}
+                >
+                    <Text style={styles.purchaseButtonText}>Cardmarket</Text>
+                </TouchableOpacity>
+            )}
+            {urls.cardhoarder && (
+                <TouchableOpacity
+                    key="cardhoarder"
+                    style={styles.purchaseButton}
+                    onPress={() => handlePurchaseLink(urls.cardhoarder)}
+                >
+                    <Text style={styles.purchaseButtonText}>Cardhoarder</Text>
+                </TouchableOpacity>
+            )}
+        </View>
+    );
+};
 
 const ManaSymbol = ({ symbol }: { symbol: string }) => {
     // Map mana symbols to MaterialCommunityIcons
@@ -214,7 +254,6 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress }) =>
             item.name                   // Card name
         ].filter(Boolean).join('-');    // Join all non-null values with a dash
 
-        console.log(`[CardList] Generated key for ${item.name}: ${uniqueKey}`);
         return uniqueKey;
     };
 
@@ -236,6 +275,7 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress }) =>
                 )}
             </View>
             <PriceDisplay prices={item.prices} />
+            <PurchaseLinks urls={item.purchaseUrls} />
         </TouchableOpacity>
     );
 

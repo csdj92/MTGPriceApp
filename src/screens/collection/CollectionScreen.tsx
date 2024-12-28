@@ -12,21 +12,50 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { ExtendedCard, scryfallService } from '../../services/ScryfallService';
 import { databaseService } from '../../services/DatabaseService';
 import CardList from '../../components/CardList';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../navigation/AppNavigator';
 
-const CollectionScreen = () => {
+type CollectionScreenProps = {
+    navigation: NativeStackNavigationProp<RootStackParamList, 'Collection'>;
+};
+
+const CollectionScreen: React.FC<CollectionScreenProps> = ({ navigation }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [collection, setCollection] = useState<ExtendedCard[]>([]);
     const [view, setView] = useState<'grid' | 'list'>('list');
     const [sortBy, setSortBy] = useState<'name' | 'price' | 'rarity'>('name');
-    const navigation = useNavigation();
+    const [totalValue, setTotalValue] = useState<number>(0);
 
     useEffect(() => {
         loadCollection();
     }, []);
 
+    const calculateTotalValue = (cards: ExtendedCard[]) => {
+        return cards.reduce((total, card) => {
+            const price = card.prices?.usd ?? 0;
+            return total + price;
+        }, 0);
+    };
+
+    const updateTotalValue = () => {
+        const newTotalValue = calculateTotalValue(collection);
+        setTotalValue(newTotalValue);
+    };
+
     const loadCollection = async () => {
         setIsLoading(true);
         try {
+            // Try to get cached data first
+            const cachedCards = await databaseService.getCollectionCache();
+            if (cachedCards.length > 0) {
+                console.log('[CollectionScreen] Using cached collection data');
+                setCollection(cachedCards);
+                const newTotalValue = calculateTotalValue(cachedCards);
+                setTotalValue(newTotalValue);
+                setIsLoading(false);
+                return;
+            }
+
             console.log('[CollectionScreen] Loading first 100 cards from database');
             const dbCards = await databaseService.getFirst100Cards();
             console.log(`[CollectionScreen] Found ${dbCards.length} cards in database`);
@@ -35,14 +64,23 @@ const CollectionScreen = () => {
                 console.log('[CollectionScreen] Fetching extended data from Scryfall');
                 const extendedCards = await scryfallService.getExtendedDataForCards(dbCards);
                 console.log(`[CollectionScreen] Received extended data for ${extendedCards.length} cards`);
+
+                // Save to cache
+                await databaseService.saveCollectionCache(extendedCards);
+                console.log('[CollectionScreen] Saved collection to cache');
+
                 setCollection(extendedCards);
+                const newTotalValue = calculateTotalValue(extendedCards);
+                setTotalValue(newTotalValue);
             } else {
                 console.log('[CollectionScreen] No cards found in database');
                 setCollection([]);
+                setTotalValue(0);
             }
         } catch (error) {
             console.error('[CollectionScreen] Error loading collection:', error);
             setCollection([]);
+            setTotalValue(0);
         } finally {
             setIsLoading(false);
         }
@@ -76,11 +114,15 @@ const CollectionScreen = () => {
                     Total Cards: {collection.length}
                 </Text>
                 <Text style={styles.statsText}>
-                    Collection Value: $0.00
+                    {`Total Value: $${totalValue.toFixed(2)}`}
                 </Text>
             </View>
         </View>
     );
+
+    const handleCardPress = (card: ExtendedCard) => {
+        navigation.navigate('CardDetails', { card });
+    };
 
     if (isLoading) {
         return (
@@ -109,7 +151,11 @@ const CollectionScreen = () => {
     return (
         <View style={styles.container}>
             {renderHeader()}
-            <CardList cards={collection} isLoading={isLoading} />
+            <CardList
+                cards={collection}
+                isLoading={isLoading}
+                onCardPress={handleCardPress}
+            />
         </View>
     );
 };

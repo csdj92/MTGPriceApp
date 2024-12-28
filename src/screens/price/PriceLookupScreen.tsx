@@ -14,8 +14,14 @@ import { scryfallService } from '../../services/ScryfallService';
 import CardList from '../../components/CardList';
 import CardScanner from '../../components/CardScanner';
 import type { ExtendedCard } from '../../services/ScryfallService';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../navigation/AppNavigator';
 
-const PriceLookupScreen = () => {
+type PriceLookupScreenProps = {
+    navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
+};
+
+const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [searchResults, setSearchResults] = useState<ExtendedCard[]>([]);
@@ -78,6 +84,10 @@ const PriceLookupScreen = () => {
         setIsCameraActive(!isCameraActive);
     };
 
+    const handleCardPress = (card: ExtendedCard) => {
+        navigation.navigate('CardDetails', { card });
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.searchContainer}>
@@ -109,6 +119,7 @@ const PriceLookupScreen = () => {
             <CardList
                 cards={searchResults}
                 isLoading={isLoading}
+                onCardPress={handleCardPress}
             />
 
             <Modal

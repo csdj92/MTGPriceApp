@@ -112,7 +112,6 @@ class ScryfallService {
         };
 
         try {
-            console.log(`[ScryfallService] Making request to: ${url}`);
             const response = await fetch(url, { headers });
 
             if (!response.ok) {
@@ -125,7 +124,6 @@ class ScryfallService {
             }
 
             const data = await response.json();
-            console.log('[ScryfallService] Response data:', JSON.stringify(data, null, 2));
             return data;
         } catch (error) {
             console.error('[ScryfallService] Request failed:', error);
@@ -138,6 +136,7 @@ class ScryfallService {
     }
 
     private transformScryfallCard(scryfallCard: ScryfallCard): ExtendedCard {
+        console.log('Purchase URIs from Scryfall:', scryfallCard.purchase_uris);
         return {
             uuid: scryfallCard.oracle_id,
             id: scryfallCard.id,
@@ -164,22 +163,23 @@ class ScryfallService {
                 eurFoil: scryfallCard.prices?.eur_foil ? parseFloat(scryfallCard.prices.eur_foil) : undefined,
                 tix: scryfallCard.prices?.tix ? parseFloat(scryfallCard.prices.tix) : undefined,
             },
-            purchaseUrls: scryfallCard.purchase_uris ?? {},
+            purchaseUrls: {
+                tcgplayer: scryfallCard.purchase_uris?.tcgplayer,
+                cardmarket: scryfallCard.purchase_uris?.cardmarket,
+                cardhoarder: scryfallCard.purchase_uris?.cardhoarder,
+            },
             legalities: scryfallCard.legalities ?? {},
         };
     }
 
     async searchCards(query: string, page = 1): Promise<ExtendedCard[]> {
         try {
-            console.log(`[ScryfallService] Searching cards with query: ${query}, page: ${page}`);
+            // console.log(`[ScryfallService] Searching cards with query: ${query}, page: ${page}`);
             const url = `${SCRYFALL_API_BASE}/cards/search?q=${encodeURIComponent(query)}&page=${page}`;
-            console.log(`[ScryfallService] Request URL: ${url}`);
 
             const data = await this.fetchWithThrottle(url);
-            console.log('[ScryfallService] Full API Response:', JSON.stringify(data, null, 2));
 
             const transformedCards = data.data.map(this.transformScryfallCard);
-            console.log('[ScryfallService] Transformed cards:', JSON.stringify(transformedCards, null, 2));
 
             return transformedCards;
         } catch (error) {
@@ -194,12 +194,11 @@ class ScryfallService {
 
     async getCardById(cardId: string): Promise<ExtendedCard> {
         try {
-            console.log(`[ScryfallService] Fetching card by ID: ${cardId}`);
+            // console.log(`[ScryfallService] Fetching card by ID: ${cardId}`);
             const url = `${SCRYFALL_API_BASE}/cards/${cardId}`;
-            console.log(`[ScryfallService] Request URL: ${url}`);
+            // console.log(`[ScryfallService] Request URL: ${url}`);
 
             const data = await this.fetchWithThrottle(url);
-            console.log('[ScryfallService] Full API Response:', JSON.stringify(data, null, 2));
 
             if (!data || !data.name) {
                 console.error('[ScryfallService] Invalid card data received:', data);
@@ -207,7 +206,6 @@ class ScryfallService {
             }
 
             const transformedCard = this.transformScryfallCard(data);
-            console.log('[ScryfallService] Transformed card:', JSON.stringify(transformedCard, null, 2));
 
             return transformedCard;
         } catch (error) {
@@ -254,12 +252,11 @@ class ScryfallService {
 
     async getCardByName(cardName: string): Promise<ExtendedCard | null> {
         try {
-            console.log(`[ScryfallService] Fetching card by name: ${cardName}`);
+            // console.log(`[ScryfallService] Fetching card by name: ${cardName}`);
             const url = `${SCRYFALL_API_BASE}/cards/named?exact=${encodeURIComponent(cardName)}`;
-            console.log(`[ScryfallService] Request URL: ${url}`);
+            // console.log(`[ScryfallService] Request URL: ${url}`);
 
             const data = await this.fetchWithThrottle(url);
-            console.log('[ScryfallService] Full API Response:', JSON.stringify(data, null, 2));
 
             if (!data || !data.name) {
                 console.error('[ScryfallService] Invalid card data received:', data);
@@ -267,7 +264,6 @@ class ScryfallService {
             }
 
             const transformedCard = this.transformScryfallCard(data);
-            console.log('[ScryfallService] Transformed card:', JSON.stringify(transformedCard, null, 2));
 
             return transformedCard;
         } catch (error) {
@@ -280,7 +276,7 @@ class ScryfallService {
     }
 
     async getExtendedDataForCards(cards: Card[]): Promise<ExtendedCard[]> {
-        console.log(`[ScryfallService] Fetching extended data for ${cards.length} cards`);
+        // console.log(`[ScryfallService] Fetching extended data for ${cards.length} cards`);
         const extendedCards: ExtendedCard[] = [];
 
         for (const card of cards) {
