@@ -1,149 +1,146 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-    View,
-    Text,
-    StyleSheet,
-    ActivityIndicator,
-} from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, Text } from 'react-native';
 import { Camera, useCameraDevice } from 'react-native-vision-camera';
 import TextRecognition from '@react-native-ml-kit/text-recognition';
 
 interface CardScannerProps {
     onTextDetected: (text: string) => void;
-    onError: (error: string) => void;
+    onError: (error: Error) => void;
 }
 
 const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) => {
-    const cameraRef = useRef<Camera>(null);
-    const device = useCameraDevice('back');
-
     const [hasPermission, setHasPermission] = useState(false);
-    const [isScanning, setIsScanning] = useState(false);
-    const [recognizedText, setRecognizedText] = useState('');
+    const device = useCameraDevice('back');
+    const camera = React.useRef<Camera>(null);
+    const [isActive, setIsActive] = useState(true);
 
     useEffect(() => {
-        const requestPermissions = async () => {
-            const status = await Camera.requestCameraPermission();
-            if (status === 'granted') {
-                setHasPermission(true);
-            } else {
-                setHasPermission(false);
-            }
+        checkPermission();
+        return () => {
+            setIsActive(false);
         };
-        requestPermissions();
     }, []);
 
-    useEffect(() => {
-        // Start interval to continuously capture & recognize text
-        let intervalId: NodeJS.Timeout;
-
-        if (hasPermission && device && !isScanning) {
-            setIsScanning(true);
-            intervalId = setInterval(async () => {
-                await captureAndRecognize();
-            }, 2000); // every 2 seconds, adjust as needed
-        }
-
-        return () => {
-            if (intervalId) clearInterval(intervalId);
-        };
-    }, [hasPermission, device, isScanning]);
-
-    const captureAndRecognize = async () => {
+    const checkPermission = async () => {
+        console.log('[CardScanner] Checking camera permission');
         try {
-            // If camera isn't ready, just skip
-            if (!cameraRef.current) return;
-
-            // Capture a photo (make sure "photo={true}" is enabled on <Camera />)
-            const photo = await cameraRef.current.takePhoto();
-
-            // Use ML Kit to recognize text in the captured photo
-            const result = await TextRecognition.recognize(photo.path);
-            if (result?.blocks?.length > 0) {
-                // Combine all recognized blocks into one string (or handle them as needed)
-                const combinedText = result.blocks.map(b => b.text).join('\n');
-                setRecognizedText(combinedText);
-                onTextDetected(combinedText);
-            } else {
-                setRecognizedText('');
+            const permission = await Camera.requestCameraPermission();
+            console.log('[CardScanner] Camera permission status:', permission);
+            setHasPermission(permission === 'granted');
+            if (permission !== 'granted') {
+                console.warn('[CardScanner] Camera permission denied');
+                onError(new Error('Camera permission denied'));
             }
         } catch (error) {
-            console.warn('Error capturing or recognizing text:', error);
-            onError('Failed to capture or recognize text');
+            console.error('[CardScanner] Error checking camera permission:', error);
+            onError(error instanceof Error ? error : new Error('Failed to check camera permission'));
         }
     };
 
+    const takePhoto = useCallback(async () => {
+        if (!isActive) return;
+
+        console.log('[CardScanner] Taking photo');
+        try {
+            const photo = await camera.current?.takePhoto();
+            if (photo) {
+                console.log('[CardScanner] Photo taken:', photo.path);
+                const result = await TextRecognition.recognize('file://' + photo.path);
+                console.log('[CardScanner] Text recognition result:', result);
+
+                if (result.blocks && result.blocks.length > 0) {
+                    // Sort blocks by y-position and size, prioritizing larger text near the top
+                    const blocks = result.blocks.sort((a, b) => {
+                        // Calculate score based on text size and position
+                        const aSize = a.frame?.height || 0 * (a.frame?.width || 0);
+                        const bSize = b.frame?.height || 0 * (b.frame?.width || 0);
+                        const aY = a.frame?.top || 0;
+                        const bY = b.frame?.top || 0;
+                        return (bSize - bY * 2) - (aSize - aY * 2);
+                    });
+
+                    // Take the most likely card name (largest text near top)
+                    const cardName = blocks[0].text.trim();
+                    console.log('[CardScanner] Detected card name:', cardName);
+                    onTextDetected(cardName);
+                } else {
+                    console.log('[CardScanner] No text detected in photo');
+                }
+            }
+        } catch (error) {
+            console.error('[CardScanner] Error taking photo:', error);
+            if (!isActive) return;
+            onError(error instanceof Error ? error : new Error('Failed to take photo'));
+        }
+    }, [isActive, onTextDetected, onError]);
+
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (hasPermission && device && isActive) {
+            interval = setInterval(takePhoto, 2000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [hasPermission, device, isActive, takePhoto]);
+
     if (!hasPermission) {
+        console.log('[CardScanner] No camera permission');
         return (
-            <View style={styles.centered}>
-                <Text style={styles.text}>
-                    Camera permission not granted
-                </Text>
+            <View style={styles.container}>
+                <Text style={styles.text}>No camera permission</Text>
             </View>
         );
     }
 
     if (!device) {
+        console.log('[CardScanner] Camera not available');
         return (
-            <View style={styles.centered}>
-                <Text style={styles.text}>
-                    No camera device available
-                </Text>
+            <View style={styles.container}>
+                <Text style={styles.text}>Camera not available</Text>
             </View>
         );
     }
 
+    console.log('[CardScanner] Rendering camera view');
     return (
         <View style={styles.container}>
-            {/* Camera Preview */}
             <Camera
-                ref={cameraRef}
+                ref={camera}
                 style={StyleSheet.absoluteFill}
                 device={device}
-                isActive={true}
+                isActive={isActive}
                 photo={true}
             />
-            {/* Text Overlay */}
             <View style={styles.overlay}>
-                {recognizedText ? (
-                    <Text style={styles.detectedText}>
-                        {recognizedText}
-                    </Text>
-                ) : (
-                    <ActivityIndicator color="#fff" size="large" />
-                )}
+                <Text style={styles.overlayText}>Position card in frame</Text>
             </View>
         </View>
     );
 };
 
-export default CardScanner;
-
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#000',
+        backgroundColor: 'black',
     },
-    centered: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
+    text: {
+        color: 'white',
+        textAlign: 'center',
+        padding: 16,
     },
     overlay: {
         ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'transparent',
-        padding: 16,
     },
-    detectedText: {
-        color: '#fff',
-        fontSize: 16,
-        backgroundColor: 'rgba(0,0,0,0.6)',
+    overlayText: {
+        color: 'white',
+        fontSize: 18,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
         padding: 8,
-        borderRadius: 6,
-    },
-    text: {
-        color: '#fff',
+        borderRadius: 4,
     },
 });
+
+export default CardScanner;

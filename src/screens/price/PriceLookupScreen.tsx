@@ -46,15 +46,36 @@ const PriceLookupScreen = () => {
         setIsCameraActive(true);
     };
 
-    const handleTextDetected = async (text: string) => {
-        setIsCameraActive(false);
-        setSearchQuery(text);
-        await handleManualSearch();
+    const handleScan = async (text: string) => {
+        console.log('[PriceLookupScreen] Scan detected text:', text);
+        setIsLoading(true);
+        try {
+            console.log('[PriceLookupScreen] Attempting to search for card with text:', text);
+            const results = await scryfallService.searchCards(text);
+            console.log(`[PriceLookupScreen] Search returned ${results.length} results`);
+            setSearchResults(results);
+            if (results.length === 0) {
+                console.log('[PriceLookupScreen] No results found for scanned text');
+                Alert.alert('No Results', 'No cards found matching the scanned text.');
+            }
+        } catch (error) {
+            console.error('[PriceLookupScreen] Error processing scan:', error);
+            Alert.alert('Error', 'Failed to process scan. Please try again.');
+            setSearchResults([]);
+        } finally {
+            setIsLoading(false);
+            setIsCameraActive(false);
+        }
     };
 
-    const handleScanError = (error: string) => {
-        Alert.alert('Scan Error', error);
+    const handleScanError = (error: Error) => {
+        Alert.alert('Scan Error', error.message);
         setIsCameraActive(false);
+    };
+
+    const toggleCamera = () => {
+        console.log('[PriceLookupScreen] Toggling camera, current state:', !isCameraActive);
+        setIsCameraActive(!isCameraActive);
     };
 
     return (
@@ -106,7 +127,7 @@ const PriceLookupScreen = () => {
                         <Text style={styles.modalTitle}>Scan Card</Text>
                     </View>
                     <CardScanner
-                        onTextDetected={handleTextDetected}
+                        onTextDetected={handleScan}
                         onError={handleScanError}
                     />
                 </SafeAreaView>
