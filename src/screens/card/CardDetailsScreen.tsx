@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -17,6 +17,7 @@ type CardDetailsScreenProps = NativeStackScreenProps<RootStackParamList, 'CardDe
 
 const CardDetailsScreen: React.FC<CardDetailsScreenProps> = ({ route, navigation }) => {
     const { card } = route.params;
+    const [isLegalitiesExpanded, setIsLegalitiesExpanded] = useState(false);
 
     const openPurchaseLink = async (url: string | undefined) => {
         if (!url) {
@@ -53,6 +54,57 @@ const CardDetailsScreen: React.FC<CardDetailsScreenProps> = ({ route, navigation
             }
         }
     };
+
+    const formatNames = {
+        standard: 'Standard',
+        pioneer: 'Pioneer',
+        modern: 'Modern',
+        legacy: 'Legacy',
+        vintage: 'Vintage',
+        commander: 'Commander',
+        pauper: 'Pauper',
+        brawl: 'Brawl',
+        historic: 'Historic',
+        penny: 'Penny Dreadful',
+        oldschool: 'Old School'
+    };
+
+    const renderLegalities = () => (
+        <View style={styles.legalitiesContainer}>
+            <TouchableOpacity
+                style={styles.legalitiesHeader}
+                onPress={() => setIsLegalitiesExpanded(!isLegalitiesExpanded)}
+            >
+                <Text style={styles.sectionTitle}>Format Legalities</Text>
+                <Icon
+                    name={isLegalitiesExpanded ? 'chevron-up' : 'chevron-down'}
+                    size={24}
+                    color="#666"
+                />
+            </TouchableOpacity>
+            {isLegalitiesExpanded && (
+                <View style={styles.legalitiesList}>
+                    {Object.entries(card.legalities || {})
+                        .filter(([format]) => format in formatNames)
+                        .map(([format, legality]) => (
+                            <View key={format} style={styles.legalityRow}>
+                                <Text style={styles.formatName}>
+                                    {formatNames[format as keyof typeof formatNames]}:
+                                </Text>
+                                <View style={[
+                                    styles.legalityBadge,
+                                    { backgroundColor: legality === 'legal' ? '#4CAF50' : '#f44336' }
+                                ]}>
+                                    <Text style={styles.legalityText}>
+                                        {legality === 'legal' ? 'Legal' : 'Not Legal'}
+                                    </Text>
+                                </View>
+                            </View>
+                        ))}
+                </View>
+            )}
+        </View>
+    );
 
     return (
         <ScrollView style={styles.container}>
@@ -112,20 +164,7 @@ const CardDetailsScreen: React.FC<CardDetailsScreenProps> = ({ route, navigation
                     )}
                 </View>
 
-                <View style={styles.legalitiesContainer}>
-                    <Text style={styles.sectionTitle}>Format Legalities</Text>
-                    {Object.entries(card.legalities || {}).map(([format, legality]) => (
-                        <View key={format} style={styles.legalityRow}>
-                            <Text style={styles.formatName}>{format}:</Text>
-                            <Text style={[
-                                styles.legality,
-                                { color: legality === 'legal' ? '#4CAF50' : '#f44336' }
-                            ]}>
-                                {legality}
-                            </Text>
-                        </View>
-                    ))}
-                </View>
+                {renderLegalities()}
             </View>
         </ScrollView>
     );
@@ -193,18 +232,50 @@ const styles = StyleSheet.create({
     },
     legalitiesContainer: {
         marginBottom: 24,
+        backgroundColor: '#fff',
+        borderRadius: 8,
+        overflow: 'hidden',
+        elevation: 1,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 2,
+    },
+    legalitiesHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: '#f8f9fa',
+        borderBottomWidth: 1,
+        borderBottomColor: '#e9ecef',
+    },
+    legalitiesList: {
+        padding: 16,
     },
     legalityRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginBottom: 4,
+        alignItems: 'center',
+        paddingVertical: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
     },
     formatName: {
         fontSize: 16,
-        textTransform: 'capitalize',
+        color: '#333',
+        flex: 1,
     },
-    legality: {
-        fontSize: 16,
+    legalityBadge: {
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 12,
+        minWidth: 80,
+        alignItems: 'center',
+    },
+    legalityText: {
+        color: '#fff',
+        fontSize: 14,
         fontWeight: '500',
     },
 });
