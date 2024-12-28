@@ -17,73 +17,84 @@ import { scryfallService } from '../../services/ScryfallService';
 import type { ExtendedCard } from '../../types/card';
 import CardList from '../../components/CardList';
 import debounce from 'lodash/debounce';
+import CollectionSelectionModal from '../../components/CollectionSelectionModal';
+import { databaseService } from '../../services/DatabaseService';
 
 type SearchScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const SearchScreen = () => {
     const [searchQuery, setSearchQuery] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
     const [searchResults, setSearchResults] = useState<ExtendedCard[]>([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
+    const [isCollectionModalVisible, setIsCollectionModalVisible] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
+    const [page, setPage] = useState(1);
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
-    const [filters, setFilters] = useState({
-        set: '',
-        rarity: '',
-        type: '',
-        colors: [] as string[],
-    });
     const navigation = useNavigation<SearchScreenNavigationProp>();
 
-    const debouncedSearch = useCallback(
-        debounce(async (query: string) => {
-            if (query.length >= 2) {
-                try {
-                    const suggestions = await scryfallService.autocompleteCardName(query);
-                    setSuggestions(suggestions);
-                    setShowSuggestions(true);
-                } catch (error) {
-                    console.error('Error getting suggestions:', error);
-                }
-            } else {
-                setSuggestions([]);
-                setShowSuggestions(false);
-            }
-        }, 300),
-        []
-    );
-
-    const handleSearch = async (query: string = searchQuery) => {
-        if (!query.trim()) return;
-        setIsLoading(true);
-        setShowSuggestions(false);
-        Keyboard.dismiss();
-
-        try {
-            console.log(`[SearchScreen] Searching for cards with query: ${query}`);
-            const results = await scryfallService.searchCards(query);
-            console.log(`[SearchScreen] Found ${results.length} results`);
-            setSearchResults(results);
-            if (results.length === 0) {
-                Alert.alert('No Results', 'No cards found matching your search.');
-            }
-        } catch (error) {
-            console.error('[SearchScreen] Search error:', error);
-            Alert.alert('Error', 'Failed to search cards. Please try again.');
+    const performSearch = async (query: string, pageNum: number = 1) => {
+        if (!query.trim()) {
             setSearchResults([]);
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const { data, hasMore } = await scryfallService.searchCards(query, pageNum);
+            if (pageNum === 1) {
+                setSearchResults(data);
+            } else {
+                setSearchResults(prev => [...prev, ...data]);
+            }
+            setHasMore(hasMore);
+        } catch (error) {
+            console.error('Error searching cards:', error);
+            setHasMore(false);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleQueryChange = (text: string) => {
+    const debouncedSearch = debounce(performSearch, 500);
+
+    const handleSearch = (text: string) => {
         setSearchQuery(text);
-        debouncedSearch(text);
+        if (text.trim()) {
+            debouncedSearch(text);
+        } else {
+            setSearchResults([]);
+        }
     };
 
-    const handleSuggestionPress = (suggestion: string) => {
+    const handleQueryChange = (text: string) => {
+        setSearchQuery(text);
+        if (text.length >= 2) {
+            debouncedGetSuggestions(text);
+        } else {
+            setSuggestions([]);
+            setShowSuggestions(false);
+        }
+    };
+
+    const debouncedGetSuggestions = debounce(async (query: string) => {
+        try {
+            const results = await scryfallService.autocompleteCardName(query);
+            setSuggestions(results);
+            setShowSuggestions(true);
+        } catch (error) {
+            console.error('Error getting suggestions:', error);
+            setSuggestions([]);
+            setShowSuggestions(false);
+        }
+    }, 300);
+
+    const handleSuggestionSelect = (suggestion: string) => {
         setSearchQuery(suggestion);
+        setSuggestions([]);
         setShowSuggestions(false);
-        handleSearch(suggestion);
+        performSearch(suggestion, 1);
     };
 
     const handleFilter = () => {
@@ -105,6 +116,60 @@ const SearchScreen = () => {
         }
     };
 
+    const handleAddToCollection = async (card: ExtendedCard) => {
+        setSelectedCard(card);
+        setIsCollectionModalVisible(true);
+    };
+
+    const handleCollectionSelect = async (collectionId: string) => {
+        if (!selectedCard) return;
+
+        try {
+            const cardWithUuid = await databaseService.addToCache(selectedCard);
+            if (!cardWithUuid.uuid) {
+                throw new Error('Failed to generate UUID for card');
+            }
+            await databaseService.addCardToCollection(cardWithUuid.uuid, collectionId);
+            Alert.alert(
+                'Success',
+                `Added ${selectedCard.name} to collection`,
+                [
+                    {
+                        text: 'OK',
+                        onPress: () => {
+                            navigation.goBack();
+                        }
+                    }
+                ]
+            );
+        } catch (error) {
+            console.error('Error adding card to collection:', error);
+            Alert.alert(
+                'Error',
+                'Failed to add card to collection'
+            );
+        } finally {
+            setIsCollectionModalVisible(false);
+            setSelectedCard(null);
+        }
+    };
+
+    const handleLoadMore = () => {
+        if (!isLoading && hasMore) {
+            setPage(prev => prev + 1);
+            performSearch(searchQuery, page + 1);
+        }
+    };
+
+    const renderFooter = () => {
+        if (!isLoading) return null;
+        return (
+            <View style={styles.loadingFooter}>
+                <ActivityIndicator size="small" color="#2196F3" />
+            </View>
+        );
+    };
+
     const renderSearchBar = () => (
         <View style={styles.searchBarContainer}>
             <View style={styles.searchBar}>
@@ -114,7 +179,7 @@ const SearchScreen = () => {
                     placeholder="Search cards..."
                     value={searchQuery}
                     onChangeText={handleQueryChange}
-                    onSubmitEditing={() => handleSearch()}
+                    onSubmitEditing={() => handleSearch(searchQuery)}
                     returnKeyType="search"
                     autoCapitalize="none"
                 />
@@ -149,7 +214,7 @@ const SearchScreen = () => {
                     <TouchableOpacity
                         key={suggestion}
                         style={styles.suggestionItem}
-                        onPress={() => handleSuggestionPress(suggestion)}
+                        onPress={() => handleSuggestionSelect(suggestion)}
                     >
                         <Icon name="card-search" size={20} color="#666" style={styles.suggestionIcon} />
                         <Text style={styles.suggestionText}>{suggestion}</Text>
@@ -171,8 +236,12 @@ const SearchScreen = () => {
             ) : searchResults.length > 0 ? (
                 <CardList
                     cards={searchResults}
-                    isLoading={false}
+                    isLoading={isLoading}
                     onCardPress={handleCardPress}
+                    onAddToCollection={handleAddToCollection}
+                    onEndReached={handleLoadMore}
+                    onEndReachedThreshold={0.5}
+                    ListFooterComponent={renderFooter}
                 />
             ) : (
                 <View style={styles.emptyContainer}>
@@ -187,6 +256,12 @@ const SearchScreen = () => {
                     </Text>
                 </View>
             )}
+
+            <CollectionSelectionModal
+                visible={isCollectionModalVisible}
+                onClose={() => setIsCollectionModalVisible(false)}
+                onSelect={handleCollectionSelect}
+            />
         </View>
     );
 };
@@ -281,6 +356,10 @@ const styles = StyleSheet.create({
         color: '#999',
         marginTop: 8,
         textAlign: 'center',
+    },
+    loadingFooter: {
+        paddingVertical: 16,
+        alignItems: 'center',
     },
 });
 

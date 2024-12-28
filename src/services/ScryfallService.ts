@@ -107,16 +107,9 @@ class ScryfallService {
         }
     }
 
-    private transformScryfallCard(scryfallCard: ScryfallCard): ExtendedCard {
+    private transformScryfallCard = (scryfallCard: ScryfallCard): ExtendedCard => {
         return {
-            uuid: scryfallCard.oracle_id,
             id: scryfallCard.id,
-            oracleId: scryfallCard.oracle_id,
-            multiverseIds: scryfallCard.multiverse_ids,
-            mtgoId: scryfallCard.mtgo_id,
-            arenaId: scryfallCard.arena_id,
-            tcgplayerId: scryfallCard.tcgplayer_id,
-            cardmarketId: scryfallCard.cardmarket_id,
             name: scryfallCard.name,
             setCode: scryfallCard.set?.toUpperCase() ?? 'UNK',
             setName: scryfallCard.set_name ?? 'Unknown Set',
@@ -126,13 +119,14 @@ class ScryfallService {
             type: scryfallCard.type_line,
             text: scryfallCard.oracle_text,
             imageUrl: scryfallCard.image_uris?.normal,
+            imageUris: scryfallCard.image_uris,
             prices: {
-                usd: scryfallCard.prices?.usd ? parseFloat(scryfallCard.prices.usd) : undefined,
-                usdFoil: scryfallCard.prices?.usd_foil ? parseFloat(scryfallCard.prices.usd_foil) : undefined,
-                usdEtched: scryfallCard.prices?.usd_etched ? parseFloat(scryfallCard.prices.usd_etched) : undefined,
-                eur: scryfallCard.prices?.eur ? parseFloat(scryfallCard.prices.eur) : undefined,
-                eurFoil: scryfallCard.prices?.eur_foil ? parseFloat(scryfallCard.prices.eur_foil) : undefined,
-                tix: scryfallCard.prices?.tix ? parseFloat(scryfallCard.prices.tix) : undefined,
+                usd: scryfallCard.prices?.usd,
+                usdFoil: scryfallCard.prices?.usd_foil,
+                usdEtched: scryfallCard.prices?.usd_etched,
+                eur: scryfallCard.prices?.eur,
+                eurFoil: scryfallCard.prices?.eur_foil,
+                tix: scryfallCard.prices?.tix,
             },
             purchaseUrls: {
                 tcgplayer: scryfallCard.purchase_uris?.tcgplayer,
@@ -141,23 +135,32 @@ class ScryfallService {
             },
             legalities: scryfallCard.legalities ?? {},
         };
-    }
+    };
 
-    async searchCards(query: string, page = 1): Promise<ExtendedCard[]> {
+    async searchCards(query: string, page: number = 1): Promise<{ data: ExtendedCard[], hasMore: boolean }> {
         try {
-            // console.log(`[ScryfallService] Searching cards with query: ${query}, page: ${page}`);
-            const url = `${SCRYFALL_API_BASE}/cards/search?q=${encodeURIComponent(query)}&page=${page}`;
+            const encodedQuery = encodeURIComponent(query.trim());
+            if (!encodedQuery) return { data: [], hasMore: false };
 
-            const data = await this.fetchWithThrottle(url);
+            console.log(`[ScryfallService] Searching for: ${encodedQuery}, page: ${page}`);
+            const response = await fetch(
+                `https://api.scryfall.com/cards/search?q=${encodedQuery}&page=${page}`
+            );
 
-            const transformedCards = data.data.map(this.transformScryfallCard);
-
-            return transformedCards;
-        } catch (error) {
-            if (error instanceof Error && error.message.includes('404')) {
-                console.log('[ScryfallService] No results found for query');
-                return []; // Return empty array for no results
+            if (!response.ok) {
+                const errorText = await response.text();
+                if (response.status === 404) {
+                    return { data: [], hasMore: false };
+                }
+                throw new Error(`Scryfall API error: ${response.status} - ${errorText}`);
             }
+
+            const data = await response.json();
+            return {
+                data: data.data.map(this.transformScryfallCard),
+                hasMore: data.has_more || false
+            };
+        } catch (error) {
             console.error('[ScryfallService] Search error:', error);
             throw error;
         }

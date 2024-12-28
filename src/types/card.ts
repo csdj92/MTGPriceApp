@@ -9,23 +9,31 @@ export interface Card {
     imageUrl?: string;
 }
 
-export interface ExtendedCard extends Card {
+export interface ExtendedCard {
     id: string;
-    oracleId: string;
-    multiverseIds?: number[];
-    mtgoId?: number;
-    arenaId?: number;
-    tcgplayerId?: number;
-    cardmarketId?: number;
+    uuid?: string;
+    name: string;
+    setCode: string;
     setName: string;
-    collectorNumber?: string;
+    collectorNumber: string;
+    type: string;
+    manaCost?: string;
+    text?: string;
+    rarity?: string;
+    imageUrl?: string;
+    imageUris?: {
+        small?: string;
+        normal?: string;
+        large?: string;
+        art_crop?: string;
+    };
     prices: {
-        usd?: number;
-        usdFoil?: number;
-        usdEtched?: number;
-        eur?: number;
-        eurFoil?: number;
-        tix?: number;
+        usd?: string | null;
+        usdFoil?: string | null;
+        usdEtched?: string | null;
+        eur?: string | null;
+        eurFoil?: string | null;
+        tix?: string | null;
     };
     purchaseUrls: {
         tcgplayer?: string;
@@ -35,4 +43,5 @@ export interface ExtendedCard extends Card {
     legalities: {
         [format: string]: string;
     };
+    quantity?: number;
 } 

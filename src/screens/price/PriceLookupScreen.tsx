@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -8,14 +8,19 @@ import {
     Alert,
     Modal,
     SafeAreaView,
+    FlatList,
+    Animated,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { scryfallService } from '../../services/ScryfallService';
+import { databaseService } from '../../services/DatabaseService';
 import CardList from '../../components/CardList';
 import CardScanner from '../../components/CardScanner';
-import type { ExtendedCard } from '../../services/ScryfallService';
+import type { ExtendedCard } from '../../types/card';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
+import CollectionSelector from '../../components/CollectionSelector';
+import type { Collection } from '../../services/DatabaseService';
 
 type PriceLookupScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
@@ -26,6 +31,39 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const [isLoading, setIsLoading] = useState(false);
     const [searchResults, setSearchResults] = useState<ExtendedCard[]>([]);
     const [isCameraActive, setIsCameraActive] = useState(false);
+    const [scannedCards, setScannedCards] = useState<ExtendedCard[]>([]);
+    const [totalPrice, setTotalPrice] = useState(0);
+    const [isCollectionSelectorVisible, setIsCollectionSelectorVisible] = useState(false);
+    const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
+
+    useEffect(() => {
+        loadScanHistory();
+    }, []);
+
+    const loadScanHistory = async () => {
+        try {
+            const history = await databaseService.getScanHistory();
+            if (Array.isArray(history)) {
+                setScannedCards(history);
+                updateTotalPrice(history);
+            }
+        } catch (error) {
+            console.error('Error loading scan history:', error);
+            // Initialize with empty state if there's an error
+            setScannedCards([]);
+            setTotalPrice(0);
+        }
+    };
+
+    const updateTotalPrice = (cards: ExtendedCard[]) => {
+        if (!Array.isArray(cards)) return;
+
+        const total = cards.reduce((sum, card) => {
+            const price = card.prices?.usd ? Number(card.prices.usd) : 0;
+            return sum + price;
+        }, 0);
+        setTotalPrice(total);
+    };
 
     const handleManualSearch = async () => {
         if (!searchQuery.trim()) {
@@ -35,7 +73,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
         setIsLoading(true);
         try {
-            const results = await scryfallService.searchCards(searchQuery);
+            const { data: results } = await scryfallService.searchCards(searchQuery);
             setSearchResults(results);
             if (results.length === 0) {
                 Alert.alert('No Results', 'No cards found matching your search.');
@@ -57,20 +95,25 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         setIsLoading(true);
         try {
             console.log('[PriceLookupScreen] Attempting to search for card with text:', text);
-            const results = await scryfallService.searchCards(text);
-            console.log(`[PriceLookupScreen] Search returned ${results.length} results`);
-            setSearchResults(results);
-            if (results.length === 0) {
+            const searchResponse = await scryfallService.searchCards(text, 1);
+            const foundCards = searchResponse.data;
+            console.log(`[PriceLookupScreen] Search returned ${foundCards.length} results`);
+
+            if (foundCards.length > 0) {
+                const newCard = foundCards[0]; // Get the first (most likely) match
+                await databaseService.addToScanHistory(newCard);
+                const updatedCards = Array.isArray(scannedCards) ? [...scannedCards, newCard] : [newCard];
+                updateTotalPrice(updatedCards);
+                setScannedCards(updatedCards);
+            } else {
                 console.log('[PriceLookupScreen] No results found for scanned text');
                 Alert.alert('No Results', 'No cards found matching the scanned text.');
             }
         } catch (error) {
             console.error('[PriceLookupScreen] Error processing scan:', error);
             Alert.alert('Error', 'Failed to process scan. Please try again.');
-            setSearchResults([]);
         } finally {
             setIsLoading(false);
-            setIsCameraActive(false);
         }
     };
 
@@ -79,14 +122,67 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         setIsCameraActive(false);
     };
 
-    const toggleCamera = () => {
-        console.log('[PriceLookupScreen] Toggling camera, current state:', !isCameraActive);
-        setIsCameraActive(!isCameraActive);
+    const handleCardPress = (card: ExtendedCard) => {
+        setSelectedCard(card);
+        setIsCollectionSelectorVisible(true);
     };
 
-    const handleCardPress = (card: ExtendedCard) => {
-        navigation.navigate('CardDetails', { card });
+    const handleSelectCollection = async (collection: Collection) => {
+        if (!selectedCard) return;
+
+        try {
+            if (!selectedCard.uuid) {
+                throw new Error('Card UUID is missing');
+            }
+            await databaseService.addCardToCollection(selectedCard.uuid, collection.id);
+            await databaseService.markScannedCardAddedToCollection(selectedCard.id, collection.id);
+            Alert.alert('Success', `Added ${selectedCard.name} to ${collection.name}`);
+        } catch (error) {
+            console.error('Error adding card to collection:', error);
+            Alert.alert('Error', 'Failed to add card to collection');
+        } finally {
+            setIsCollectionSelectorVisible(false);
+            setSelectedCard(null);
+        }
     };
+
+    const renderScannedCard = ({ item }: { item: ExtendedCard }) => (
+        <TouchableOpacity
+            style={styles.scannedCardItem}
+            onPress={() => handleCardPress(item)}
+        >
+            <View style={styles.scannedCardContent}>
+                <Text style={styles.cardName}>{item.name}</Text>
+                <Text style={styles.cardPrice}>
+                    ${(item.prices?.usd ? Number(item.prices.usd) : 0).toFixed(2)}
+                </Text>
+            </View>
+        </TouchableOpacity>
+    );
+
+    const renderCameraContent = () => (
+        <View style={styles.cameraContainer}>
+            <View style={styles.totalPriceContainer}>
+                <Text style={styles.totalPriceText}>
+                    Total: ${totalPrice.toFixed(2)}
+                </Text>
+            </View>
+            <CardScanner
+                onTextDetected={handleScan}
+                onError={handleScanError}
+            />
+            <View style={styles.scannedCardsContainer}>
+                <FlatList
+                    data={scannedCards}
+                    renderItem={renderScannedCard}
+                    keyExtractor={(item, index) => `${item.id}-${index}`}
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.scannedCardsList}
+                />
+            </View>
+        </View>
+    );
 
     return (
         <SafeAreaView style={styles.container}>
@@ -131,18 +227,28 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     <View style={styles.modalHeader}>
                         <TouchableOpacity
                             style={styles.closeButton}
-                            onPress={() => setIsCameraActive(false)}
+                            onPress={() => {
+                                setIsCameraActive(false);
+                                setScannedCards([]);
+                                setTotalPrice(0);
+                            }}
                         >
                             <Icon name="close" size={24} color="#666" />
                         </TouchableOpacity>
                         <Text style={styles.modalTitle}>Scan Card</Text>
                     </View>
-                    <CardScanner
-                        onTextDetected={handleScan}
-                        onError={handleScanError}
-                    />
+                    {renderCameraContent()}
                 </SafeAreaView>
             </Modal>
+
+            <CollectionSelector
+                visible={isCollectionSelectorVisible}
+                onClose={() => {
+                    setIsCollectionSelectorVisible(false);
+                    setSelectedCard(null);
+                }}
+                onSelectCollection={handleSelectCollection}
+            />
         </SafeAreaView>
     );
 };
@@ -210,6 +316,62 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: '500',
         marginLeft: 16,
+    },
+    cameraContainer: {
+        flex: 1,
+        position: 'relative',
+    },
+    totalPriceContainer: {
+        position: 'absolute',
+        top: 20,
+        right: 20,
+        backgroundColor: 'rgba(33, 150, 243, 0.9)',
+        borderRadius: 20,
+        padding: 10,
+        zIndex: 1,
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+    },
+    totalPriceText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    scannedCardsContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        paddingVertical: 10,
+    },
+    scannedCardsList: {
+        paddingHorizontal: 10,
+    },
+    scannedCardItem: {
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        borderRadius: 8,
+        marginHorizontal: 5,
+        padding: 10,
+        width: 150,
+    },
+    scannedCardContent: {
+        alignItems: 'center',
+    },
+    cardName: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#333',
+        textAlign: 'center',
+        marginBottom: 4,
+    },
+    cardPrice: {
+        fontSize: 14,
+        color: '#2196F3',
+        fontWeight: 'bold',
     },
 });
 

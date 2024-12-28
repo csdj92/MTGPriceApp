@@ -8,6 +8,7 @@ import {
     TouchableOpacity,
     Linking,
     Modal,
+    Image,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { ExtendedCard } from '../types/card';
@@ -15,6 +16,7 @@ interface CardListProps {
     cards: ExtendedCard[];
     isLoading: boolean;
     onCardPress?: (card: ExtendedCard) => void;
+    onAddToCollection?: (card: ExtendedCard) => void;
     onEndReached?: () => void;
     onEndReachedThreshold?: number;
     ListFooterComponent?: React.ComponentType<any> | React.ReactElement | null;
@@ -212,7 +214,7 @@ const ManaCost = ({ manaCost }: { manaCost: string }) => {
 };
 
 const CardItem = ({ card, onPress }: { card: ExtendedCard; onPress?: () => void }) => (
-    <TouchableOpacity style={styles.card} onPress={onPress}>
+    <TouchableOpacity style={styles.cardItem} onPress={onPress}>
         <View style={styles.cardHeader}>
             <Text style={styles.cardName}>{card.name}</Text>
             <ManaCost manaCost={card.manaCost || ''} />
@@ -236,7 +238,7 @@ const CardItem = ({ card, onPress }: { card: ExtendedCard; onPress?: () => void 
     </TouchableOpacity>
 );
 
-const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onEndReached, onEndReachedThreshold, ListFooterComponent }) => {
+const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onAddToCollection, onEndReached, onEndReachedThreshold, ListFooterComponent }) => {
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
@@ -264,20 +266,69 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onEn
             style={styles.cardItem}
             onPress={() => onCardPress?.(item)}
         >
-            <View style={styles.cardHeader}>
-                <Text style={styles.cardName}>{item.name}</Text>
-                <Text style={styles.setInfo}>
-                    {item.setCode} ({item.setName})
-                </Text>
-            </View>
-            <View style={styles.cardDetails}>
-                <Text style={styles.cardType}>{item.type}</Text>
-                {item.manaCost && (
-                    <Text style={styles.manaCost}>{item.manaCost}</Text>
+            <View style={styles.cardMainInfo}>
+                <View style={styles.cardHeader}>
+                    <Text style={styles.cardName}>{item.name}</Text>
+                    <ManaCost manaCost={item.manaCost || ''} />
+                </View>
+
+                {item.imageUris?.normal && (
+                    <Image
+                        source={{ uri: item.imageUris.normal }}
+                        style={styles.cardImage}
+                        resizeMode="contain"
+                    />
+                )}
+
+                <View style={styles.cardDetails}>
+                    <View style={styles.setInfoContainer}>
+                        <Text style={styles.setInfo}>
+                            {item.setName} ({item.setCode})
+                        </Text>
+                        <Text style={[
+                            styles.rarity,
+                            styles[((item.rarity || 'common').toLowerCase()) as keyof typeof styles]
+                        ]}>
+                            • {item.rarity}
+                        </Text>
+                        {item.collectorNumber && (
+                            <Text style={styles.collectorNumber}>• #{item.collectorNumber}</Text>
+                        )}
+                    </View>
+                    <Text style={styles.cardType}>{item.type}</Text>
+                </View>
+
+                {item.text && (
+                    <View style={styles.cardTextContainer}>
+                        <Text style={styles.cardText}>{item.text}</Text>
+                    </View>
                 )}
             </View>
-            <PriceDisplay prices={item.prices} />
-            <PurchaseLinks urls={item.purchaseUrls} />
+
+            <View style={styles.cardFooter}>
+                <View style={styles.priceSection}>
+                    <Text style={styles.sectionTitle}>Prices</Text>
+                    <PriceDisplay prices={item.prices} />
+                </View>
+
+                <View style={styles.purchaseSection}>
+                    <Text style={styles.sectionTitle}>Purchase</Text>
+                    <PurchaseLinks urls={item.purchaseUrls} />
+                </View>
+
+                <TouchableOpacity
+                    style={styles.addToCollectionButton}
+                    onPress={() => onAddToCollection?.(item)}
+                >
+                    <Icon name="playlist-plus" size={20} color="white" />
+                    <Text style={styles.addToCollectionText}>Add to Collection</Text>
+                </TouchableOpacity>
+
+                <View style={styles.legalitySection}>
+                    <Text style={styles.sectionTitle}>Format Legality</Text>
+                    <LegalitiesDropdown legalities={item.legalities} />
+                </View>
+            </View>
         </TouchableOpacity>
     );
 
@@ -289,12 +340,14 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onEn
             contentContainerStyle={styles.listContainer}
             ListEmptyComponent={
                 <View style={styles.emptyContainer}>
+                    <Icon name="cards-outline" size={64} color="#ccc" />
                     <Text style={styles.emptyText}>No cards found</Text>
                 </View>
             }
             onEndReached={onEndReached}
             onEndReachedThreshold={onEndReachedThreshold}
             ListFooterComponent={ListFooterComponent}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
     );
 };
@@ -302,11 +355,13 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onEn
 const styles = StyleSheet.create({
     listContainer: {
         padding: 16,
+        paddingBottom: 32,
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        padding: 32,
     },
     loadingText: {
         marginTop: 16,
@@ -315,14 +370,25 @@ const styles = StyleSheet.create({
     },
     cardItem: {
         backgroundColor: '#fff',
-        borderRadius: 8,
+        borderRadius: 12,
         padding: 16,
-        marginBottom: 12,
-        elevation: 2,
+        elevation: 3,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
+    },
+    cardMainInfo: {
+        marginBottom: 16,
+    },
+    cardImage: {
+        width: '100%',
+        height: 350,
+        borderRadius: 8,
+        marginBottom: 12,
+    },
+    cardDetails: {
+        marginBottom: 8,
     },
     cardHeader: {
         flexDirection: 'row',
@@ -331,58 +397,64 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     cardName: {
-        fontSize: 18,
+        fontSize: 20,
         fontWeight: 'bold',
         color: '#333',
         flex: 1,
+        marginRight: 8,
+    },
+    cardSubInfo: {
+        marginBottom: 8,
+    },
+    setInfoContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        marginBottom: 4,
     },
     setInfo: {
         fontSize: 14,
         color: '#666',
-        marginLeft: 8,
     },
-    cardDetails: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
+    collectorNumber: {
+        fontSize: 14,
+        color: '#666',
     },
     cardType: {
-        fontSize: 14,
-        color: '#666',
+        fontSize: 15,
+        color: '#444',
+        fontStyle: 'italic',
     },
-    manaCost: {
-        fontSize: 14,
-        color: '#666',
-    },
-    priceContainer: {
+    cardTextContainer: {
+        backgroundColor: '#f8f9fa',
+        borderRadius: 8,
+        padding: 12,
         marginTop: 8,
     },
-    price: {
+    cardText: {
         fontSize: 14,
         color: '#333',
-        marginBottom: 4,
+        lineHeight: 20,
     },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 20,
+    cardFooter: {
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+        paddingTop: 12,
     },
-    emptyText: {
+    sectionTitle: {
         fontSize: 16,
-        color: '#666',
-        textAlign: 'center',
+        fontWeight: '600',
+        color: '#333',
+        marginBottom: 8,
     },
-    card: {
-        backgroundColor: 'white',
-        borderRadius: 8,
-        padding: 16,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
+    priceSection: {
+        marginBottom: 12,
+    },
+    purchaseSection: {
+        marginBottom: 12,
+    },
+    legalitySection: {
+        marginBottom: 4,
     },
     rarity: {
         fontSize: 14,
@@ -400,65 +472,89 @@ const styles = StyleSheet.create({
     mythic: {
         color: '#F44336',
     },
-    type: {
-        fontSize: 14,
-        color: '#666',
-        marginBottom: 8,
+    priceContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
     },
-    text: {
+    price: {
         fontSize: 14,
         color: '#333',
-        marginBottom: 8,
+        backgroundColor: '#f0f0f0',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 4,
     },
     purchaseLinksContainer: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         gap: 8,
-        marginTop: 8,
     },
     purchaseButton: {
         backgroundColor: '#4CAF50',
         paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 4,
+        paddingVertical: 8,
+        borderRadius: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     purchaseButtonText: {
         color: 'white',
         fontSize: 14,
-        fontWeight: '500',
+        fontWeight: '600',
     },
     legalitiesContainer: {
-        marginTop: 8,
+        backgroundColor: '#f8f9fa',
+        borderRadius: 8,
+        overflow: 'hidden',
     },
     legalitiesButton: {
-        backgroundColor: '#F5F5F5',
-        padding: 8,
-        borderRadius: 4,
+        padding: 12,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
     },
     legalitiesButtonText: {
         fontSize: 14,
-        color: '#666',
+        color: '#333',
+        fontWeight: '500',
     },
     legalitiesList: {
-        marginTop: 8,
-        backgroundColor: '#FFFFFF',
-        borderRadius: 4,
-        padding: 8,
+        padding: 12,
+        backgroundColor: '#fff',
     },
     legalityItem: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingVertical: 4,
+        alignItems: 'center',
+        paddingVertical: 6,
     },
     formatName: {
         fontSize: 14,
-        color: '#666',
+        color: '#444',
+        fontWeight: '500',
     },
     legalityStatus: {
         fontSize: 14,
-        fontWeight: '500',
+        fontWeight: '600',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 4,
     },
     separator: {
-        height: 16,
+        height: 12,
+    },
+    emptyContainer: {
+        padding: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    emptyText: {
+        fontSize: 16,
+        color: '#666',
+        marginTop: 16,
+        textAlign: 'center',
     },
     manaCostContainer: {
         flexDirection: 'row',
@@ -473,6 +569,32 @@ const styles = StyleSheet.create({
         backgroundColor: '#F5F5F5',
         borderRadius: 12,
     },
-});
+    type: {
+        fontSize: 15,
+        color: '#444',
+        marginBottom: 8,
+    },
+    text: {
+        fontSize: 14,
+        color: '#333',
+        marginBottom: 12,
+    },
+    addToCollectionButton: {
+        backgroundColor: '#2196F3',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 6,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginBottom: 12,
+    },
+    addToCollectionText: {
+        color: 'white',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+} as const);
 
 export default CardList; 

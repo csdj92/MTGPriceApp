@@ -13,7 +13,7 @@ const StartScreen = () => {
         setIsLoading(true);
         try {
             console.log('Starting to fetch cards...');
-            const fetchedCards = await scryfallService.searchCards('set:fdn');
+            const { data: fetchedCards } = await scryfallService.searchCards('set:fdn');
             setCards(fetchedCards);
             setShowList(true);
         } catch (error) {
