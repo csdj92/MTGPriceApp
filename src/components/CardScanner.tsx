@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, NativeModules, NativeEventEmitter, PermissionsAndroid, Dimensions } from 'react-native';
+import { View, StyleSheet, Text, NativeModules, NativeEventEmitter, PermissionsAndroid, Dimensions, FlatList, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import LiveOcrPreview from './LiveOcrPreview';
+import type { ExtendedCard } from '../types/card';
 
 const { LiveOcr } = NativeModules;
 const liveOcrEmitter = new NativeEventEmitter(LiveOcr);
@@ -9,9 +10,24 @@ const liveOcrEmitter = new NativeEventEmitter(LiveOcr);
 interface CardScannerProps {
     onTextDetected: (text: string) => void;
     onError: (error: Error) => void;
+    scannedCards: ExtendedCard[];
+    totalPrice: number;
+    onCardPress?: (card: ExtendedCard) => void;
 }
 
-const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) => {
+const CardScanner: React.FC<CardScannerProps> = ({
+    onTextDetected,
+    onError,
+    scannedCards,
+    totalPrice,
+    onCardPress
+}) => {
+    console.log('[CardScanner] Rendering with:', {
+        scannedCardsCount: scannedCards?.length,
+        totalPrice,
+        hasScannedCards: Boolean(scannedCards?.length),
+    });
+
     const [hasPermission, setHasPermission] = useState(false);
     const [isActive, setIsActive] = useState(false);
     const [aspectRatioStyle, setAspectRatioStyle] = useState({});
@@ -130,6 +146,20 @@ const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) =>
         }
     };
 
+    const renderScannedCard = ({ item }: { item: ExtendedCard }) => (
+        <TouchableOpacity
+            style={styles.scannedCardItem}
+            onPress={() => onCardPress?.(item)}
+        >
+            <View style={styles.scannedCardContent}>
+                <Text style={styles.cardName}>{item.name}</Text>
+                <Text style={styles.cardPrice}>
+                    ${(item.prices?.usd ? Number(item.prices.usd) : 0).toFixed(2)}
+                </Text>
+            </View>
+        </TouchableOpacity>
+    );
+
     if (!hasPermission) {
         return (
             <View style={styles.container}>
@@ -140,18 +170,41 @@ const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) =>
 
     return (
         <View style={styles.container}>
-            {/* Camera Preview with Aspect Ratio */}
+            {/* Base Layer - Camera Preview */}
             <View style={[styles.previewContainer, aspectRatioStyle]}>
                 <LiveOcrPreview
                     style={StyleSheet.absoluteFill}
                     isActive={isActive}
                 />
-                {/* Overlay */}
+            </View>
+
+            {/* UI Layer - All UI elements */}
+            <View style={styles.uiContainer}>
+                {/* Price Counter */}
+                <View style={styles.totalPriceContainer}>
+                    <Text style={styles.totalPriceText}>
+                        Total: ${totalPrice.toFixed(2)}
+                    </Text>
+                </View>
+
+                {/* Center Overlay */}
                 <View style={styles.overlay}>
                     <View style={styles.scanArea}>
                         <Text style={styles.overlayText}>Position card name here</Text>
                         <Icon name="card-search" size={40} color="white" style={styles.cameraIcon} />
                     </View>
+                </View>
+
+                {/* Scanned Cards List */}
+                <View style={styles.scannedCardsContainer}>
+                    <FlatList
+                        data={scannedCards}
+                        renderItem={renderScannedCard}
+                        keyExtractor={(item, index) => `${item.id}-${index}`}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.scannedCardsList}
+                    />
                 </View>
             </View>
         </View>
@@ -169,13 +222,19 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        justifyContent: 'center', // Ensures content is centered vertically
-        alignItems: 'center', // Ensures content is centered horizontally
+    },
+    uiContainer: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 1,
     },
     overlay: {
-        ...StyleSheet.absoluteFillObject, // Makes the overlay fill the same space as the preview
-        justifyContent: 'center', // Center vertically
-        alignItems: 'center', // Center horizontally
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     scanArea: {
         justifyContent: 'center',
@@ -197,6 +256,54 @@ const styles = StyleSheet.create({
         color: 'white',
         textAlign: 'center',
         padding: 16,
+    },
+    totalPriceContainer: {
+        position: 'absolute',
+        top: 20,
+        right: 20,
+        backgroundColor: 'rgba(33, 150, 243, 0.9)',
+        borderRadius: 20,
+        padding: 10,
+        zIndex: 2,
+    },
+    totalPriceText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    scannedCardsContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        paddingVertical: 10,
+        zIndex: 2,
+    },
+    scannedCardsList: {
+        paddingHorizontal: 10,
+    },
+    scannedCardItem: {
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        borderRadius: 8,
+        marginHorizontal: 5,
+        padding: 10,
+        width: 150,
+    },
+    scannedCardContent: {
+        alignItems: 'center',
+    },
+    cardName: {
+        color: '#000',
+        fontSize: 14,
+        fontWeight: '500',
+        textAlign: 'center',
+        marginBottom: 4,
+    },
+    cardPrice: {
+        color: '#2196F3',
+        fontSize: 14,
+        fontWeight: 'bold',
     },
 });
 

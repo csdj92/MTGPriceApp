@@ -40,6 +40,14 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         loadScanHistory();
     }, []);
 
+    // Add monitoring for scanned cards changes
+    useEffect(() => {
+        console.log('[PriceLookupScreen] Scanned cards updated:', {
+            count: scannedCards?.length,
+            cards: scannedCards?.map(card => card.name)
+        });
+    }, [scannedCards]);
+
     const loadScanHistory = async () => {
         try {
             const history = await databaseService.getScanHistory();
@@ -91,7 +99,14 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleScan = async (text: string) => {
+        // Ignore very short text that's likely just noise or partial scans
+        if (!text || text.length < 3) {
+            return;
+        }
+
         console.log('[PriceLookupScreen] Scan detected text:', text);
+
+        // Only show loading if we have a substantial text to search
         setIsLoading(true);
         try {
             console.log('[PriceLookupScreen] Attempting to search for card with text:', text);
@@ -101,20 +116,32 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
             if (foundCards.length > 0) {
                 const newCard = foundCards[0]; // Get the first (most likely) match
-                // Add to cache first to ensure UUID is generated
-                const cardWithUuid = await databaseService.addToCache(newCard);
-                await databaseService.addToScanHistory(cardWithUuid);
-                const updatedCards = Array.isArray(scannedCards) ? [...scannedCards, cardWithUuid] : [cardWithUuid];
-                updateTotalPrice(updatedCards);
-                setScannedCards(updatedCards);
+                console.log('[PriceLookupScreen] New card found:', newCard.name);
+
+                // Add to database first
+                await databaseService.addToScanHistory(newCard);
+
+                // Update state using functional update to ensure we have the latest state
+                setScannedCards(prevCards => {
+                    const currentCards = Array.isArray(prevCards) ? prevCards : [];
+                    // Check if card is already in the list
+                    const isDuplicate = currentCards.some(card => card.id === newCard.id);
+                    if (isDuplicate) {
+                        return currentCards;
+                    }
+                    const updatedCards = [newCard, ...currentCards];
+                    // Update total price after cards are updated
+                    updateTotalPrice(updatedCards);
+                    return updatedCards;
+                });
+
+                console.log('[PriceLookupScreen] State updated with new card');
             } else {
                 console.log('[PriceLookupScreen] No results found for scanned text');
-                // Don't show alert for no results, just log it
             }
         } catch (error) {
             console.error('[PriceLookupScreen] Error processing scan:', error);
-            // Only show error alert for non-search related errors
-            if (!(error instanceof Error && error.message.includes('Scryfall API error: 400'))) {
+            if (error instanceof Error && !error.message.includes('404')) {
                 Alert.alert('Error', 'Failed to process scan. Please try again.');
             }
         } finally {
@@ -123,12 +150,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleScanError = (error: Error) => {
-        console.error('[PriceLookupScreen] Scan error:', error);
-        // Only show critical errors, not search-related ones
-        if (!error.message.includes('camera') && !error.message.includes('permission')) {
-            return;
-        }
-        Alert.alert('Error', error.message);
+        Alert.alert('Scan Error', error.message);
+        setIsCameraActive(false);
     };
 
     const handleCardPress = (card: ExtendedCard) => {
@@ -140,9 +163,10 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         if (!selectedCard) return;
 
         try {
-            // First ensure the card is in the cache and has a UUID
-            const cardWithUuid = await databaseService.addToCache(selectedCard);
-            await databaseService.addCardToCollection(cardWithUuid.uuid!, collection.id);
+            if (!selectedCard.uuid) {
+                throw new Error('Card UUID is missing');
+            }
+            await databaseService.addCardToCollection(selectedCard.uuid, collection.id);
             await databaseService.markScannedCardAddedToCollection(selectedCard.id, collection.id);
             Alert.alert('Success', `Added ${selectedCard.name} to ${collection.name}`);
         } catch (error) {
@@ -170,31 +194,13 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
     const renderCameraContent = () => (
         <View style={styles.cameraContainer}>
-            {/* Commenting out the total price overlay
-            <View style={styles.totalPriceContainer}>
-                <Text style={styles.totalPriceText}>
-                    Total: ${totalPrice.toFixed(2)}
-                </Text>
-            </View>
-            */}
-            <View style={[styles.cameraPreviewContainer, { width: 1344, height: 2992 }]}>
-                <CardScanner
-                    onTextDetected={handleScan}
-                    onError={handleScanError}
-                />
-            </View>
-            {/* Commenting out the scanned cards overlay
-            <View style={styles.scannedCardsOverlay}>
-                <FlatList
-                    data={scannedCards}
-                    renderItem={renderScannedCard}
-                    keyExtractor={(item, index) => `${item.id}-${index}`}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.scannedCardsList}
-                />
-            </View>
-            */}
+            <CardScanner
+                onTextDetected={handleScan}
+                onError={handleScanError}
+                scannedCards={scannedCards}
+                totalPrice={totalPrice}
+                onCardPress={handleCardPress}
+            />
         </View>
     );
 
@@ -238,21 +244,17 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 onRequestClose={() => setIsCameraActive(false)}
             >
                 <SafeAreaView style={styles.modalContainer}>
-                    {/* Commenting out the header
                     <View style={styles.modalHeader}>
                         <TouchableOpacity
                             style={styles.closeButton}
                             onPress={() => {
                                 setIsCameraActive(false);
-                                setScannedCards([]);
-                                setTotalPrice(0);
                             }}
                         >
                             <Icon name="close" size={24} color="#666" />
                         </TouchableOpacity>
                         <Text style={styles.modalTitle}>Scan Card</Text>
                     </View>
-                    */}
                     {renderCameraContent()}
                 </SafeAreaView>
             </Modal>
@@ -319,12 +321,50 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: 'black',
     },
+    modalHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 16,
+        backgroundColor: 'white',
+    },
+    closeButton: {
+        padding: 8,
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: '500',
+        marginLeft: 16,
+    },
     cameraContainer: {
         flex: 1,
-        backgroundColor: 'black',
+        position: 'relative',
     },
-    cameraPreviewContainer: {
-        flex: 1,
+    totalPriceContainer: {
+        position: 'absolute',
+        top: 20,
+        right: 20,
+        backgroundColor: 'rgba(33, 150, 243, 0.9)',
+        borderRadius: 20,
+        padding: 10,
+        zIndex: 1,
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+    },
+    totalPriceText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    scannedCardsContainer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        paddingVertical: 10,
     },
     scannedCardsList: {
         paddingHorizontal: 10,
