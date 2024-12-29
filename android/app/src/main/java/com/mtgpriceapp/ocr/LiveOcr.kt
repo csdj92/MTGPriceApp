@@ -37,6 +37,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     private var previewSurface: Surface? = null
     private var isSessionActive = false
     private var processingImage = false
+    private var lastDetectedName: String? = null
     private val executor: Executor = Executors.newSingleThreadExecutor()
     private val textRecognizer: TextRecognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -143,24 +144,21 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                 
                                 textRecognizer.process(inputImage)
                                     .addOnSuccessListener(executor) { text ->
-                                        if (text.text.isNotBlank()) {
+                                        // Find the most likely card name from the detected text
+                                        val cardName = text.textBlocks
+                                            .asSequence()
+                                            .map { it.text.trim() }
+                                            .filter { it.length in 3..50 } // Reasonable length for card names
+                                            .filter { !it.contains(Regex("[\\d/]")) } // Filter out power/toughness and set numbers
+                                            .filter { !it.matches(Regex(".*(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker).*")) } // Filter out type lines
+                                            .filter { !it.contains(Regex("(?i)(counter|token|create|whenever|dies|enters|control|flying)")) } // Filter out rules text
+                                            .filter { !it.contains(Regex("(?i)(Wizards of the Coast|™|©)")) } // Filter out copyright text
+                                            .firstOrNull()
+
+                                        if (!cardName.isNullOrBlank() && cardName != lastDetectedName) {
+                                            lastDetectedName = cardName
                                             val params = Arguments.createMap().apply {
-                                                putString("text", text.text)
-                                                // Add bounding box information if needed
-                                                val blocks = Arguments.createArray()
-                                                text.textBlocks.forEach { block ->
-                                                    val blockMap = Arguments.createMap().apply {
-                                                        putString("text", block.text)
-                                                        putMap("boundingBox", Arguments.createMap().apply {
-                                                            putInt("left", block.boundingBox?.left ?: 0)
-                                                            putInt("top", block.boundingBox?.top ?: 0)
-                                                            putInt("right", block.boundingBox?.right ?: 0)
-                                                            putInt("bottom", block.boundingBox?.bottom ?: 0)
-                                                        })
-                                                    }
-                                                    blocks.pushMap(blockMap)
-                                                }
-                                                putArray("blocks", blocks)
+                                                putString("text", cardName)
                                             }
                                             // Send event to React Native
                                             reactApplicationContext
@@ -168,7 +166,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                                 .emit("LiveOcrResult", params)
                                             
                                             // Log the detected text
-                                            Log.d(TAG, "OCR Text detected: ${text.text}")
+                                            Log.d(TAG, "Card name detected: $cardName")
                                         }
                                     }
                                     .addOnFailureListener(executor) { e ->

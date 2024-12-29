@@ -109,19 +109,26 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 setScannedCards(updatedCards);
             } else {
                 console.log('[PriceLookupScreen] No results found for scanned text');
-                Alert.alert('No Results', 'No cards found matching the scanned text.');
+                // Don't show alert for no results, just log it
             }
         } catch (error) {
             console.error('[PriceLookupScreen] Error processing scan:', error);
-            Alert.alert('Error', 'Failed to process scan. Please try again.');
+            // Only show error alert for non-search related errors
+            if (!(error instanceof Error && error.message.includes('Scryfall API error: 400'))) {
+                Alert.alert('Error', 'Failed to process scan. Please try again.');
+            }
         } finally {
             setIsLoading(false);
         }
     };
 
     const handleScanError = (error: Error) => {
-        Alert.alert('Scan Error', error.message);
-        setIsCameraActive(false);
+        console.error('[PriceLookupScreen] Scan error:', error);
+        // Only show critical errors, not search-related ones
+        if (!error.message.includes('camera') && !error.message.includes('permission')) {
+            return;
+        }
+        Alert.alert('Error', error.message);
     };
 
     const handleCardPress = (card: ExtendedCard) => {

@@ -20,6 +20,9 @@
 10. Fixed OCR event emission
 11. Added comprehensive logging
 12. Improved surface lifecycle management
+13. Optimized OCR text filtering
+14. Improved error handling UI
+15. Added noise reduction for OCR
 
 ## Remaining Issues
 1. Test OCR accuracy
