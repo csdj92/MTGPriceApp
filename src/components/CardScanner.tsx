@@ -4,7 +4,7 @@ import { View, StyleSheet, Text, NativeModules, NativeEventEmitter, PermissionsA
 console.log('[CardScanner] Available Native Modules:', Object.keys(NativeModules));
 const { LiveOcr } = NativeModules;
 console.log('[CardScanner] LiveOcr module:', LiveOcr);
-const liveOcrEmitter = new NativeEventEmitter();
+const liveOcrEmitter = new NativeEventEmitter(LiveOcr);
 
 interface LiveOcrPreviewProps {
     style?: StyleProp<ViewStyle>;
@@ -26,13 +26,17 @@ const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) =>
         checkPermission();
 
         // Subscribe to OCR results
+        console.log('[CardScanner] Setting up OCR event listener');
         const subscription = liveOcrEmitter.addListener('LiveOcrResult', (event) => {
+            console.log('[CardScanner] Received OCR result:', event);
             if (event.text) {
+                console.log('[CardScanner] Detected text:', event.text);
                 onTextDetected(event.text);
             }
         });
 
         return () => {
+            console.log('[CardScanner] Cleaning up...');
             setIsActive(false);
             stopOcrSession();
             subscription.remove();
@@ -72,7 +76,7 @@ const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) =>
         try {
             console.log('[CardScanner] Starting OCR session...');
             await LiveOcr.startOcrSession();
-            console.log('[CardScanner] OCR Session started');
+            console.log('[CardScanner] OCR Session started successfully');
         } catch (error) {
             console.error('[CardScanner] Failed to start OCR session:', error);
             onError(error instanceof Error ? error : new Error('Failed to start OCR session'));
@@ -84,7 +88,7 @@ const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) =>
         try {
             console.log('[CardScanner] Stopping OCR session...');
             await LiveOcr.stopOcrSession();
-            console.log('[CardScanner] OCR Session stopped');
+            console.log('[CardScanner] OCR Session stopped successfully');
         } catch (error) {
             console.error('[CardScanner] Failed to stop OCR session:', error);
         }
