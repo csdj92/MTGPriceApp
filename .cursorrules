@@ -1,11 +1,14 @@
 # React Native MTG Price App Project
 
 ## Current Tasks
-1. Fix ML Kit text recognition implementation
-2. Improve image processing pipeline
-3. Handle image rotation correctly
-4. Add proper error handling for OCR
-5. Optimize camera preview performance
+1. Fix camera zoom issue - implement manual zoom control (0.2x zoom)
+2. Add zoom in/out buttons to camera preview
+3. Improve image processing pipeline
+4. Handle image rotation correctly
+5. Add proper error handling for OCR
+6. Fix camera viewport sizing issue
+7. Fix missing 'text' style property TypeScript error
+8. Add icon overlay to LiveOCR preview screen
 
 ## Progress Made
 1. Fixed camera preview initialization
@@ -23,16 +26,22 @@
 13. Optimized OCR text filtering
 14. Improved error handling UI
 15. Added noise reduction for OCR
+16. Implemented basic camera preview with proper aspect ratio
+17. Added manual zoom control (0.2x zoom)
+18. Verified correct overlay positioning and z-index
 
 ## Remaining Issues
 1. Test OCR accuracy
 2. Monitor performance
 3. Add user feedback for OCR results
 4. Test edge cases
+5. Implement zoom controls UI
 
 ## Next Steps
-1. Test OCR accuracy with various cards
-2. Add performance monitoring
-3. Improve user feedback
-4. Test edge cases
-5. Add error recovery mechanisms 
+1. Add zoom in/out buttons
+2. Test zoom functionality
+3. Test OCR accuracy with various cards
+4. Add performance monitoring
+5. Improve user feedback
+6. Test edge cases
+7. Add error recovery mechanisms 

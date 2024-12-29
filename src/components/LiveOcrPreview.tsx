@@ -1,49 +1,12 @@
-import React from 'react';
-import { StyleSheet, NativeSyntheticEvent } from 'react-native';
-import NativeLiveOcrPreview, {
-    NativeLiveOcrPreviewProps,
-    OcrResultEvent,
-    OcrErrorEvent
-} from '../native/LiveOcrPreview';
+import { StyleProp, ViewStyle, requireNativeComponent } from 'react-native';
+import type { HostComponent } from 'react-native';
 
-export interface LiveOcrPreviewProps extends Omit<NativeLiveOcrPreviewProps, 'onOcrResult' | 'onOcrError'> {
-    onOcrResult?: (text: string) => void;
-    onOcrError?: (error: string) => void;
+interface LiveOcrPreviewProps {
+    style?: StyleProp<ViewStyle>;
+    isActive: boolean;
 }
 
-export const LiveOcrPreview: React.FC<LiveOcrPreviewProps> = ({
-    onOcrResult,
-    onOcrError,
-    style,
-    ...rest
-}) => {
-    const handleOcrResult = React.useCallback(
-        (event: NativeSyntheticEvent<OcrResultEvent>) => {
-            onOcrResult?.(event.nativeEvent.text);
-        },
-        [onOcrResult]
-    );
+const LiveOcrPreview = requireNativeComponent<LiveOcrPreviewProps>('LiveOcrPreview');
 
-    const handleOcrError = React.useCallback(
-        (event: NativeSyntheticEvent<OcrErrorEvent>) => {
-            onOcrError?.(event.nativeEvent.error);
-        },
-        [onOcrError]
-    );
+export default LiveOcrPreview as HostComponent<LiveOcrPreviewProps>;
 
-    return (
-        <NativeLiveOcrPreview
-            style={[styles.preview, style]}
-            onOcrResult={handleOcrResult}
-            onOcrError={handleOcrError}
-            {...rest}
-        />
-    );
-};
-
-const styles = StyleSheet.create({
-    preview: {
-        width: '100%',
-        height: '100%',
-    },
-}); 

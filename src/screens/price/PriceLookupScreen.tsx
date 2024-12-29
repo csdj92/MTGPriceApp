@@ -170,16 +170,21 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
     const renderCameraContent = () => (
         <View style={styles.cameraContainer}>
+            {/* Commenting out the total price overlay
             <View style={styles.totalPriceContainer}>
                 <Text style={styles.totalPriceText}>
                     Total: ${totalPrice.toFixed(2)}
                 </Text>
             </View>
-            <CardScanner
-                onTextDetected={handleScan}
-                onError={handleScanError}
-            />
-            <View style={styles.scannedCardsContainer}>
+            */}
+            <View style={[styles.cameraPreviewContainer, { width: 1344, height: 2992 }]}>
+                <CardScanner
+                    onTextDetected={handleScan}
+                    onError={handleScanError}
+                />
+            </View>
+            {/* Commenting out the scanned cards overlay
+            <View style={styles.scannedCardsOverlay}>
                 <FlatList
                     data={scannedCards}
                     renderItem={renderScannedCard}
@@ -189,6 +194,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     contentContainerStyle={styles.scannedCardsList}
                 />
             </View>
+            */}
         </View>
     );
 
@@ -232,6 +238,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 onRequestClose={() => setIsCameraActive(false)}
             >
                 <SafeAreaView style={styles.modalContainer}>
+                    {/* Commenting out the header
                     <View style={styles.modalHeader}>
                         <TouchableOpacity
                             style={styles.closeButton}
@@ -245,6 +252,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                         </TouchableOpacity>
                         <Text style={styles.modalTitle}>Scan Card</Text>
                     </View>
+                    */}
                     {renderCameraContent()}
                 </SafeAreaView>
             </Modal>
@@ -311,50 +319,12 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: 'black',
     },
-    modalHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 16,
-        backgroundColor: 'white',
-    },
-    closeButton: {
-        padding: 8,
-    },
-    modalTitle: {
-        fontSize: 18,
-        fontWeight: '500',
-        marginLeft: 16,
-    },
     cameraContainer: {
         flex: 1,
-        position: 'relative',
+        backgroundColor: 'black',
     },
-    totalPriceContainer: {
-        position: 'absolute',
-        top: 20,
-        right: 20,
-        backgroundColor: 'rgba(33, 150, 243, 0.9)',
-        borderRadius: 20,
-        padding: 10,
-        zIndex: 1,
-        elevation: 5,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-    },
-    totalPriceText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
-    scannedCardsContainer: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        paddingVertical: 10,
+    cameraPreviewContainer: {
+        flex: 1,
     },
     scannedCardsList: {
         paddingHorizontal: 10,

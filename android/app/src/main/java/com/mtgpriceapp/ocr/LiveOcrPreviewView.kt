@@ -15,7 +15,11 @@ class LiveOcrPreviewView(context: Context, private val liveOcrModule: LiveOcr?) 
     private val surfaceView: SurfaceView = SurfaceView(context)
     
     init {
-        // Add SurfaceView to fill the frame
+        layoutParams = LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        
         addView(surfaceView, LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
@@ -58,9 +62,7 @@ class LiveOcrPreviewView(context: Context, private val liveOcrModule: LiveOcr?) 
     fun setIsActive(active: Boolean) {
         Log.d(TAG, "Setting active state to: $active")
         synchronized(this) {
-            if (isActive == active) {
-                return  // No change needed
-            }
+            if (isActive == active) return
             
             isActive = active
             if (active) {
@@ -74,16 +76,16 @@ class LiveOcrPreviewView(context: Context, private val liveOcrModule: LiveOcr?) 
     }
 
     private fun setupPreview() {
-        Log.d(TAG, "Setting up preview with valid surface")
         if (!isSurfaceValid) {
-            Log.e(TAG, "Surface is not valid")
+            Log.e(TAG, "Surface is not valid yet. Retrying...")
+            postDelayed({ setupPreview() }, 100) // Retry after a short delay
             return
         }
         if (liveOcrModule == null) {
             Log.e(TAG, "LiveOcr module is null")
             return
         }
-        
+
         try {
             liveOcrModule.setPreviewSurface(surfaceView.holder.surface)
             isPreviewSetup.set(true)
@@ -94,7 +96,6 @@ class LiveOcrPreviewView(context: Context, private val liveOcrModule: LiveOcr?) 
     }
 
     private fun releasePreview() {
-        Log.d(TAG, "Releasing preview")
         try {
             liveOcrModule?.setPreviewSurface(null)
         } catch (e: Exception) {

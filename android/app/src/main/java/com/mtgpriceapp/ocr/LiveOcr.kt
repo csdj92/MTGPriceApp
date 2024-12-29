@@ -2,6 +2,7 @@ package com.mtgpriceapp.ocr
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.ImageFormat
 import android.hardware.camera2.*
 import android.media.Image
@@ -9,7 +10,6 @@ import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
-import android.util.Range
 import android.util.Size
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -24,7 +24,6 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
-import kotlin.math.abs
 
 @ReactModule(name = LiveOcr.NAME)
 class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -46,10 +45,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     companion object {
         private const val TAG = "LiveOcr"
         const val NAME = "LiveOcr"
-        private const val TARGET_PREVIEW_WIDTH = 1920
-        private const val TARGET_PREVIEW_HEIGHT = 1080
-        private const val MAX_PREVIEW_WIDTH = 1920
-        private const val MAX_PREVIEW_HEIGHT = 1080
+        private const val MAX_IMAGES = 2  // ML Kit recommendation for backpressure
     }
 
     override fun getName() = NAME
@@ -101,11 +97,21 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         }
     }
 
+    private fun sendPreviewSizeToReact(width: Int, height: Int) {
+        val params = Arguments.createMap().apply {
+            putInt("width", width)
+            putInt("height", height)
+        }
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("PreviewSize", params)
+    }
+
     @SuppressLint("MissingPermission")
     private fun setupCameraPreview() {
         val manager = reactApplicationContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         try {
-            val cameraId = findBackCamera(manager) ?: manager.cameraIdList[0]
+            val cameraId = findBackCamera(manager) ?: throw RuntimeException("Back camera not found")
             if (!cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
                 throw RuntimeException("Time out waiting to lock camera opening.")
             }
@@ -114,28 +120,37 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
             val streamConfigurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 ?: throw RuntimeException("Cannot get available preview/video sizes")
 
-            // Find the best preview size
-            val previewSize = streamConfigurationMap.getOutputSizes(ImageFormat.YUV_420_888)
-                .filter { it.width <= MAX_PREVIEW_WIDTH && it.height <= MAX_PREVIEW_HEIGHT }
-                .maxByOrNull { it.width * it.height }
-                ?: Size(TARGET_PREVIEW_WIDTH, TARGET_PREVIEW_HEIGHT)
+            // Get the output sizes and let system choose
+            val previewSizes = streamConfigurationMap.getOutputSizes(SurfaceHolder::class.java)
+            Log.d(TAG, "Available preview sizes: ${previewSizes.joinToString { "${it.width}x${it.height}" }}")
 
-            // Setup image reader for OCR
+            val displayMetrics = reactApplicationContext.resources.displayMetrics
+            val screenAspectRatio = displayMetrics.widthPixels.toFloat() / displayMetrics.heightPixels.toFloat()
+
+            // Choose 1920x1080 or the closest match
+            val bestPreviewSize = previewSizes
+                .filter { it.height >= 1080 || it.width >= 1920 }  // Filter for larger sizes
+                .minByOrNull { 
+                    val ratio = it.width.toFloat() / it.height.toFloat()
+                    Math.abs(ratio - screenAspectRatio)
+                } ?: previewSizes.first()
+
+            Log.d(TAG, "Selected preview size: ${bestPreviewSize.width}x${bestPreviewSize.height}")
+            sendPreviewSizeToReact(bestPreviewSize.width, bestPreviewSize.height)
+
             imageReader = ImageReader.newInstance(
-                previewSize.width,
-                previewSize.height,
+                bestPreviewSize.width,
+                bestPreviewSize.height,
                 ImageFormat.YUV_420_888,
-                3
+                MAX_IMAGES
             ).apply {
                 setOnImageAvailableListener({ reader ->
                     if (!processingImage && isSessionActive) {
                         processingImage = true
                         val image = reader.acquireLatestImage()
                         
-                        // Clear any pending images first
-                        while (reader.acquireLatestImage()?.also { it.close() } != null) {
-                            // Keep clearing until no more images
-                        }
+                        // Clear pending images to prevent backlog
+                        while (reader.acquireLatestImage()?.also { it.close() } != null) {}
                         
                         if (image != null) {
                             try {
@@ -144,15 +159,14 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                 
                                 textRecognizer.process(inputImage)
                                     .addOnSuccessListener(executor) { text ->
-                                        // Find the most likely card name from the detected text
                                         val cardName = text.textBlocks
                                             .asSequence()
                                             .map { it.text.trim() }
-                                            .filter { it.length in 3..50 } // Reasonable length for card names
-                                            .filter { !it.contains(Regex("[\\d/]")) } // Filter out power/toughness and set numbers
-                                            .filter { !it.matches(Regex(".*(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker).*")) } // Filter out type lines
-                                            .filter { !it.contains(Regex("(?i)(counter|token|create|whenever|dies|enters|control|flying)")) } // Filter out rules text
-                                            .filter { !it.contains(Regex("(?i)(Wizards of the Coast|™|©)")) } // Filter out copyright text
+                                            .filter { it.length in 3..50 }
+                                            .filter { !it.contains(Regex("[\\d/]")) }
+                                            .filter { !it.matches(Regex(".*(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker).*")) }
+                                            .filter { !it.contains(Regex("(?i)(counter|token|create|whenever|dies|enters|control|flying)")) }
+                                            .filter { !it.contains(Regex("(?i)(Wizards of the Coast|™|©)")) }
                                             .firstOrNull()
 
                                         if (!cardName.isNullOrBlank() && cardName != lastDetectedName) {
@@ -160,12 +174,9 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                             val params = Arguments.createMap().apply {
                                                 putString("text", cardName)
                                             }
-                                            // Send event to React Native
                                             reactApplicationContext
                                                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                                                 .emit("LiveOcrResult", params)
-                                            
-                                            // Log the detected text
                                             Log.d(TAG, "Card name detected: $cardName")
                                         }
                                     }
@@ -185,7 +196,6 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                             processingImage = false
                         }
                     } else {
-                        // Clear pending images if we're not processing
                         reader.acquireLatestImage()?.close()
                     }
                 }, backgroundHandler)
@@ -225,64 +235,43 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                 return
             }
 
-            val device = cameraDevice ?: run {
-                Log.e(TAG, "Camera device is null")
-                return
-            }
+            val previewRequestBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                ?: run {
+                    Log.e(TAG, "Camera device is null")
+                    return
+                }
 
-            val imageReaderSurface = imageReader?.surface ?: run {
-                Log.e(TAG, "Image reader surface is null")
-                return
-            }
-
-            // Close existing session first
-            captureSession?.close()
-            captureSession = null
-
-            // Create preview request with optimal settings
-            val previewRequestBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+            previewRequestBuilder.apply {
                 addTarget(surface)
-                addTarget(imageReaderSurface)
+                imageReader?.surface?.let { addTarget(it) }
                 
-                // Optimize for OCR
+                // Use system defaults
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(15, 30))
-                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                set(CaptureRequest.JPEG_QUALITY, 100.toByte())
             }
 
-            // Create capture session with proper synchronization
-            val surfaces = listOf(surface, imageReaderSurface)
-            device.createCaptureSession(
-                surfaces,
-                object : CameraCaptureSession.StateCallback() {
-                    override fun onConfigured(session: CameraCaptureSession) {
-                        if (device != cameraDevice || !isSessionActive) {
-                            session.close()
-                            return
-                        }
-                        
-                        captureSession = session
-                        try {
-                            session.setRepeatingRequest(
-                                previewRequestBuilder.build(),
-                                object : CameraCaptureSession.CaptureCallback() {},
-                                backgroundHandler
-                            )
-                        } catch (e: CameraAccessException) {
-                            Log.e(TAG, "Failed to start camera preview", e)
-                        }
-                    }
+            val surfaces = mutableListOf<Surface>(surface)
+            imageReader?.surface?.let { surfaces.add(it) }
 
-                    override fun onConfigureFailed(session: CameraCaptureSession) {
-                        Log.e(TAG, "Failed to configure camera session")
-                        session.close()
+            cameraDevice?.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) {
+                    captureSession = session
+                    try {
+                        session.setRepeatingRequest(
+                            previewRequestBuilder.build(),
+                            null,
+                            backgroundHandler
+                        )
+                    } catch (e: CameraAccessException) {
+                        Log.e(TAG, "Failed to start camera preview: ${e.message}")
                     }
-                },
-                backgroundHandler
-            )
+                }
+
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    Log.e(TAG, "Failed to configure camera session")
+                }
+            }, backgroundHandler)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error creating preview session", e)
@@ -335,9 +324,28 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     private fun findBackCamera(manager: CameraManager): String? {
-        return manager.cameraIdList.find { id ->
+        // Log all available cameras
+        manager.cameraIdList.forEach { id ->
             val characteristics = manager.getCameraCharacteristics(id)
-            characteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            val level = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
+            val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+            val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            val focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+            
+            Log.d(TAG, """Camera $id:
+                |  Facing: $facing (${if (facing == CameraCharacteristics.LENS_FACING_FRONT) "FRONT" else if (facing == CameraCharacteristics.LENS_FACING_BACK) "BACK" else "OTHER"})
+                |  Hardware Level: $level
+                |  Capabilities: $capabilities
+                |  Sensor Size: $sensorSize
+                |  Focal Lengths: ${focalLengths?.joinToString()}
+            """.trimMargin())
         }
+
+        // Find the back camera
+        return manager.cameraIdList.find { id ->
+            manager.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+        }?.also { Log.d(TAG, "Selected back camera: $it") }
     }
 }

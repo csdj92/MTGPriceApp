@@ -1,17 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, Text, NativeModules, NativeEventEmitter, PermissionsAndroid, requireNativeComponent, StyleProp, ViewStyle } from 'react-native';
+import { View, StyleSheet, Text, NativeModules, NativeEventEmitter, PermissionsAndroid, Dimensions } from 'react-native';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import LiveOcrPreview from './LiveOcrPreview';
 
-console.log('[CardScanner] Available Native Modules:', Object.keys(NativeModules));
 const { LiveOcr } = NativeModules;
-console.log('[CardScanner] LiveOcr module:', LiveOcr);
 const liveOcrEmitter = new NativeEventEmitter(LiveOcr);
-
-interface LiveOcrPreviewProps {
-    style?: StyleProp<ViewStyle>;
-    isActive: boolean;
-}
-
-const LiveOcrPreview = requireNativeComponent<LiveOcrPreviewProps>('LiveOcrPreview');
 
 interface CardScannerProps {
     onTextDetected: (text: string) => void;
@@ -21,6 +14,49 @@ interface CardScannerProps {
 const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) => {
     const [hasPermission, setHasPermission] = useState(false);
     const [isActive, setIsActive] = useState(false);
+    const [aspectRatioStyle, setAspectRatioStyle] = useState({});
+    const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
+
+    const updateAspectRatio = (previewWidth: number, previewHeight: number) => {
+        const screen = Dimensions.get('window');
+        const screenWidth = screen.width;
+        const screenHeight = screen.height;
+
+        // Calculate scale to fill screen height
+        const scale = screenHeight / previewHeight;
+        const scaledWidth = previewWidth * scale;
+        const horizontalOffset = (screenWidth - scaledWidth) / 2;
+
+        const newStyle = {
+            position: 'absolute',
+            width: scaledWidth,
+            height: screenHeight,
+            left: horizontalOffset,
+            top: 0,
+        };
+
+        console.log('[CardScanner] Setting aspect ratio style:', newStyle);
+        setAspectRatioStyle(newStyle);
+    };
+
+    useEffect(() => {
+        const sizeSubscription = liveOcrEmitter.addListener('PreviewSize', (event) => {
+            console.log('[CardScanner] Received preview size:', event);
+            setPreviewSize({ width: event.width, height: event.height });
+            updateAspectRatio(event.width, event.height);
+        });
+
+        const dimensionsListener = Dimensions.addEventListener('change', ({ window }) => {
+            if (previewSize) {
+                updateAspectRatio(previewSize.width, previewSize.height);
+            }
+        });
+
+        return () => {
+            sizeSubscription.remove();
+            dimensionsListener.remove();
+        };
+    }, [previewSize]);
 
     useEffect(() => {
         checkPermission();
@@ -104,13 +140,18 @@ const CardScanner: React.FC<CardScannerProps> = ({ onTextDetected, onError }) =>
 
     return (
         <View style={styles.container}>
-            <LiveOcrPreview
-                style={StyleSheet.absoluteFill}
-                isActive={isActive}
-            />
-            <View style={styles.overlay}>
-                <View style={styles.scanArea}>
-                    <Text style={styles.overlayText}>Position card name here</Text>
+            {/* Camera Preview with Aspect Ratio */}
+            <View style={[styles.previewContainer, aspectRatioStyle]}>
+                <LiveOcrPreview
+                    style={StyleSheet.absoluteFill}
+                    isActive={isActive}
+                />
+                {/* Overlay */}
+                <View style={styles.overlay}>
+                    <View style={styles.scanArea}>
+                        <Text style={styles.overlayText}>Position card name here</Text>
+                        <Icon name="card-search" size={40} color="white" style={styles.cameraIcon} />
+                    </View>
                 </View>
             </View>
         </View>
@@ -122,34 +163,41 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: 'black',
     },
+    previewContainer: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        justifyContent: 'center', // Ensures content is centered vertically
+        alignItems: 'center', // Ensures content is centered horizontally
+    },
+    overlay: {
+        ...StyleSheet.absoluteFillObject, // Makes the overlay fill the same space as the preview
+        justifyContent: 'center', // Center vertically
+        alignItems: 'center', // Center horizontally
+    },
+    scanArea: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        padding: 20,
+        borderRadius: 10,
+    },
+    overlayText: {
+        color: 'white',
+        textAlign: 'center',
+        fontSize: 18,
+    },
+    cameraIcon: {
+        marginTop: 16,
+        opacity: 0.8,
+    },
     text: {
         color: 'white',
         textAlign: 'center',
         padding: 16,
     },
-    overlay: {
-        ...StyleSheet.absoluteFillObject,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    scanArea: {
-        width: '80%',
-        height: 100,
-        borderWidth: 2,
-        borderColor: 'rgba(255, 255, 255, 0.5)',
-        borderRadius: 8,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    },
-    overlayText: {
-        color: 'white',
-        fontSize: 18,
-        backgroundColor: 'rgba(0, 0, 0, 0.6)',
-        padding: 8,
-        borderRadius: 4,
-    },
 });
 
 export default CardScanner;
-
