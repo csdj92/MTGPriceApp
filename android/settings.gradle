@@ -12,11 +12,11 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
 
 rootProject.name = "MTGPriceApp"
 
-include ":app"
+include(":app")
 
 // Include react-native-sqlite-storage
-include ":react-native-sqlite-storage"
+include(":react-native-sqlite-storage")
 project(":react-native-sqlite-storage").projectDir = new File(rootProject.projectDir, "../node_modules/react-native-sqlite-storage/platforms/android")
 
 // Include the React Native Gradle plugin
-includeBuild('../node_modules/@react-native/gradle-plugin')
+includeBuild("../node_modules/@react-native/gradle-plugin")

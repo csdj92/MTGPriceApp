@@ -48,5 +48,13 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "codegenConfig": {
+    "name": "MTGPriceAppSpecs",
+    "type": "components",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.mtgpriceapp"
+    }
   }
 }

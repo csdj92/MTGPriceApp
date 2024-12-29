@@ -101,8 +101,10 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
             if (foundCards.length > 0) {
                 const newCard = foundCards[0]; // Get the first (most likely) match
-                await databaseService.addToScanHistory(newCard);
-                const updatedCards = Array.isArray(scannedCards) ? [...scannedCards, newCard] : [newCard];
+                // Add to cache first to ensure UUID is generated
+                const cardWithUuid = await databaseService.addToCache(newCard);
+                await databaseService.addToScanHistory(cardWithUuid);
+                const updatedCards = Array.isArray(scannedCards) ? [...scannedCards, cardWithUuid] : [cardWithUuid];
                 updateTotalPrice(updatedCards);
                 setScannedCards(updatedCards);
             } else {
@@ -131,10 +133,9 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         if (!selectedCard) return;
 
         try {
-            if (!selectedCard.uuid) {
-                throw new Error('Card UUID is missing');
-            }
-            await databaseService.addCardToCollection(selectedCard.uuid, collection.id);
+            // First ensure the card is in the cache and has a UUID
+            const cardWithUuid = await databaseService.addToCache(selectedCard);
+            await databaseService.addCardToCollection(cardWithUuid.uuid!, collection.id);
             await databaseService.markScannedCardAddedToCollection(selectedCard.id, collection.id);
             Alert.alert('Success', `Added ${selectedCard.name} to ${collection.name}`);
         } catch (error) {
