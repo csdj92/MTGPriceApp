@@ -35,6 +35,11 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const [totalPrice, setTotalPrice] = useState(0);
     const [isCollectionSelectorVisible, setIsCollectionSelectorVisible] = useState(false);
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
+    const [isScanning, setIsScanning] = useState(true);
+
+    const resumeScanning = () => {
+        setIsScanning(true);
+    };
 
     useEffect(() => {
         loadScanHistory();
@@ -99,15 +104,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleScan = async (text: string) => {
-        // Ignore very short text that's likely just noise or partial scans
         if (!text || text.length < 3) {
             return;
         }
 
         console.log('[PriceLookupScreen] Scan detected text:', text);
 
-        // Only show loading if we have a substantial text to search
-        setIsLoading(true);
         try {
             console.log('[PriceLookupScreen] Attempting to search for card with text:', text);
             const searchResponse = await scryfallService.searchCards(text, 1);
@@ -115,37 +117,44 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             console.log(`[PriceLookupScreen] Search returned ${foundCards.length} results`);
 
             if (foundCards.length > 0) {
-                const newCard = foundCards[0]; // Get the first (most likely) match
+                const newCard = foundCards[0];
                 console.log('[PriceLookupScreen] New card found:', newCard.name);
 
-                // Add to database first
-                await databaseService.addToScanHistory(newCard);
+                // Add to database and get back card with UUID
+                const cardWithUuid = await databaseService.addToCache(newCard);
+                if (!cardWithUuid.uuid) {
+                    throw new Error('Failed to generate UUID for card');
+                }
 
-                // Update state using functional update to ensure we have the latest state
+                // Now add to scan history with the UUID
+                await databaseService.addToScanHistory(cardWithUuid);
+
+                // Update scanned cards state with the card that has UUID
                 setScannedCards(prevCards => {
                     const currentCards = Array.isArray(prevCards) ? prevCards : [];
-                    // Check if card is already in the list
-                    const isDuplicate = currentCards.some(card => card.id === newCard.id);
-                    if (isDuplicate) {
+
+                    if (currentCards.some(card => card.id === cardWithUuid.id)) {
+                        console.log('[PriceLookupScreen] Card already in list, skipping');
                         return currentCards;
                     }
-                    const updatedCards = [newCard, ...currentCards];
-                    // Update total price after cards are updated
-                    updateTotalPrice(updatedCards);
+
+                    const updatedCards = [cardWithUuid, ...currentCards];
+                    console.log('[PriceLookupScreen] Adding new card to list, total cards:', updatedCards.length);
+
+                    const newTotal = updatedCards.reduce((sum, card) => {
+                        const price = card.prices?.usd ? Number(card.prices.usd) : 0;
+                        return sum + price;
+                    }, 0);
+                    setTotalPrice(newTotal);
+
                     return updatedCards;
                 });
-
-                console.log('[PriceLookupScreen] State updated with new card');
-            } else {
-                console.log('[PriceLookupScreen] No results found for scanned text');
             }
         } catch (error) {
             console.error('[PriceLookupScreen] Error processing scan:', error);
             if (error instanceof Error && !error.message.includes('404')) {
                 Alert.alert('Error', 'Failed to process scan. Please try again.');
             }
-        } finally {
-            setIsLoading(false);
         }
     };
 
@@ -155,6 +164,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleCardPress = (card: ExtendedCard) => {
+        setIsScanning(false); // Pause scanning
         setSelectedCard(card);
         setIsCollectionSelectorVisible(true);
     };
@@ -163,18 +173,40 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         if (!selectedCard) return;
 
         try {
-            if (!selectedCard.uuid) {
-                throw new Error('Card UUID is missing');
+            let cardToAdd = selectedCard;
+            if (!cardToAdd.uuid) {
+                cardToAdd = await databaseService.addToCache(selectedCard);
+                if (!cardToAdd.uuid) {
+                    throw new Error('Failed to generate UUID for card');
+                }
             }
-            await databaseService.addCardToCollection(selectedCard.uuid, collection.id);
-            await databaseService.markScannedCardAddedToCollection(selectedCard.id, collection.id);
-            Alert.alert('Success', `Added ${selectedCard.name} to ${collection.name}`);
+
+            await databaseService.addCardToCollection(cardToAdd.uuid, collection.id);
+            await databaseService.markScannedCardAddedToCollection(cardToAdd.id, collection.id);
+            Alert.alert('Success', `Added ${cardToAdd.name} to ${collection.name}`, [
+                {
+                    text: 'OK',
+                    onPress: () => {
+                        setIsCollectionSelectorVisible(false);
+                        setSelectedCard(null);
+                        // Resume scanning after a short delay
+                        setTimeout(resumeScanning, 500);
+                    }
+                }
+            ]);
         } catch (error) {
             console.error('Error adding card to collection:', error);
-            Alert.alert('Error', 'Failed to add card to collection');
-        } finally {
-            setIsCollectionSelectorVisible(false);
-            setSelectedCard(null);
+            Alert.alert('Error', 'Failed to add card to collection', [
+                {
+                    text: 'OK',
+                    onPress: () => {
+                        setIsCollectionSelectorVisible(false);
+                        setSelectedCard(null);
+                        // Resume scanning even if there was an error
+                        setTimeout(resumeScanning, 500);
+                    }
+                }
+            ]);
         }
     };
 
@@ -200,6 +232,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 scannedCards={scannedCards}
                 totalPrice={totalPrice}
                 onCardPress={handleCardPress}
+                isScanning={isScanning}
             />
         </View>
     );

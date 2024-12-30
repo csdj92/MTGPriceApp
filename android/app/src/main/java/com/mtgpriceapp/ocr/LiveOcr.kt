@@ -145,7 +145,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                 MAX_IMAGES
             ).apply {
                 setOnImageAvailableListener({ reader ->
-                    if (!processingImage && isSessionActive) {
+                    if (!processingImage && isSessionActive && previewSurface != null) {
                         processingImage = true
                         val image = reader.acquireLatestImage()
                         
@@ -159,25 +159,30 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                 
                                 textRecognizer.process(inputImage)
                                     .addOnSuccessListener(executor) { text ->
-                                        val cardName = text.textBlocks
-                                            .asSequence()
-                                            .map { it.text.trim() }
-                                            .filter { it.length in 3..50 }
-                                            .filter { !it.contains(Regex("[\\d/]")) }
-                                            .filter { !it.matches(Regex(".*(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker).*")) }
-                                            .filter { !it.contains(Regex("(?i)(counter|token|create|whenever|dies|enters|control|flying)")) }
-                                            .filter { !it.contains(Regex("(?i)(Wizards of the Coast|™|©)")) }
-                                            .firstOrNull()
+                                        if (isSessionActive && previewSurface != null) {
+                                            val cardName = text.textBlocks
+                                                .asSequence()
+                                                .map { it.text.trim() }
+                                                .filter { it.length in 3..50 }
+                                                .filter { !it.contains(Regex("[\\d/]")) }
+                                                .filter { !it.matches(Regex(".*(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker).*")) }
+                                                .filter { !it.contains(Regex("(?i)(counter|token|create|whenever|dies|enters|control|flying|tap|untap|mana|draw|discard|sacrifice|destroy|exile|return|target)")) }
+                                                .filter { !it.contains(Regex("(?i)(Wizards of the Coast|™|©|Illustrated|Artist|Set|Collector|Number|MTG|Magic)")) }
+                                                .filter { !it.contains(Regex("[{}]")) }
+                                                .filter { it.matches(Regex("[A-Za-z\\s,'\\-]+")) }
+                                                .firstOrNull()
 
-                                        if (!cardName.isNullOrBlank() && cardName != lastDetectedName) {
-                                            lastDetectedName = cardName
-                                            val params = Arguments.createMap().apply {
-                                                putString("text", cardName)
+                                            if (!cardName.isNullOrBlank() && cardName != lastDetectedName) {
+                                                Thread.sleep(500)
+                                                lastDetectedName = cardName
+                                                val params = Arguments.createMap().apply {
+                                                    putString("text", cardName)
+                                                }
+                                                reactApplicationContext
+                                                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                                                    .emit("LiveOcrResult", params)
+                                                Log.d(TAG, "Card name detected: $cardName")
                                             }
-                                            reactApplicationContext
-                                                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                                                .emit("LiveOcrResult", params)
-                                            Log.d(TAG, "Card name detected: $cardName")
                                         }
                                     }
                                     .addOnFailureListener(executor) { e ->

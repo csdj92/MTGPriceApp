@@ -13,6 +13,7 @@ interface CardScannerProps {
     scannedCards: ExtendedCard[];
     totalPrice: number;
     onCardPress?: (card: ExtendedCard) => void;
+    isScanning?: boolean;
 }
 
 const CardScanner: React.FC<CardScannerProps> = ({
@@ -20,12 +21,14 @@ const CardScanner: React.FC<CardScannerProps> = ({
     onError,
     scannedCards,
     totalPrice,
-    onCardPress
+    onCardPress,
+    isScanning = true
 }) => {
     console.log('[CardScanner] Rendering with:', {
         scannedCardsCount: scannedCards?.length,
         totalPrice,
         hasScannedCards: Boolean(scannedCards?.length),
+        isScanning
     });
 
     const [hasPermission, setHasPermission] = useState(false);
@@ -146,19 +149,14 @@ const CardScanner: React.FC<CardScannerProps> = ({
         }
     };
 
-    const renderScannedCard = ({ item }: { item: ExtendedCard }) => (
-        <TouchableOpacity
-            style={styles.scannedCardItem}
-            onPress={() => onCardPress?.(item)}
-        >
-            <View style={styles.scannedCardContent}>
-                <Text style={styles.cardName}>{item.name}</Text>
-                <Text style={styles.cardPrice}>
-                    ${(item.prices?.usd ? Number(item.prices.usd) : 0).toFixed(2)}
-                </Text>
-            </View>
-        </TouchableOpacity>
-    );
+    // Add monitoring for prop changes
+    useEffect(() => {
+        console.log('[CardScanner] Props updated:', {
+            scannedCardsCount: scannedCards?.length,
+            totalPrice,
+            cards: scannedCards?.map(card => card.name)
+        });
+    }, [scannedCards, totalPrice]);
 
     if (!hasPermission) {
         return (
@@ -174,7 +172,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
             <View style={[styles.previewContainer, aspectRatioStyle]}>
                 <LiveOcrPreview
                     style={StyleSheet.absoluteFill}
-                    isActive={isActive}
+                    isActive={isActive && isScanning}
                 />
             </View>
 
@@ -190,8 +188,15 @@ const CardScanner: React.FC<CardScannerProps> = ({
                 {/* Center Overlay */}
                 <View style={styles.overlay}>
                     <View style={styles.scanArea}>
-                        <Text style={styles.overlayText}>Position card name here</Text>
-                        <Icon name="card-search" size={40} color="white" style={styles.cameraIcon} />
+                        <Text style={styles.overlayText}>
+                            {isScanning ? "Position card name here" : "Scanning paused..."}
+                        </Text>
+                        <Icon
+                            name={isScanning ? "card-search" : "card-search-off"}
+                            size={40}
+                            color="white"
+                            style={styles.cameraIcon}
+                        />
                     </View>
                 </View>
 
@@ -199,7 +204,19 @@ const CardScanner: React.FC<CardScannerProps> = ({
                 <View style={styles.scannedCardsContainer}>
                     <FlatList
                         data={scannedCards}
-                        renderItem={renderScannedCard}
+                        renderItem={({ item }) => (
+                            <TouchableOpacity
+                                style={styles.scannedCardItem}
+                                onPress={() => onCardPress?.(item)}
+                            >
+                                <View style={styles.scannedCardContent}>
+                                    <Text style={styles.cardName}>{item.name}</Text>
+                                    <Text style={styles.cardPrice}>
+                                        ${(item.prices?.usd ? Number(item.prices.usd) : 0).toFixed(2)}
+                                    </Text>
+                                </View>
+                            </TouchableOpacity>
+                        )}
                         keyExtractor={(item, index) => `${item.id}-${index}`}
                         horizontal
                         showsHorizontalScrollIndicator={false}
