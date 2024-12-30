@@ -10,6 +10,10 @@ import {
     SafeAreaView,
     FlatList,
     Animated,
+    ActivityIndicator,
+    BackHandler,
+    Platform,
+    ToastAndroid,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { scryfallService } from '../../services/ScryfallService';
@@ -36,6 +40,28 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const [isCollectionSelectorVisible, setIsCollectionSelectorVisible] = useState(false);
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
     const [isScanning, setIsScanning] = useState(true);
+    const [isProcessingScan, setIsProcessingScan] = useState(false);
+    const [isCardDetailsVisible, setIsCardDetailsVisible] = useState(false);
+
+    // Reset states when closing camera
+    const handleCloseCamera = () => {
+        setIsCameraActive(false);
+        setIsScanning(true);
+        setIsProcessingScan(false);
+    };
+
+    // Handle back button press
+    useEffect(() => {
+        const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+            if (isCameraActive) {
+                handleCloseCamera();
+                return true;
+            }
+            return false;
+        });
+
+        return () => backHandler.remove();
+    }, [isCameraActive]);
 
     const resumeScanning = () => {
         setIsScanning(true);
@@ -104,15 +130,22 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleScan = async (text: string) => {
-        if (!text || text.length < 3) {
+        // Ignore empty, short text, or if we're already processing
+        if (!text?.trim() || text.length < 3 || isProcessingScan) {
             return;
         }
 
-        console.log('[PriceLookupScreen] Scan detected text:', text);
+        // Clean up the text - remove extra spaces and special characters
+        const cleanedText = text.trim().replace(/\s+/g, ' ');
+
+        console.log('[PriceLookupScreen] Scan detected text:', cleanedText);
+
+        // Set processing state
+        setIsProcessingScan(true);
 
         try {
-            console.log('[PriceLookupScreen] Attempting to search for card with text:', text);
-            const searchResponse = await scryfallService.searchCards(text, 1);
+            console.log('[PriceLookupScreen] Attempting to search for card with text:', cleanedText);
+            const searchResponse = await scryfallService.searchCards(cleanedText, 1);
             const foundCards = searchResponse.data;
             console.log(`[PriceLookupScreen] Search returned ${foundCards.length} results`);
 
@@ -120,41 +153,52 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 const newCard = foundCards[0];
                 console.log('[PriceLookupScreen] New card found:', newCard.name);
 
-                // Add to database and get back card with UUID
-                const cardWithUuid = await databaseService.addToCache(newCard);
-                if (!cardWithUuid.uuid) {
-                    throw new Error('Failed to generate UUID for card');
-                }
-
-                // Now add to scan history with the UUID
-                await databaseService.addToScanHistory(cardWithUuid);
-
-                // Update scanned cards state with the card that has UUID
-                setScannedCards(prevCards => {
-                    const currentCards = Array.isArray(prevCards) ? prevCards : [];
-
-                    if (currentCards.some(card => card.id === cardWithUuid.id)) {
-                        console.log('[PriceLookupScreen] Card already in list, skipping');
-                        return currentCards;
+                try {
+                    // Add to database and get back card with UUID
+                    const cardWithUuid = await databaseService.addToCache(newCard);
+                    if (!cardWithUuid.uuid) {
+                        throw new Error('Failed to generate UUID for card');
                     }
 
-                    const updatedCards = [cardWithUuid, ...currentCards];
-                    console.log('[PriceLookupScreen] Adding new card to list, total cards:', updatedCards.length);
+                    // Add timestamp to card
+                    const cardWithTimestamp = {
+                        ...cardWithUuid,
+                        scannedAt: Date.now()
+                    };
 
-                    const newTotal = updatedCards.reduce((sum, card) => {
-                        const price = card.prices?.usd ? Number(card.prices.usd) : 0;
-                        return sum + price;
-                    }, 0);
-                    setTotalPrice(newTotal);
+                    // Now add to scan history with the UUID
+                    await databaseService.addToScanHistory(cardWithTimestamp);
 
-                    return updatedCards;
-                });
+                    // Update scanned cards state
+                    setScannedCards(prevCards => {
+                        const currentCards = Array.isArray(prevCards) ? prevCards : [];
+                        return [cardWithTimestamp, ...currentCards];
+                    });
+
+                    // Update total price in a separate state update
+                    setTotalPrice(prevTotal => {
+                        const cardPrice = cardWithUuid.prices?.usd ? Number(cardWithUuid.prices.usd) : 0;
+                        return prevTotal + cardPrice;
+                    });
+
+                    // Show success feedback
+                    if (Platform.OS === 'android') {
+                        ToastAndroid.show(`Added ${cardWithUuid.name}`, ToastAndroid.SHORT);
+                    }
+
+                } catch (dbError) {
+                    console.error('[PriceLookupScreen] Database error:', dbError);
+                    Alert.alert('Error', 'Failed to save card to database');
+                }
             }
         } catch (error) {
             console.error('[PriceLookupScreen] Error processing scan:', error);
             if (error instanceof Error && !error.message.includes('404')) {
                 Alert.alert('Error', 'Failed to process scan. Please try again.');
             }
+        } finally {
+            // Reset processing state immediately
+            setIsProcessingScan(false);
         }
     };
 
@@ -165,6 +209,18 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
     const handleCardPress = (card: ExtendedCard) => {
         setIsScanning(false); // Pause scanning
+        setSelectedCard(card);
+        setIsCardDetailsVisible(true);
+    };
+
+    const handleCloseCardDetails = () => {
+        setIsCardDetailsVisible(false);
+        setSelectedCard(null);
+        setTimeout(resumeScanning, 500); // Resume scanning after a short delay
+    };
+
+    const handleAddToCollection = (card: ExtendedCard) => {
+        setIsCardDetailsVisible(false); // Close the card details modal first
         setSelectedCard(card);
         setIsCollectionSelectorVisible(true);
     };
@@ -214,6 +270,9 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         <TouchableOpacity
             style={styles.scannedCardItem}
             onPress={() => handleCardPress(item)}
+            onLongPress={() => handleAddToCollection(item)}
+            activeOpacity={0.8}
+            delayLongPress={500}
         >
             <View style={styles.scannedCardContent}>
                 <Text style={styles.cardName}>{item.name}</Text>
@@ -224,6 +283,14 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         </TouchableOpacity>
     );
 
+    // Update keyExtractor to use timestamp or fallback to UUID + random
+    const keyExtractor = (item: ExtendedCard & { scannedAt?: number }) => {
+        if (item.scannedAt) {
+            return `${item.uuid || item.id}-${item.scannedAt}`;
+        }
+        return `${item.uuid || item.id}-${Math.random().toString(36).substr(2, 9)}`;
+    };
+
     const renderCameraContent = () => (
         <View style={styles.cameraContainer}>
             <CardScanner
@@ -232,9 +299,51 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 scannedCards={scannedCards}
                 totalPrice={totalPrice}
                 onCardPress={handleCardPress}
-                isScanning={isScanning}
+                isScanning={isScanning && !isProcessingScan}
             />
+            {scannedCards.length > 0 && (
+                <View style={styles.scannedCardsContainer}>
+                    <FlatList
+                        data={scannedCards}
+                        renderItem={renderScannedCard}
+                        keyExtractor={keyExtractor}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.scannedCardsList}
+                        contentContainerStyle={{ paddingHorizontal: 5 }}
+                    />
+                </View>
+            )}
         </View>
+    );
+
+    // Add this new Modal for card details
+    const renderCardDetailsModal = () => (
+        <Modal
+            visible={isCardDetailsVisible}
+            animationType="slide"
+            onRequestClose={handleCloseCardDetails}
+        >
+            <SafeAreaView style={[styles.modalContainer, { backgroundColor: '#f5f5f5' }]}>
+                <View style={styles.modalHeader}>
+                    <TouchableOpacity
+                        style={styles.closeButton}
+                        onPress={handleCloseCardDetails}
+                    >
+                        <Icon name="close" size={24} color="#666" />
+                    </TouchableOpacity>
+                    <Text style={styles.modalTitle}>Card Details</Text>
+                </View>
+                {selectedCard && (
+                    <CardList
+                        cards={[selectedCard]}
+                        isLoading={false}
+                        onCardPress={handleAddToCollection}
+                        onAddToCollection={handleAddToCollection}
+                    />
+                )}
+            </SafeAreaView>
+        </Modal>
     );
 
     return (
@@ -248,10 +357,13 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                         onChangeText={setSearchQuery}
                         onSubmitEditing={handleManualSearch}
                         returnKeyType="search"
+                        autoCorrect={false}
+                        autoCapitalize="none"
                     />
                     <TouchableOpacity
-                        style={styles.searchButton}
+                        style={[styles.searchButton, isLoading && styles.searchButtonDisabled]}
                         onPress={handleManualSearch}
+                        disabled={isLoading || !searchQuery.trim()}
                     >
                         <Icon name="magnify" size={24} color="white" />
                     </TouchableOpacity>
@@ -274,19 +386,20 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             <Modal
                 visible={isCameraActive}
                 animationType="slide"
-                onRequestClose={() => setIsCameraActive(false)}
+                onRequestClose={handleCloseCamera}
             >
                 <SafeAreaView style={styles.modalContainer}>
                     <View style={styles.modalHeader}>
                         <TouchableOpacity
                             style={styles.closeButton}
-                            onPress={() => {
-                                setIsCameraActive(false);
-                            }}
+                            onPress={handleCloseCamera}
                         >
                             <Icon name="close" size={24} color="#666" />
                         </TouchableOpacity>
                         <Text style={styles.modalTitle}>Scan Card</Text>
+                        {isProcessingScan && (
+                            <ActivityIndicator size="small" color="#2196F3" style={styles.processingIndicator} />
+                        )}
                     </View>
                     {renderCameraContent()}
                 </SafeAreaView>
@@ -297,9 +410,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 onClose={() => {
                     setIsCollectionSelectorVisible(false);
                     setSelectedCard(null);
+                    setTimeout(resumeScanning, 500);
                 }}
                 onSelectCollection={handleSelectCollection}
             />
+
+            {renderCardDetailsModal()}
         </SafeAreaView>
     );
 };
@@ -335,6 +451,9 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    searchButtonDisabled: {
+        backgroundColor: '#B0BEC5',
     },
     scanButton: {
         flexDirection: 'row',
@@ -423,6 +542,9 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#2196F3',
         fontWeight: 'bold',
+    },
+    processingIndicator: {
+        marginTop: 10,
     },
 });
 

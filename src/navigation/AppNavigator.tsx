@@ -9,7 +9,6 @@ import CollectionScreen from '../screens/collection/CollectionScreen';
 import SearchScreen from '../screens/search/SearchScreen';
 import WatchlistScreen from '../screens/watchlist/WatchlistScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
-import CardDetailsScreen from '../screens/card/CardDetailsScreen';
 import PriceLookupScreen from '../screens/price/PriceLookupScreen';
 import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScreen';
 import type { ExtendedCard } from '../types/card';
@@ -18,7 +17,6 @@ export type RootStackParamList = {
     MainTabs: undefined;
     Search: undefined;
     Collection: undefined;
-    CardDetails: { card: ExtendedCard };
     PriceLookup: undefined;
     Watchlist: undefined;
     Settings: undefined;
@@ -79,11 +77,6 @@ const AppNavigator = () => (
                 name="MainTabs"
                 component={MainTabs}
                 options={{ headerShown: false }}
-            />
-            <Stack.Screen
-                name="CardDetails"
-                component={CardDetailsScreen}
-                options={{ title: 'Card Details' }}
             />
             <Stack.Screen
                 name="Collection"

@@ -214,27 +214,68 @@ const ManaCost = ({ manaCost }: { manaCost: string }) => {
 };
 
 const CardItem = ({ card, onPress }: { card: ExtendedCard; onPress?: () => void }) => (
-    <TouchableOpacity style={styles.cardItem} onPress={onPress}>
-        <View style={styles.cardHeader}>
-            <Text style={styles.cardName}>{card.name}</Text>
-            <ManaCost manaCost={card.manaCost || ''} />
+    <TouchableOpacity
+        style={[styles.cardItem, card.isExpanded && styles.cardItemExpanded]}
+        onPress={onPress}
+        activeOpacity={0.9}
+    >
+        <View style={styles.cardMainInfo}>
+            <View style={styles.cardHeader}>
+                <Text style={styles.cardName}>{card.name}</Text>
+                <ManaCost manaCost={card.manaCost || ''} />
+            </View>
+
+            <View style={styles.cardDetails}>
+                <View style={styles.setInfoContainer}>
+                    <Text style={styles.setInfo}>
+                        {card.setName} ({card.setCode})
+                    </Text>
+                    <Text style={[
+                        styles.rarity,
+                        styles[((card.rarity || 'common').toLowerCase()) as keyof typeof styles]
+                    ]}>
+                        • {card.rarity}
+                    </Text>
+                    {card.collectorNumber && (
+                        <Text style={styles.collectorNumber}>• #{card.collectorNumber}</Text>
+                    )}
+                </View>
+            </View>
+
+            {card.isExpanded && (
+                <>
+                    {card.imageUris?.normal && (
+                        <Image
+                            source={{ uri: card.imageUris.normal }}
+                            style={styles.cardImage}
+                            resizeMode="contain"
+                        />
+                    )}
+                    <Text style={styles.cardType}>{card.type}</Text>
+                    {card.text && (
+                        <View style={styles.cardTextContainer}>
+                            <Text style={styles.cardText}>{card.text}</Text>
+                        </View>
+                    )}
+                    <View style={styles.cardFooter}>
+                        <View style={styles.priceSection}>
+                            <Text style={styles.sectionTitle}>Prices</Text>
+                            <PriceDisplay prices={card.prices} />
+                        </View>
+
+                        <View style={styles.purchaseSection}>
+                            <Text style={styles.sectionTitle}>Purchase</Text>
+                            <PurchaseLinks urls={card.purchaseUrls} />
+                        </View>
+
+                        <View style={styles.legalitySection}>
+                            <Text style={styles.sectionTitle}>Format Legality</Text>
+                            <LegalitiesDropdown legalities={card.legalities} />
+                        </View>
+                    </View>
+                </>
+            )}
         </View>
-        <View style={styles.cardDetails}>
-            <Text style={styles.setInfo}>
-                {card.setCode} - {card.setName}
-            </Text>
-            <Text style={[
-                styles.rarity,
-                styles[((card.rarity || 'common').toLowerCase()) as keyof typeof styles]
-            ]}>
-                {card.rarity || 'Common'}
-            </Text>
-        </View>
-        <Text style={styles.type}>{card.type}</Text>
-        {card.text && <Text style={styles.text}>{card.text}</Text>}
-        <PriceDisplay prices={card.prices} />
-        <PurchaseLinks urls={card.purchaseUrls} />
-        <LegalitiesDropdown legalities={card.legalities} />
     </TouchableOpacity>
 );
 
@@ -249,87 +290,19 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onAd
     }
 
     const keyExtractor = (item: ExtendedCard) => {
-        // Create a unique key by combining multiple identifiers
         const uniqueKey = [
-            item.id,                    // Scryfall's unique print ID
-            item.uuid,                  // Our database UUID
-            item.setCode,               // Set code
-            item.collectorNumber,       // Collector number
-            item.name                   // Card name
-        ].filter(Boolean).join('-');    // Join all non-null values with a dash
+            item.id,
+            item.uuid,
+            item.setCode,
+            item.collectorNumber,
+            item.name
+        ].filter(Boolean).join('-');
 
         return uniqueKey;
     };
 
     const renderItem = ({ item }: { item: ExtendedCard }) => (
-        <TouchableOpacity
-            style={styles.cardItem}
-            onPress={() => onCardPress?.(item)}
-        >
-            <View style={styles.cardMainInfo}>
-                <View style={styles.cardHeader}>
-                    <Text style={styles.cardName}>{item.name}</Text>
-                    <ManaCost manaCost={item.manaCost || ''} />
-                </View>
-
-                {item.imageUris?.normal && (
-                    <Image
-                        source={{ uri: item.imageUris.normal }}
-                        style={styles.cardImage}
-                        resizeMode="contain"
-                    />
-                )}
-
-                <View style={styles.cardDetails}>
-                    <View style={styles.setInfoContainer}>
-                        <Text style={styles.setInfo}>
-                            {item.setName} ({item.setCode})
-                        </Text>
-                        <Text style={[
-                            styles.rarity,
-                            styles[((item.rarity || 'common').toLowerCase()) as keyof typeof styles]
-                        ]}>
-                            • {item.rarity}
-                        </Text>
-                        {item.collectorNumber && (
-                            <Text style={styles.collectorNumber}>• #{item.collectorNumber}</Text>
-                        )}
-                    </View>
-                    <Text style={styles.cardType}>{item.type}</Text>
-                </View>
-
-                {item.text && (
-                    <View style={styles.cardTextContainer}>
-                        <Text style={styles.cardText}>{item.text}</Text>
-                    </View>
-                )}
-            </View>
-
-            <View style={styles.cardFooter}>
-                <View style={styles.priceSection}>
-                    <Text style={styles.sectionTitle}>Prices</Text>
-                    <PriceDisplay prices={item.prices} />
-                </View>
-
-                <View style={styles.purchaseSection}>
-                    <Text style={styles.sectionTitle}>Purchase</Text>
-                    <PurchaseLinks urls={item.purchaseUrls} />
-                </View>
-
-                <TouchableOpacity
-                    style={styles.addToCollectionButton}
-                    onPress={() => onAddToCollection?.(item)}
-                >
-                    <Icon name="playlist-plus" size={20} color="white" />
-                    <Text style={styles.addToCollectionText}>Add to Collection</Text>
-                </TouchableOpacity>
-
-                <View style={styles.legalitySection}>
-                    <Text style={styles.sectionTitle}>Format Legality</Text>
-                    <LegalitiesDropdown legalities={item.legalities} />
-                </View>
-            </View>
-        </TouchableOpacity>
+        <CardItem card={item} onPress={() => onCardPress?.(item)} />
     );
 
     return (
@@ -370,16 +343,23 @@ const styles = StyleSheet.create({
     },
     cardItem: {
         backgroundColor: '#fff',
-        borderRadius: 12,
+        borderRadius: 8,
+        padding: 12,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+    },
+    cardItemExpanded: {
         padding: 16,
         elevation: 3,
-        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
+        shadowOpacity: 0.15,
         shadowRadius: 4,
     },
     cardMainInfo: {
-        marginBottom: 16,
+        flex: 1,
     },
     cardImage: {
         width: '100%',
@@ -394,11 +374,11 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 8,
+        marginBottom: 4,
     },
     cardName: {
-        fontSize: 20,
-        fontWeight: 'bold',
+        fontSize: 16,
+        fontWeight: '600',
         color: '#333',
         flex: 1,
         marginRight: 8,
@@ -410,10 +390,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         flexWrap: 'wrap',
-        marginBottom: 4,
     },
     setInfo: {
-        fontSize: 14,
+        fontSize: 13,
         color: '#666',
     },
     collectorNumber: {

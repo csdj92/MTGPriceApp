@@ -107,7 +107,9 @@ const SearchScreen = () => {
             console.log(`[SearchScreen] Loading details for card: ${card.name}`);
             const extendedCard = await scryfallService.getCardByName(card.name);
             if (extendedCard) {
-                navigation.navigate('CardDetails', { card: extendedCard });
+                setSearchResults(prevResults =>
+                    prevResults.map(c => c.id === card.id ? extendedCard : c)
+                );
             } else {
                 console.error(`[SearchScreen] Could not find card details for: ${card.name}`);
             }

@@ -44,4 +44,6 @@ export interface ExtendedCard {
         [format: string]: string;
     };
     quantity?: number;
+    scannedAt?: number;
+    isExpanded?: boolean;
 } 

@@ -9,6 +9,7 @@
 6. Fix camera viewport sizing issue
 7. Fix missing 'text' style property TypeScript error
 8. Add icon overlay to LiveOCR preview screen
+9. Fix bottom bar not updating with scanned cards
 
 ## Progress Made
 1. Fixed camera preview initialization
@@ -34,6 +35,9 @@
 21. Streamlined OCR text detection flow
 22. Fixed FlatList duplicate key issue
 23. Added empty state for scanned cards list
+24. Investigating bottom bar update issue in PriceLookupScreen
+25. Replaced CardDetailsScreen with CardList component
+26. Verified collection view uses cached data without Scryfall API calls
 
 ## Remaining Issues
 1. Test OCR accuracy
@@ -41,12 +45,16 @@
 3. Add user feedback for OCR results
 4. Test edge cases
 5. Implement zoom controls UI
+6. Fix bottom bar not updating with new scans
 
 ## Next Steps
-1. Add zoom in/out buttons
-2. Test zoom functionality
-3. Test OCR accuracy with various cards
-4. Add performance monitoring
-5. Improve user feedback
-6. Test edge cases
-7. Add error recovery mechanisms 
+1. Debug bottom bar update logic
+2. Test state management for scanned cards
+3. Verify FlatList rendering
+4. Add zoom in/out buttons
+5. Test zoom functionality
+6. Test OCR accuracy with various cards
+7. Add performance monitoring
+8. Improve user feedback
+9. Test edge cases
+10. Add error recovery mechanisms 

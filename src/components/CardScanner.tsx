@@ -176,54 +176,12 @@ const CardScanner: React.FC<CardScannerProps> = ({
                 />
             </View>
 
-            {/* UI Layer - All UI elements */}
-            <View style={styles.uiContainer}>
-                {/* Price Counter */}
-                <View style={styles.totalPriceContainer}>
-                    <Text style={styles.totalPriceText}>
-                        Total: ${totalPrice.toFixed(2)}
-                    </Text>
+            {/* Floating Counter Bubble */}
+            {scannedCards?.length > 0 && (
+                <View style={styles.counterBubble}>
+                    <Text style={styles.counterText}>{scannedCards.length}</Text>
                 </View>
-
-                {/* Center Overlay */}
-                <View style={styles.overlay}>
-                    <View style={styles.scanArea}>
-                        <Text style={styles.overlayText}>
-                            {isScanning ? "Position card name here" : "Scanning paused..."}
-                        </Text>
-                        <Icon
-                            name={isScanning ? "card-search" : "card-search-off"}
-                            size={40}
-                            color="white"
-                            style={styles.cameraIcon}
-                        />
-                    </View>
-                </View>
-
-                {/* Scanned Cards List */}
-                <View style={styles.scannedCardsContainer}>
-                    <FlatList
-                        data={scannedCards}
-                        renderItem={({ item }) => (
-                            <TouchableOpacity
-                                style={styles.scannedCardItem}
-                                onPress={() => onCardPress?.(item)}
-                            >
-                                <View style={styles.scannedCardContent}>
-                                    <Text style={styles.cardName}>{item.name}</Text>
-                                    <Text style={styles.cardPrice}>
-                                        ${(item.prices?.usd ? Number(item.prices.usd) : 0).toFixed(2)}
-                                    </Text>
-                                </View>
-                            </TouchableOpacity>
-                        )}
-                        keyExtractor={(item, index) => `${item.id}-${index}`}
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.scannedCardsList}
-                    />
-                </View>
-            </View>
+            )}
         </View>
     );
 };
@@ -240,86 +198,31 @@ const styles = StyleSheet.create({
         right: 0,
         bottom: 0,
     },
-    uiContainer: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 1,
-    },
-    overlay: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    scanArea: {
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0, 0, 0, 0.4)',
-        padding: 20,
-        borderRadius: 10,
-    },
-    overlayText: {
-        color: 'white',
-        textAlign: 'center',
-        fontSize: 18,
-    },
-    cameraIcon: {
-        marginTop: 16,
-        opacity: 0.8,
-    },
     text: {
         color: 'white',
         textAlign: 'center',
         padding: 16,
     },
-    totalPriceContainer: {
+    counterBubble: {
         position: 'absolute',
         top: 20,
         right: 20,
-        backgroundColor: 'rgba(33, 150, 243, 0.9)',
+        backgroundColor: '#2196F3',
+        width: 40,
+        height: 40,
         borderRadius: 20,
-        padding: 10,
-        zIndex: 2,
-    },
-    totalPriceText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
-    scannedCardsContainer: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        paddingVertical: 10,
-        zIndex: 2,
-    },
-    scannedCardsList: {
-        paddingHorizontal: 10,
-    },
-    scannedCardItem: {
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        borderRadius: 8,
-        marginHorizontal: 5,
-        padding: 10,
-        width: 150,
-    },
-    scannedCardContent: {
+        justifyContent: 'center',
         alignItems: 'center',
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        zIndex: 2,
     },
-    cardName: {
-        color: '#000',
-        fontSize: 14,
-        fontWeight: '500',
-        textAlign: 'center',
-        marginBottom: 4,
-    },
-    cardPrice: {
-        color: '#2196F3',
-        fontSize: 14,
+    counterText: {
+        color: 'white',
+        fontSize: 18,
         fontWeight: 'bold',
     },
 });
