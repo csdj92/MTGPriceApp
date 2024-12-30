@@ -213,7 +213,7 @@ const ManaCost = ({ manaCost }: { manaCost: string }) => {
     );
 };
 
-const CardItem = ({ card, onPress }: { card: ExtendedCard; onPress?: () => void }) => (
+const CardItem = ({ card, onPress, onAddToCollection }: { card: ExtendedCard; onPress?: () => void; onAddToCollection?: (card: ExtendedCard) => void }) => (
     <TouchableOpacity
         style={[styles.cardItem, card.isExpanded && styles.cardItemExpanded]}
         onPress={onPress}
@@ -268,6 +268,17 @@ const CardItem = ({ card, onPress }: { card: ExtendedCard; onPress?: () => void 
                             <PurchaseLinks urls={card.purchaseUrls} />
                         </View>
 
+                        {onAddToCollection && (
+                            <TouchableOpacity
+                                style={styles.addToCollectionButton}
+                                onPress={() => onAddToCollection(card)}
+                                activeOpacity={0.9}
+                            >
+                                <Icon name="playlist-plus" size={20} color="white" />
+                                <Text style={styles.addToCollectionText}>Add to Collection</Text>
+                            </TouchableOpacity>
+                        )}
+
                         <View style={styles.legalitySection}>
                             <Text style={styles.sectionTitle}>Format Legality</Text>
                             <LegalitiesDropdown legalities={card.legalities} />
@@ -302,7 +313,11 @@ const CardList: React.FC<CardListProps> = ({ cards, isLoading, onCardPress, onAd
     };
 
     const renderItem = ({ item }: { item: ExtendedCard }) => (
-        <CardItem card={item} onPress={() => onCardPress?.(item)} />
+        <CardItem
+            card={item}
+            onPress={() => onCardPress?.(item)}
+            onAddToCollection={onAddToCollection}
+        />
     );
 
     return (

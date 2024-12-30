@@ -323,22 +323,18 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             visible={isCardDetailsVisible}
             animationType="slide"
             onRequestClose={handleCloseCardDetails}
+            transparent={false}
         >
-            <SafeAreaView style={[styles.modalContainer, { backgroundColor: '#f5f5f5' }]}>
+            <SafeAreaView style={styles.modalContainer}>
                 <View style={styles.modalHeader}>
-                    <TouchableOpacity
-                        style={styles.closeButton}
-                        onPress={handleCloseCardDetails}
-                    >
+                    <TouchableOpacity onPress={handleCloseCardDetails} style={styles.closeButton}>
                         <Icon name="close" size={24} color="#666" />
                     </TouchableOpacity>
-                    <Text style={styles.modalTitle}>Card Details</Text>
                 </View>
                 {selectedCard && (
                     <CardList
-                        cards={[selectedCard]}
+                        cards={[{ ...selectedCard, isExpanded: true }]}
                         isLoading={false}
-                        onCardPress={handleAddToCollection}
                         onAddToCollection={handleAddToCollection}
                     />
                 )}
@@ -471,13 +467,15 @@ const styles = StyleSheet.create({
     },
     modalContainer: {
         flex: 1,
-        backgroundColor: 'black',
+        backgroundColor: '#f5f5f5',
     },
     modalHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         padding: 16,
         backgroundColor: 'white',
+        borderBottomWidth: 1,
+        borderBottomColor: '#e0e0e0',
     },
     closeButton: {
         padding: 8,
