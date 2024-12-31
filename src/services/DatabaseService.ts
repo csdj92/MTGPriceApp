@@ -813,39 +813,55 @@ class DatabaseService {
         return result.rows.raw();
     }
 
-    async getCombinedPriceData(page: number, pageSize: number): Promise<any[]> {
+    async getCombinedPriceData(page: number, pageSize: number, search: string = '', sortBy: 'normal_price' | 'foil_price' = 'normal_price'): Promise<any[]> {
         if (!this.db || !this.mtgJsonDb) {
             throw new Error('Databases not initialized');
         }
 
         try {
             const offset = (page - 1) * pageSize;
+
             // First get price data from local database
             const [priceResult] = await this.db.executeSql(`
                 SELECT uuid, normal_price, foil_price, last_updated 
                 FROM prices 
-                ORDER BY last_updated DESC
+                ORDER BY ${sortBy} DESC
                 LIMIT ? OFFSET ?
             `, [pageSize, offset]);
 
+            const prices = priceResult.rows.raw();
+
             // Get card details from MTGJson for each price entry
             const combinedData = [];
-            for (let i = 0; i < priceResult.rows.length; i++) {
-                const priceData = priceResult.rows.item(i);
+            for (const price of prices) {
                 const [cardResult] = await this.mtgJsonDb.executeSql(`
                     SELECT name, setCode, number, rarity 
                     FROM cards 
-                    WHERE uuid = ?
-                `, [priceData.uuid]);
+                    WHERE uuid = ? ${search ? 'AND (name LIKE ? OR setCode LIKE ?)' : ''}
+                `, [price.uuid, ...(search ? [`%${search}%`, `%${search}%`] : [])]);
 
-                const cardDetails = cardResult.rows.length > 0 ? cardResult.rows.item(0) : null;
-                combinedData.push({
-                    ...priceData,
-                    ...cardDetails
-                });
+                if (cardResult.rows.length > 0) {
+                    const cardDetails = cardResult.rows.item(0);
+                    combinedData.push({
+                        ...price,
+                        ...cardDetails
+                    });
+                }
             }
 
-            return combinedData;
+            // Group by setCode
+            const groupedData = combinedData.reduce((acc: any, card: any) => {
+                if (!acc[card.setCode]) {
+                    acc[card.setCode] = [];
+                }
+                acc[card.setCode].push(card);
+                return acc;
+            }, {});
+
+            return Object.entries(groupedData).map(([setCode, cards]) => ({
+                setCode,
+                cards
+            }));
         } catch (error) {
             console.error('Error getting combined price data:', error);
             return [];

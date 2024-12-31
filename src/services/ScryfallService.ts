@@ -277,6 +277,24 @@ class ScryfallService {
 
         return extendedCards;
     }
+
+    async getCardByNameAndSet(cardName: string, setCode: string): Promise<ExtendedCard | null> {
+        try {
+            const query = `!"${cardName}" set:${setCode}`;
+            const url = `${SCRYFALL_API_BASE}/cards/search?q=${encodeURIComponent(query)}`;
+            const data = await this.fetchWithThrottle(url);
+
+            if (!data || !data.data || data.data.length === 0) {
+                console.error('[ScryfallService] No card found with name and set:', cardName, setCode);
+                return null;
+            }
+            console.log("data.data[0] card name and set", data.data[0]);
+            return this.transformScryfallCard(data.data[0]);
+        } catch (error) {
+            console.error(`[ScryfallService] Error fetching card ${cardName} from set ${setCode}:`, error);
+            return null;
+        }
+    }
 }
 
 export const scryfallService = new ScryfallService(); 
