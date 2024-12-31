@@ -1,15 +1,16 @@
 # React Native MTG Price App Project
 
 ## Current Tasks
-1. Fix camera zoom issue - implement manual zoom control (0.2x zoom)
-2. Add zoom in/out buttons to camera preview
-3. Improve image processing pipeline
-4. Handle image rotation correctly
-5. Add proper error handling for OCR
-6. Fix camera viewport sizing issue
-7. Fix missing 'text' style property TypeScript error
-8. Add icon overlay to LiveOCR preview screen
-9. Fix bottom bar not updating with scanned cards
+1. Refactor PriceLookupScreen.tsx to simplify camera handling
+2. Fix camera zoom issue - implement manual zoom control (0.2x zoom)
+3. Add zoom in/out buttons to camera preview
+4. Improve image processing pipeline
+5. Handle image rotation correctly
+6. Add proper error handling for OCR
+7. Fix camera viewport sizing issue
+8. Fix missing 'text' style property TypeScript error
+9. Add icon overlay to LiveOCR preview screen
+10. Fix bottom bar not updating with scanned cards
 
 ## Progress Made
 1. Fixed camera preview initialization
@@ -38,6 +39,8 @@
 24. Investigating bottom bar update issue in PriceLookupScreen
 25. Replaced CardDetailsScreen with CardList component
 26. Verified collection view uses cached data without Scryfall API calls
+27. Started refactoring PriceLookupScreen.tsx to simplify camera handling
+28. Added duplicate scan prevention with cooldown and recent scans tracking
 
 ## Remaining Issues
 1. Test OCR accuracy
@@ -48,13 +51,14 @@
 6. Fix bottom bar not updating with new scans
 
 ## Next Steps
-1. Debug bottom bar update logic
-2. Test state management for scanned cards
-3. Verify FlatList rendering
-4. Add zoom in/out buttons
-5. Test zoom functionality
-6. Test OCR accuracy with various cards
-7. Add performance monitoring
-8. Improve user feedback
-9. Test edge cases
-10. Add error recovery mechanisms 
+1. Complete PriceLookupScreen.tsx refactoring
+2. Debug bottom bar update logic
+3. Test state management for scanned cards
+4. Verify FlatList rendering
+5. Add zoom in/out buttons
+6. Test zoom functionality
+7. Test OCR accuracy with various cards
+8. Add performance monitoring
+9. Improve user feedback
+10. Test edge cases
+11. Add error recovery mechanisms 

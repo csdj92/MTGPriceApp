@@ -13,7 +13,7 @@ interface CardScannerProps {
     scannedCards: ExtendedCard[];
     totalPrice: number;
     onCardPress?: (card: ExtendedCard) => void;
-    isScanning?: boolean;
+    isPaused?: boolean;
 }
 
 const CardScanner: React.FC<CardScannerProps> = ({
@@ -22,15 +22,8 @@ const CardScanner: React.FC<CardScannerProps> = ({
     scannedCards,
     totalPrice,
     onCardPress,
-    isScanning = true
+    isPaused = false
 }) => {
-    console.log('[CardScanner] Rendering with:', {
-        scannedCardsCount: scannedCards?.length,
-        totalPrice,
-        hasScannedCards: Boolean(scannedCards?.length),
-        isScanning
-    });
-
     const [hasPermission, setHasPermission] = useState(false);
     const [isActive, setIsActive] = useState(false);
     const [aspectRatioStyle, setAspectRatioStyle] = useState({});
@@ -41,7 +34,6 @@ const CardScanner: React.FC<CardScannerProps> = ({
         const screenWidth = screen.width;
         const screenHeight = screen.height;
 
-        // Calculate scale to fill screen height
         const scale = screenHeight / previewHeight;
         const scaledWidth = previewWidth * scale;
         const horizontalOffset = (screenWidth - scaledWidth) / 2;
@@ -54,13 +46,11 @@ const CardScanner: React.FC<CardScannerProps> = ({
             top: 0,
         };
 
-        console.log('[CardScanner] Setting aspect ratio style:', newStyle);
         setAspectRatioStyle(newStyle);
     };
 
     useEffect(() => {
         const sizeSubscription = liveOcrEmitter.addListener('PreviewSize', (event) => {
-            console.log('[CardScanner] Received preview size:', event);
             setPreviewSize({ width: event.width, height: event.height });
             updateAspectRatio(event.width, event.height);
         });
@@ -80,26 +70,20 @@ const CardScanner: React.FC<CardScannerProps> = ({
     useEffect(() => {
         checkPermission();
 
-        // Subscribe to OCR results
-        console.log('[CardScanner] Setting up OCR event listener');
         const subscription = liveOcrEmitter.addListener('LiveOcrResult', (event) => {
-            console.log('[CardScanner] Received OCR result:', event);
-            if (event.text) {
-                console.log('[CardScanner] Detected text:', event.text);
+            if (event.text && !isPaused) {
                 onTextDetected(event.text);
             }
         });
 
         return () => {
-            console.log('[CardScanner] Cleaning up...');
             setIsActive(false);
             stopOcrSession();
             subscription.remove();
         };
-    }, []);
+    }, [isPaused]);
 
     const checkPermission = async () => {
-        console.log('[CardScanner] Checking camera permission');
         try {
             const granted = await PermissionsAndroid.request(
                 PermissionsAndroid.PERMISSIONS.CAMERA,
@@ -111,29 +95,23 @@ const CardScanner: React.FC<CardScannerProps> = ({
                     buttonPositive: "OK"
                 }
             );
-            console.log('[CardScanner] Camera permission status:', granted);
 
             if (granted === PermissionsAndroid.RESULTS.GRANTED) {
                 setHasPermission(true);
                 await startOcrSession();
                 setIsActive(true);
             } else {
-                console.warn('[CardScanner] Camera permission denied');
                 onError(new Error('Camera permission denied'));
             }
         } catch (error) {
-            console.error('[CardScanner] Error checking camera permission:', error);
             onError(error instanceof Error ? error : new Error('Failed to check camera permission'));
         }
     };
 
     const startOcrSession = async () => {
         try {
-            console.log('[CardScanner] Starting OCR session...');
             await LiveOcr.startOcrSession();
-            console.log('[CardScanner] OCR Session started successfully');
         } catch (error) {
-            console.error('[CardScanner] Failed to start OCR session:', error);
             onError(error instanceof Error ? error : new Error('Failed to start OCR session'));
             throw error;
         }
@@ -141,11 +119,9 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
     const stopOcrSession = async () => {
         try {
-            console.log('[CardScanner] Stopping OCR session...');
             await LiveOcr.stopOcrSession();
-            console.log('[CardScanner] OCR Session stopped successfully');
         } catch (error) {
-            console.error('[CardScanner] Failed to stop OCR session:', error);
+            console.error('Failed to stop OCR session:', error);
         }
     };
 
@@ -168,18 +144,17 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
     return (
         <View style={styles.container}>
-            {/* Base Layer - Camera Preview */}
             <View style={[styles.previewContainer, aspectRatioStyle]}>
                 <LiveOcrPreview
                     style={StyleSheet.absoluteFill}
-                    isActive={isActive && isScanning}
+                    isActive={isActive && !isPaused}
                 />
             </View>
 
-            {/* Floating Counter Bubble */}
             {scannedCards?.length > 0 && (
                 <View style={styles.counterBubble}>
                     <Text style={styles.counterText}>{scannedCards.length}</Text>
+                    <Text style={styles.priceText}>${totalPrice.toFixed(2)}</Text>
                 </View>
             )}
         </View>
@@ -208,8 +183,9 @@ const styles = StyleSheet.create({
         top: 20,
         right: 20,
         backgroundColor: '#2196F3',
-        width: 40,
-        height: 40,
+        minWidth: 80,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
         borderRadius: 20,
         justifyContent: 'center',
         alignItems: 'center',
@@ -224,6 +200,12 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 18,
         fontWeight: 'bold',
+    },
+    priceText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: '500',
+        marginTop: 2,
     },
 });
 
