@@ -5,85 +5,107 @@ import {
     Text,
     TouchableOpacity,
     ActivityIndicator,
+    FlatList,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useNavigation } from '@react-navigation/native';
 import type { ExtendedCard } from '../../types/card';
-import CardList from '../../components/CardList';
+import { downloadAndImportPriceData } from '../../utils/priceData';
+import { databaseService } from '../../services/DatabaseService';
+
+interface PriceData {
+    uuid: string;
+    normal_price: number;
+    foil_price: number;
+    last_updated: number;
+}
 
 const WatchlistScreen = () => {
+    const navigation = useNavigation();
     const [isLoading, setIsLoading] = useState(false);
-    const [watchlist, setWatchlist] = useState<ExtendedCard[]>([]);
-    const [sortBy, setSortBy] = useState<'name' | 'price' | 'change'>('name');
+    const [priceData, setPriceData] = useState<PriceData[]>([]);
+    const [downloadProgress, setDownloadProgress] = useState(0);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const PAGE_SIZE = 50;
 
     useEffect(() => {
-        loadWatchlist();
-    }, []);
+        loadPriceData();
+    }, [currentPage]);
 
-    const loadWatchlist = async () => {
+    const loadPriceData = async () => {
         setIsLoading(true);
         try {
-            // TODO: Implement watchlist loading from local database
-            setWatchlist([]);
+            const prices = await databaseService.getCombinedPriceData(currentPage, PAGE_SIZE);
+            console.log('Loaded combined prices:', prices);
+            if (prices.length < PAGE_SIZE) {
+                setHasMore(false);
+            }
+            setPriceData(prev => currentPage === 1 ? prices : [...prev, ...prices]);
         } catch (error) {
-            console.error('Error loading watchlist:', error);
+            console.error('Error loading price data:', error);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const handleSort = () => {
-        // TODO: Implement sort functionality
+    const handleAddCards = async () => {
+        setIsLoading(true);
+        try {
+            if (!databaseService.isMTGJsonDatabaseInitialized()) {
+                await databaseService.downloadMTGJsonDatabase();
+            }
+
+            await downloadAndImportPriceData((progress) => {
+                setDownloadProgress(progress);
+            });
+            setCurrentPage(1);
+            await loadPriceData();
+        } catch (error) {
+            console.error('Error updating data:', error);
+        } finally {
+            setIsLoading(false);
+            setDownloadProgress(0);
+        }
     };
 
-    const renderHeader = () => (
-        <View style={styles.header}>
-            <View style={styles.headerControls}>
-                <Text style={styles.headerTitle}>
-                    Watching {watchlist.length} Cards
-                </Text>
-                <TouchableOpacity
-                    style={styles.sortButton}
-                    onPress={handleSort}
-                >
-                    <Icon name="sort" size={24} color="#2196F3" />
-                    <Text style={styles.sortButtonText}>Sort by {sortBy}</Text>
-                </TouchableOpacity>
-            </View>
-            <View style={styles.stats}>
-                <Text style={styles.statsText}>
-                    Total Value: $0.00
-                </Text>
-                <Text style={styles.statsText}>
-                    24h Change: +$0.00
-                </Text>
-            </View>
+    const renderPrice = ({ item }: { item: PriceData & { name?: string; setCode?: string } }) => (
+        <View style={styles.cardItem}>
+            <Text style={styles.cardName}>
+                {item.name || 'Unknown Card'} ({item.setCode || 'Unknown Set'})
+            </Text>
+            <Text>Normal Price: ${item.normal_price.toFixed(2)}</Text>
+            <Text>Foil Price: ${item.foil_price.toFixed(2)}</Text>
+            <Text>Last Updated: {new Date(item.last_updated).toLocaleString()}</Text>
         </View>
     );
 
-    if (isLoading) {
+    if (isLoading && currentPage === 1) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#2196F3" />
-                <Text style={styles.loadingText}>Loading watchlist...</Text>
+                <Text style={styles.loadingText}>
+                    {downloadProgress > 0
+                        ? `Updating price data... ${Math.round(downloadProgress)}%`
+                        : 'Loading price data...'}
+                </Text>
             </View>
         );
     }
 
-    if (watchlist.length === 0) {
+    if (priceData.length === 0) {
         return (
             <View style={styles.emptyContainer}>
                 <Icon name="star-outline" size={64} color="#ccc" />
-                <Text style={styles.emptyText}>Your watchlist is empty</Text>
+                <Text style={styles.emptyText}>No price data available</Text>
                 <Text style={styles.emptySubtext}>
-                    Add cards to track their prices and get notifications when they change
+                    Click the button below to download the latest price data
                 </Text>
                 <TouchableOpacity
                     style={styles.addButton}
-                    onPress={() => {
-                        // TODO: Navigate to search screen
-                    }}
+                    onPress={handleAddCards}
                 >
-                    <Text style={styles.addButtonText}>Add Cards</Text>
+                    <Text style={styles.addButtonText}>Download Prices</Text>
                 </TouchableOpacity>
             </View>
         );
@@ -91,10 +113,28 @@ const WatchlistScreen = () => {
 
     return (
         <View style={styles.container}>
-            {renderHeader()}
-            <CardList
-                cards={watchlist}
-                isLoading={false}
+            <FlatList
+                data={priceData}
+                renderItem={renderPrice}
+                keyExtractor={(item) => item.uuid}
+                onEndReached={() => {
+                    if (!isLoading && hasMore) {
+                        setCurrentPage(prev => prev + 1);
+                    }
+                }}
+                onEndReachedThreshold={0.5}
+                ListHeaderComponent={() => (
+                    <View style={styles.header}>
+                        <Text style={styles.headerTitle}>
+                            Price Data ({priceData.length} items)
+                        </Text>
+                    </View>
+                )}
+                ListFooterComponent={() => (
+                    isLoading ? (
+                        <ActivityIndicator size="small" color="#2196F3" style={styles.footer} />
+                    ) : null
+                )}
             />
         </View>
     );
@@ -103,7 +143,7 @@ const WatchlistScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#fff',
     },
     loadingContainer: {
         flex: 1,
@@ -119,12 +159,14 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: '#fff',
         padding: 20,
     },
     emptyText: {
-        fontSize: 18,
+        fontSize: 16,
         color: '#666',
         marginTop: 16,
+        fontWeight: '400',
     },
     emptySubtext: {
         fontSize: 14,
@@ -132,17 +174,19 @@ const styles = StyleSheet.create({
         marginTop: 8,
         marginBottom: 24,
         textAlign: 'center',
+        maxWidth: '80%',
     },
     addButton: {
         backgroundColor: '#2196F3',
-        paddingHorizontal: 24,
-        paddingVertical: 12,
-        borderRadius: 8,
+        paddingHorizontal: 20,
+        paddingVertical: 8,
+        borderRadius: 4,
+        elevation: 0,
     },
     addButtonText: {
         color: '#fff',
-        fontSize: 16,
-        fontWeight: '600',
+        fontSize: 14,
+        fontWeight: '500',
     },
     header: {
         backgroundColor: '#fff',
@@ -150,34 +194,23 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: '#e0e0e0',
     },
-    headerControls: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 12,
-    },
     headerTitle: {
         fontSize: 16,
         fontWeight: '600',
         color: '#333',
     },
-    sortButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 8,
+    cardItem: {
+        padding: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e0e0e0',
     },
-    sortButtonText: {
-        marginLeft: 8,
+    cardName: {
         fontSize: 16,
-        color: '#2196F3',
+        fontWeight: '600',
+        marginBottom: 8,
     },
-    stats: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    statsText: {
-        fontSize: 14,
-        color: '#666',
+    footer: {
+        padding: 16,
     },
 });
 

@@ -11,6 +11,8 @@
 8. Fix missing 'text' style property TypeScript error
 9. Add icon overlay to LiveOCR preview screen
 10. Fix bottom bar not updating with scanned cards
+11. Implement MTGJson price data interfaces and database integration
+12. Show price data on watchlist screen with pagination (10 items per page)
 
 ## Progress Made
 1. Fixed camera preview initialization
@@ -41,6 +43,12 @@
 26. Verified collection view uses cached data without Scryfall API calls
 27. Started refactoring PriceLookupScreen.tsx to simplify camera handling
 28. Added duplicate scan prevention with cooldown and recent scans tracking
+29. Started implementing MTGJson price data interfaces
+30. Created database types and interfaces for price data
+31. Implemented price data tables in DatabaseService
+32. Added methods for tracking last price update timestamp
+33. Integrated price data download functionality with watchlist screen
+34. Added daily price update check to prevent unnecessary downloads
 
 ## Remaining Issues
 1. Test OCR accuracy
@@ -49,6 +57,8 @@
 4. Test edge cases
 5. Implement zoom controls UI
 6. Fix bottom bar not updating with new scans
+7. Complete price data integration with database
+8. Fix RNFS import and initialization issues
 
 ## Next Steps
 1. Complete PriceLookupScreen.tsx refactoring
@@ -61,4 +71,7 @@
 8. Add performance monitoring
 9. Improve user feedback
 10. Test edge cases
-11. Add error recovery mechanisms 
+11. Add error recovery mechanisms
+12. Complete price data database integration
+13. Fix RNFS module import and setup
+14. Implement pagination for watchlist cards 
