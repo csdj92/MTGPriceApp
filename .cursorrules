@@ -13,6 +13,11 @@
 10. Fix bottom bar not updating with scanned cards
 11. Implement MTGJson price data interfaces and database integration
 12. Show price data on watchlist screen with pagination (10 items per page)
+13. Add set-based search functionality to watchlist screen
+14. Implement debounced search to improve performance
+15. Add sorting by normal/foil prices
+16. Display card details in sections grouped by set
+17. Load all cards when searching by set code
 
 ## Progress Made
 1. Fixed camera preview initialization
@@ -49,6 +54,14 @@
 32. Added methods for tracking last price update timestamp
 33. Integrated price data download functionality with watchlist screen
 34. Added daily price update check to prevent unnecessary downloads
+35. Implemented set-based search functionality in watchlist screen
+36. Added debounced search to improve performance
+37. Implemented sorting by normal/foil prices
+38. Added section headers for set grouping in watchlist
+39. Fixed DatabaseService instantiation in WatchlistScreen
+40. Added functionality to load all cards when searching by set code
+41. Updated search placeholder to indicate set search functionality
+42. Improved price display with proper null handling
 
 ## Remaining Issues
 1. Test OCR accuracy
@@ -59,6 +72,10 @@
 6. Fix bottom bar not updating with new scans
 7. Complete price data integration with database
 8. Fix RNFS import and initialization issues
+9. Test set-based search functionality
+10. Verify sorting behavior
+11. Test pagination with large datasets
+12. Test set search with various set codes
 
 ## Next Steps
 1. Complete PriceLookupScreen.tsx refactoring
@@ -74,4 +91,8 @@
 11. Add error recovery mechanisms
 12. Complete price data database integration
 13. Fix RNFS module import and setup
-14. Implement pagination for watchlist cards 
+14. Implement pagination for watchlist cards
+15. Test set-based search with various set codes
+16. Verify price sorting functionality
+17. Test section header rendering
+18. Test loading all cards for set searches 
