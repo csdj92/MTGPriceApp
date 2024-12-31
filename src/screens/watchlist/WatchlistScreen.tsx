@@ -11,19 +11,18 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
-import { downloadAndImportPriceData } from '../../utils/priceData';
 import { databaseService } from '../../services/DatabaseService';
 import { scryfallService } from '../../services/ScryfallService';
 import CardList from '../../components/CardList';
 import debounce from 'lodash/debounce';
 import type { ExtendedCard } from '../../types/card';
+import { downloadAndImportPriceData } from '../../utils/priceData';
 
 const WatchlistScreen = () => {
     const navigation = useNavigation();
     const [isLoading, setIsLoading] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
     const [priceData, setPriceData] = useState<any[]>([]);
-    const [downloadProgress, setDownloadProgress] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -31,9 +30,10 @@ const WatchlistScreen = () => {
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [cardDetails, setCardDetails] = useState<ExtendedCard[]>([]);
-    const PAGE_SIZE = 50;
+    const PAGE_SIZE = 5000000;
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
-    const loadPriceData = async (isSearchUpdate = false) => {
+    const loadPriceData = useCallback(async (query: string, isSearchUpdate = false) => {
         if (isSearchUpdate) {
             setIsSearching(true);
         } else {
@@ -41,40 +41,70 @@ const WatchlistScreen = () => {
         }
 
         try {
-            const prices = await databaseService.getCombinedPriceData(currentPage, PAGE_SIZE, searchQuery, sortBy);
-            if (prices.length < PAGE_SIZE) {
-                setHasMore(false);
+            if (query.toLowerCase().startsWith('set:')) {
+                const setCode = query.split(':')[1].trim().toUpperCase();
+                console.log(`[WatchlistScreen] Searching for set: ${setCode}`);
+
+                // Get all cards from the set with prices
+                const setCards = await databaseService.getAllCardsBySet(setCode, 1000, 0);
+                console.log(`[WatchlistScreen] Found ${setCards.length} cards in set ${setCode}`);
+
+                if (setCards.length > 0) {
+                    // Sort the cards by price
+                    setCards.sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0));
+
+                    setPriceData([{
+                        setCode,
+                        cards: setCards
+                    }]);
+                    setHasMore(false); // No need to load more since we got all cards
+                } else {
+                    setPriceData([]);
+                    setHasMore(false);
+                }
+            } else {
+                // Regular search
+                const prices = await databaseService.getCombinedPriceData(currentPage, PAGE_SIZE, query, sortBy);
+                if (prices.length < PAGE_SIZE) {
+                    setHasMore(false);
+                }
+                setPriceData(prev => currentPage === 1 ? prices : [...prev, ...prices]);
             }
-            setPriceData(prev => currentPage === 1 ? prices : [...prev, ...prices]);
         } catch (error) {
             console.error('Error loading price data:', error);
         } finally {
             setIsLoading(false);
             setIsSearching(false);
         }
-    };
+    }, [currentPage, sortBy]);
 
-    // Debounced search function
+    // Debounced search function with immediate execution for set: queries
     const debouncedSearch = useCallback(
-        debounce((query: string) => {
-            setSearchQuery(query);
+        debounce((text: string) => {
             setCurrentPage(1);
-            loadPriceData(true);
+            loadPriceData(text, true);
         }, 300),
         [loadPriceData]
     );
 
     useEffect(() => {
-        loadPriceData();
-    }, [currentPage, sortBy]);
+        if (searchQuery.toLowerCase().startsWith('set:')) {
+            // Immediate execution for set: queries
+            const setCode = searchQuery.split(':')[1].trim();
+            if (setCode.length > 0) {
+                setCurrentPage(1);
+                loadPriceData(searchQuery, true);
+            }
+        } else {
+            debouncedSearch(searchQuery);
+        }
+    }, [searchQuery, debouncedSearch]);
 
     const handleSearch = (text: string) => {
+        setSearchQuery(text);
         if (text.length === 0) {
-            setSearchQuery('');
             setCurrentPage(1);
-            loadPriceData();
-        } else {
-            debouncedSearch(text);
+            loadPriceData('', false);
         }
     };
 
@@ -110,7 +140,7 @@ const WatchlistScreen = () => {
             <Text style={styles.cardName}>
                 {item.name || 'Unknown Card'} ({item.number || 'Unknown Number'})
             </Text>
-            <Text>Normal: ${item.normal_price.toFixed(2)} | Foil: ${item.foil_price.toFixed(2)}</Text>
+            <Text>Normal: ${item.normal_price?.toFixed(2) || '0.00'} | Foil: ${item.foil_price?.toFixed(2) || '0.00'}</Text>
             <Text style={styles.lastUpdated}>
                 Last Updated: {new Date(item.last_updated).toLocaleString()}
             </Text>
@@ -124,15 +154,28 @@ const WatchlistScreen = () => {
         </View>
     );
 
+    const handleRefreshPrices = async () => {
+        try {
+            setIsRefreshing(true);
+            // Force the price data update
+            await databaseService.shouldUpdatePrices(true); // Force update
+            await downloadAndImportPriceData((progress) => {
+                console.log(`[WatchlistScreen] Price data download progress: ${progress}%`);
+            });
+            // Reload price data after update
+            await loadPriceData(searchQuery, false);
+        } catch (error) {
+            console.error('[WatchlistScreen] Error refreshing prices:', error);
+        } finally {
+            setIsRefreshing(false);
+        }
+    };
+
     if (isLoading && currentPage === 1) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#2196F3" />
-                <Text style={styles.loadingText}>
-                    {downloadProgress > 0
-                        ? `Updating price data... ${Math.round(downloadProgress)}%`
-                        : 'Loading price data...'}
-                </Text>
+                <Text style={styles.loadingText}>Loading price data...</Text>
             </View>
         );
     }
@@ -143,9 +186,9 @@ const WatchlistScreen = () => {
                 <View style={styles.searchInputContainer}>
                     <TextInput
                         style={styles.searchInput}
-                        placeholder="Search cards or sets..."
+                        placeholder="Type 'set:CODE' to view all cards in a set"
                         onChangeText={handleSearch}
-                        defaultValue={searchQuery}
+                        value={searchQuery}
                     />
                     {isSearching && (
                         <ActivityIndicator
@@ -160,6 +203,17 @@ const WatchlistScreen = () => {
                     onPress={() => setSortBy(prev => prev === 'normal_price' ? 'foil_price' : 'normal_price')}
                 >
                     <Text>Sort by: {sortBy === 'normal_price' ? 'Normal' : 'Foil'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                    style={[styles.refreshButton, isRefreshing && styles.refreshButtonDisabled]}
+                    onPress={handleRefreshPrices}
+                    disabled={isRefreshing}
+                >
+                    {isRefreshing ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                        <Icon name="refresh" size={20} color="#fff" />
+                    )}
                 </TouchableOpacity>
             </View>
 
@@ -288,6 +342,19 @@ const styles = StyleSheet.create({
     closeButton: {
         padding: 16,
         alignItems: 'flex-end',
+    },
+    refreshButton: {
+        backgroundColor: '#2196F3',
+        padding: 10,
+        borderRadius: 20,
+        marginLeft: 10,
+        width: 40,
+        height: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    refreshButtonDisabled: {
+        opacity: 0.7,
     },
 });
 

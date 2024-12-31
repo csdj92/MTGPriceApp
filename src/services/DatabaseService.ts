@@ -748,9 +748,13 @@ class DatabaseService {
         }
     }
 
-    async shouldUpdatePrices(): Promise<boolean> {
+    async shouldUpdatePrices(force: boolean = false): Promise<boolean> {
         if (!this.db) {
             await this.initDatabase();
+        }
+
+        if (force) {
+            return true;
         }
 
         try {
@@ -821,24 +825,41 @@ class DatabaseService {
         try {
             const offset = (page - 1) * pageSize;
 
-            // First get price data from local database
+            // If searching, first get all matching cards from MTGJson
+            let matchingCardUuids: string[] = [];
+            if (search) {
+                const [cardResult] = await this.mtgJsonDb.executeSql(`
+                    SELECT uuid 
+                    FROM cards 
+                    WHERE name LIKE ? OR setCode LIKE ?
+                `, [`%${search}%`, `%${search}%`]);
+
+                matchingCardUuids = cardResult.rows.raw().map((row: any) => row.uuid);
+
+                if (matchingCardUuids.length === 0) {
+                    return []; // No matches found in card database
+                }
+            }
+
+            // Then get price data with optional UUID filter
             const [priceResult] = await this.db.executeSql(`
                 SELECT uuid, normal_price, foil_price, last_updated 
                 FROM prices 
+                ${search ? 'WHERE uuid IN (' + matchingCardUuids.map(() => '?').join(',') + ')' : ''}
                 ORDER BY ${sortBy} DESC
                 LIMIT ? OFFSET ?
-            `, [pageSize, offset]);
+            `, [...(search ? matchingCardUuids : []), pageSize, offset]);
 
             const prices = priceResult.rows.raw();
 
-            // Get card details from MTGJson for each price entry
+            // Get card details for the filtered price data
             const combinedData = [];
             for (const price of prices) {
                 const [cardResult] = await this.mtgJsonDb.executeSql(`
                     SELECT name, setCode, number, rarity 
                     FROM cards 
-                    WHERE uuid = ? ${search ? 'AND (name LIKE ? OR setCode LIKE ?)' : ''}
-                `, [price.uuid, ...(search ? [`%${search}%`, `%${search}%`] : [])]);
+                    WHERE uuid = ?
+                `, [price.uuid]);
 
                 if (cardResult.rows.length > 0) {
                     const cardDetails = cardResult.rows.item(0);
@@ -867,6 +888,114 @@ class DatabaseService {
             return [];
         }
     }
+
+    async getAllCardsBySet(setCode: string, pageSize: number, offset: number): Promise<any[]> {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        try {
+            // Normalize setCode for case-insensitive matching
+            const normalizedSetCode = setCode.toUpperCase();
+            // Fetch cards with the specified setCode
+            const [cardResult] = await this.mtgJsonDb!.executeSql(`
+                SELECT 
+                    c.uuid, 
+                    c.name, 
+                    c.setCode,
+                    c.number, 
+                    c.rarity
+                FROM cards c
+                WHERE UPPER(c.setCode) = ?
+                ORDER BY c.number ASC
+                LIMIT ? OFFSET ?;
+            `, [normalizedSetCode, pageSize, offset]);
+
+            const cards = cardResult.rows.raw();
+            console.log(`[DatabaseService] Found ${cards.length} cards for set ${setCode}`);
+
+            if (cards.length === 0) {
+                return [];
+            }
+
+            // Extract and normalize UUIDs
+            const uuids = cards.map((card: any) => card.uuid.toUpperCase());
+            const uniqueUuids = [...new Set(uuids)]; // Remove duplicates if any
+
+            // Prepare for batching to handle SQLite's parameter limits
+            const BATCH_SIZE = 900; // Below SQLite's limit of 999
+            const priceMap = new Map();
+
+            for (let i = 0; i < uniqueUuids.length; i += BATCH_SIZE) {
+                const batch = uniqueUuids.slice(i, i + BATCH_SIZE);
+                const placeholders = batch.map(() => '?').join(',');
+
+                const [priceResult] = await this.db.executeSql(`
+                    SELECT uuid, normal_price, foil_price, last_updated 
+                    FROM prices 
+                    WHERE UPPER(uuid) IN (${placeholders})
+                `, batch);
+
+                for (let j = 0; j < priceResult.rows.length; j++) {
+                    const price = priceResult.rows.item(j);
+                    priceMap.set(price.uuid.toUpperCase(), {
+                        normal_price: parseFloat(price.normal_price) || 0,
+                        foil_price: parseFloat(price.foil_price) || 0,
+                        last_updated: price.last_updated ? new Date(price.last_updated) : null
+                    });
+                }
+            }
+
+            // Combine card data with corresponding price data
+            const combinedData = cards.map((card: any) => {
+                const normalizedUuid = card.uuid.toUpperCase();
+                const priceData = priceMap.get(normalizedUuid) || {
+                    normal_price: 0,
+                    foil_price: 0,
+                    last_updated: null
+                };
+
+                return {
+                    uuid: card.uuid,
+                    name: card.name,
+                    setCode: card.setCode,
+                    number: card.number,
+                    rarity: card.rarity,
+                    normal_price: priceData.normal_price,
+                    foil_price: priceData.foil_price,
+                    last_updated: priceData.last_updated
+                };
+            });
+
+            // Log discrepancies
+            const missingPrices = combinedData.filter(card => card.normal_price === 0 && card.foil_price === 0);
+            console.log(`[DatabaseService] Number of cards missing price data: ${missingPrices.length}`);
+
+            if (missingPrices.length > 0) {
+                console.log('Sample cards missing prices:', missingPrices.slice(0, 5));
+            }
+
+            // Log sample data for verification
+            console.log('[DatabaseService] Sample combined data:', {
+                totalCards: combinedData.length,
+                sampleCard: combinedData[0],
+                pricesFound: priceMap.size,
+            });
+
+            return combinedData;
+        } catch (error) {
+            console.error('[DatabaseService] Error getting cards by set:', {
+                message: error instanceof Error ? error.message : 'Unknown error',
+                stack: error instanceof Error ? error.stack : undefined,
+                setCode,
+                pageSize,
+                offset
+            });
+            return [];
+        }
+    }
+
+
 }
 
 export const databaseService = new DatabaseService(); 
