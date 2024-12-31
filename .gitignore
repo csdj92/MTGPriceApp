@@ -72,3 +72,7 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# SQLite database files
+android/app/src/main/assets/AllPrintings.sqlite
+*.sqlite
