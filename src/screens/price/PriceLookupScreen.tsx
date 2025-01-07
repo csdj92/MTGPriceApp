@@ -17,6 +17,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { scryfallService } from '../../services/ScryfallService';
 import { databaseService } from '../../services/DatabaseService';
+import { searchLorcanaCards, getLorcanaCardWithPrice, markCardAsCollected, initializeLorcanaDatabase, listAllCardNames, clearLorcanaDatabase, reloadLorcanaCards } from '../../services/LorcanaService';
 import CardList from '../../components/CardList';
 import CardScanner from '../../components/CardScanner';
 import type { ExtendedCard } from '../../types/card';
@@ -43,6 +44,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
     const [isCardDetailsVisible, setIsCardDetailsVisible] = useState(false);
     const [isScanningPaused, setIsScanningPaused] = useState(false);
+    const [isLorcanaScan, setIsLorcanaScan] = useState(false);
     const lastScannedRef = useRef<{
         text: string;
         timestamp: number;
@@ -64,6 +66,33 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
     useEffect(() => {
         loadScanHistory();
+        // Initialize Lorcana database
+        const initLorcanaDB = async () => {
+            try {
+                console.log('[PriceLookupScreen] Initializing Lorcana database...');
+                await initializeLorcanaDatabase();
+                console.log('[PriceLookupScreen] Lorcana database initialized');
+                // List some card names to verify database content
+                await listAllCardNames();
+            } catch (error) {
+                console.error('Error initializing Lorcana database:', error);
+                Alert.alert(
+                    'Database Error',
+                    'Failed to initialize Lorcana database. Lorcana card scanning may not work correctly. Would you like to retry?',
+                    [
+                        {
+                            text: 'Retry',
+                            onPress: () => initLorcanaDB()
+                        },
+                        {
+                            text: 'Cancel',
+                            style: 'cancel'
+                        }
+                    ]
+                );
+            }
+        };
+        initLorcanaDB();
     }, []);
 
     const loadScanHistory = async () => {
@@ -111,6 +140,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleScanPress = () => {
+        console.log('[PriceLookupScreen] Switching to MTG scan mode');
+        setIsLorcanaScan(false);
         setIsCameraActive(true);
     };
 
@@ -127,6 +158,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         if (!text?.trim() || text.length < 3) return;
 
         const normalizedText = text.toLowerCase().trim();
+        console.log(`[PriceLookupScreen] Scan detected: ${text} (normalized: ${normalizedText})`);
+        console.log(`[PriceLookupScreen] Scan mode: ${isLorcanaScan ? 'Lorcana' : 'MTG'}`);
 
         // Check if we've seen this text very recently (within cooldown)
         const now = Date.now();
@@ -134,6 +167,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             const timeSinceLastScan = now - lastScannedRef.current.timestamp;
             // Only apply cooldown if it's the exact same text
             if (timeSinceLastScan < SCAN_COOLDOWN_MS && lastScannedRef.current.text === normalizedText) {
+                console.log('[PriceLookupScreen] Scan ignored - within cooldown period');
                 return; // Still in cooldown period for this exact text
             }
         }
@@ -142,48 +176,100 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         lastScannedRef.current = { text: normalizedText, timestamp: now };
 
         try {
-            const searchResponse = await scryfallService.searchCards(text, 1);
-            const foundCards = searchResponse.data;
+            if (isLorcanaScan) {
+                console.log('[PriceLookupScreen] Searching Lorcana database...');
+                // Search in Lorcana database
+                const lorcanaResults = await searchLorcanaCards(text);
+                console.log(`[PriceLookupScreen] Found ${lorcanaResults?.length || 0} Lorcana results`);
+                
+                if (lorcanaResults && lorcanaResults.length > 0) {
+                    const card = lorcanaResults[0];
+                    console.log('[PriceLookupScreen] Getting Lorcana card price...');
+                    const cardWithPrice = await getLorcanaCardWithPrice(card.unique_id);
+                    
+                    if (cardWithPrice) {
+                        console.log('[PriceLookupScreen] Found Lorcana card with price:', cardWithPrice.name);
+                        // Convert Lorcana card to ExtendedCard format
+                        const extendedCard: ExtendedCard = {
+                            id: cardWithPrice.unique_id,
+                            name: cardWithPrice.name,
+                            setName: cardWithPrice.set_name,
+                            setCode: cardWithPrice.set_id || '',
+                            collectorNumber: String(cardWithPrice.card_num),
+                            imageUris: { normal: cardWithPrice.image },
+                            prices: {
+                                usd: cardWithPrice.prices?.usd || null,
+                                usdFoil: cardWithPrice.prices?.usd_foil || null
+                            },
+                            type: cardWithPrice.type || 'Card',
+                            purchaseUrls: {},
+                            legalities: {},
+                            scannedAt: now
+                        };
 
-            if (foundCards.length > 0) {
-                const newCard = foundCards[0];
+                        setScannedCards(prevCards => {
+                            const currentCards = Array.isArray(prevCards) ? prevCards : [];
+                            return [extendedCard, ...currentCards];
+                        });
 
-                // Double check we haven't just added this card (race condition check)
-                const lastFewCards = scannedCards.slice(0, 3);
-                const isDuplicate = lastFewCards.some(card => {
-                    const timeDiff = now - (card.scannedAt || 0);
-                    return card.name.toLowerCase() === newCard.name.toLowerCase() && timeDiff < SCAN_COOLDOWN_MS;
-                });
+                        setTotalPrice(prevTotal => {
+                            const cardPrice = extendedCard.prices?.usd ? Number(extendedCard.prices.usd) : 0;
+                            return prevTotal + cardPrice;
+                        });
 
-                if (isDuplicate) {
-                    return;
+                        // Mark as collected
+                        await markCardAsCollected(card.unique_id);
+
+                        if (Platform.OS === 'android') {
+                            ToastAndroid.show(`Added ${cardWithPrice.name}`, ToastAndroid.SHORT);
+                        }
+                    }
                 }
+            } else {
+                // Existing MTG card scanning logic
+                const searchResponse = await scryfallService.searchCards(text, 1);
+                const foundCards = searchResponse.data;
 
-                const cardWithUuid = await databaseService.addToCache(newCard);
+                if (foundCards.length > 0) {
+                    const newCard = foundCards[0];
 
-                if (!cardWithUuid.uuid) {
-                    throw new Error('Failed to generate UUID for card');
-                }
+                    // Double check we haven't just added this card (race condition check)
+                    const lastFewCards = scannedCards.slice(0, 3);
+                    const isDuplicate = lastFewCards.some(card => {
+                        const timeDiff = now - (card.scannedAt || 0);
+                        return card.name.toLowerCase() === newCard.name.toLowerCase() && timeDiff < SCAN_COOLDOWN_MS;
+                    });
 
-                const cardWithTimestamp = {
-                    ...cardWithUuid,
-                    scannedAt: now
-                };
+                    if (isDuplicate) {
+                        return;
+                    }
 
-                await databaseService.addToScanHistory(cardWithTimestamp);
+                    const cardWithUuid = await databaseService.addToCache(newCard);
 
-                setScannedCards(prevCards => {
-                    const currentCards = Array.isArray(prevCards) ? prevCards : [];
-                    return [cardWithTimestamp, ...currentCards];
-                });
+                    if (!cardWithUuid.uuid) {
+                        throw new Error('Failed to generate UUID for card');
+                    }
 
-                setTotalPrice(prevTotal => {
-                    const cardPrice = cardWithUuid.prices?.usd ? Number(cardWithUuid.prices.usd) : 0;
-                    return prevTotal + cardPrice;
-                });
+                    const cardWithTimestamp = {
+                        ...cardWithUuid,
+                        scannedAt: now
+                    };
 
-                if (Platform.OS === 'android') {
-                    ToastAndroid.show(`Added ${cardWithUuid.name}`, ToastAndroid.SHORT);
+                    await databaseService.addToScanHistory(cardWithTimestamp);
+
+                    setScannedCards(prevCards => {
+                        const currentCards = Array.isArray(prevCards) ? prevCards : [];
+                        return [cardWithTimestamp, ...currentCards];
+                    });
+
+                    setTotalPrice(prevTotal => {
+                        const cardPrice = cardWithUuid.prices?.usd ? Number(cardWithUuid.prices.usd) : 0;
+                        return prevTotal + cardPrice;
+                    });
+
+                    if (Platform.OS === 'android') {
+                        ToastAndroid.show(`Added ${cardWithUuid.name}`, ToastAndroid.SHORT);
+                    }
                 }
             }
         } catch (error) {
@@ -259,6 +345,35 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         }
     };
 
+    const handleLorcanaScan = () => {
+        console.log('[PriceLookupScreen] Switching to Lorcana scan mode');
+        setIsLorcanaScan(true);
+        setIsCameraActive(true);
+    };
+
+    const handleClearLorcanaDB = async () => {
+        try {
+            await clearLorcanaDatabase();
+            Alert.alert('Success', 'Lorcana database cleared successfully');
+        } catch (error) {
+            console.error('Error clearing Lorcana database:', error);
+            Alert.alert('Error', 'Failed to clear Lorcana database');
+        }
+    };
+
+    const handleReloadLorcanaCards = async () => {
+        try {
+            setIsLoading(true);
+            await reloadLorcanaCards();
+            Alert.alert('Success', 'Lorcana cards reloaded successfully');
+        } catch (error) {
+            console.error('Error reloading Lorcana cards:', error);
+            Alert.alert('Error', 'Failed to reload Lorcana cards');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const renderScannedCard = ({ item }: { item: ExtendedCard }) => (
         <TouchableOpacity
             style={styles.scannedCardItem}
@@ -293,6 +408,11 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 onCardPress={handleCardPress}
                 isPaused={isScanningPaused}
             />
+            <View style={styles.scanModeIndicator}>
+                <Text style={styles.scanModeText}>
+                    {isLorcanaScan ? 'Scanning Lorcana Cards' : 'Scanning MTG Cards'}
+                </Text>
+            </View>
             {scannedCards.length > 0 && (
                 <View style={styles.scannedCardsContainer}>
                     <FlatList
@@ -333,6 +453,10 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         </Modal>
     );
 
+    useEffect(() => {
+        console.log(`[PriceLookupScreen] Scan mode changed: ${isLorcanaScan ? 'Lorcana' : 'MTG'}`);
+    }, [isLorcanaScan]);
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.searchContainer}>
@@ -355,13 +479,33 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                         <Icon name="magnify" size={24} color="white" />
                     </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                    style={styles.scanButton}
-                    onPress={handleScanPress}
-                >
-                    <Icon name="camera" size={24} color="white" />
-                    <Text style={styles.scanButtonText}>Scan Card</Text>
-                </TouchableOpacity>
+                <View style={styles.buttonContainer}>
+                    <TouchableOpacity
+                        style={styles.scanButton}
+                        onPress={handleScanPress}
+                    >
+                        <Icon name="camera" size={24} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.scanButton, { marginLeft: 10, backgroundColor: '#4a148c' }]}
+                        onPress={handleLorcanaScan}
+                    >
+                        <Icon name="cards" size={24} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.scanButton, { marginLeft: 10, backgroundColor: '#d32f2f' }]}
+                        onPress={handleClearLorcanaDB}
+                    >
+                        <Icon name="database-remove" size={24} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.scanButton, { marginLeft: 10, backgroundColor: '#388e3c' }]}
+                        onPress={handleReloadLorcanaCards}
+                        disabled={isLoading}
+                    >
+                        <Icon name="database-sync" size={24} color="#fff" />
+                    </TouchableOpacity>
+                </View>
             </View>
 
             <CardList
@@ -507,6 +651,24 @@ const styles = StyleSheet.create({
     cardPrice: {
         fontSize: 14,
         color: '#2196F3',
+        fontWeight: 'bold',
+    },
+    buttonContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    scanModeIndicator: {
+        position: 'absolute',
+        top: 20,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        paddingVertical: 5,
+    },
+    scanModeText: {
+        color: 'white',
+        fontSize: 16,
         fontWeight: 'bold',
     },
 });

@@ -30,7 +30,7 @@ const WatchlistScreen = () => {
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [cardDetails, setCardDetails] = useState<ExtendedCard[]>([]);
-    const PAGE_SIZE = 5000000;
+    const PAGE_SIZE = 10;
     const [isRefreshing, setIsRefreshing] = useState(false);
 
     const loadPriceData = useCallback(async (query: string, isSearchUpdate = false) => {
@@ -48,15 +48,18 @@ const WatchlistScreen = () => {
                 // Get all cards from the set with prices
                 const setCards = await databaseService.getAllCardsBySet(setCode, 1000, 0);
                 console.log(`[WatchlistScreen] Found ${setCards.length} cards in set ${setCode}`);
+                // console.log('[WatchlistScreen] First card sample:', JSON.stringify(setCards[0], null, 2));
 
                 if (setCards.length > 0) {
                     // Sort the cards by price
                     setCards.sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0));
-
-                    setPriceData([{
+                    
+                    const sectionData = [{
                         setCode,
-                        cards: setCards
-                    }]);
+                        data: setCards
+                    }];
+                    // console.log('[WatchlistScreen] Section data structure:', JSON.stringify(sectionData[0], null, 2));
+                    setPriceData(sectionData);
                     setHasMore(false); // No need to load more since we got all cards
                 } else {
                     setPriceData([]);
@@ -68,7 +71,12 @@ const WatchlistScreen = () => {
                 if (prices.length < PAGE_SIZE) {
                     setHasMore(false);
                 }
-                setPriceData(prev => currentPage === 1 ? prices : [...prev, ...prices]);
+                // Transform the data structure to match SectionList requirements
+                const transformedPrices = prices.map(section => ({
+                    setCode: section.setCode,
+                    data: section.cards
+                }));
+                setPriceData(prev => currentPage === 1 ? transformedPrices : [...prev, ...transformedPrices]);
             }
         } catch (error) {
             console.error('Error loading price data:', error);
@@ -111,7 +119,7 @@ const WatchlistScreen = () => {
     const handleCardPress = async (card: any) => {
         try {
             setIsModalVisible(true);
-            const details = await scryfallService.getCardByNameAndSet(card.name, card.setCode);
+            const details = await scryfallService.getCardByNameAndSet(card.number, card.setCode);
             if (details) {
                 setCardDetails([{
                     ...details,
@@ -132,20 +140,59 @@ const WatchlistScreen = () => {
         }
     };
 
-    const renderCard = ({ item }: { item: any }) => (
-        <TouchableOpacity
-            style={styles.cardItem}
-            onPress={() => handleCardPress(item)}
-        >
-            <Text style={styles.cardName}>
-                {item.name || 'Unknown Card'} ({item.number || 'Unknown Number'})
-            </Text>
-            <Text>Normal: ${item.normal_price?.toFixed(2) || '0.00'} | Foil: ${item.foil_price?.toFixed(2) || '0.00'}</Text>
-            <Text style={styles.lastUpdated}>
-                Last Updated: {new Date(item.last_updated).toLocaleString()}
-            </Text>
-        </TouchableOpacity>
-    );
+    const renderCard = useCallback((card: any) => {
+        const formatPrice = (price: number) => price ? `$${price.toFixed(2)}` : 'N/A';
+
+        // Get prices from the card's prices object
+        const prices = card.prices || {
+            tcgplayer: { normal: 0, foil: 0 },
+            cardmarket: { normal: 0, foil: 0 },
+            cardkingdom: { normal: 0, foil: 0 },
+            cardsphere: { normal: 0, foil: 0 }
+        };
+
+        return (
+            <TouchableOpacity 
+                style={styles.cardItem}
+                onPress={() => handleCardPress(card)}
+            >
+                <View style={styles.cardHeader}>
+                    <Text style={styles.cardName}>{card.name}</Text>
+                    <Text style={styles.setCode}>{card.setCode} #{card.number}</Text>
+                </View>
+                
+                <View style={styles.priceGrid}>
+                    <View style={styles.priceSource}>
+                        <Text style={styles.sourceHeader}>TCGplayer</Text>
+                        <Text>Normal: {formatPrice(prices.tcgplayer.normal)}</Text>
+                        <Text>Foil: {formatPrice(prices.tcgplayer.foil)}</Text>
+                    </View>
+                    
+                    <View style={styles.priceSource}>
+                        <Text style={styles.sourceHeader}>Cardmarket</Text>
+                        <Text>Normal: {formatPrice(prices.cardmarket.normal)}</Text>
+                        <Text>Foil: {formatPrice(prices.cardmarket.foil)}</Text>
+                    </View>
+                    
+                    <View style={styles.priceSource}>
+                        <Text style={styles.sourceHeader}>Card Kingdom</Text>
+                        <Text>Normal: {formatPrice(prices.cardkingdom.normal)}</Text>
+                        <Text>Foil: {formatPrice(prices.cardkingdom.foil)}</Text>
+                    </View>
+                    
+                    <View style={styles.priceSource}>
+                        <Text style={styles.sourceHeader}>Cardsphere</Text>
+                        <Text>Normal: {formatPrice(prices.cardsphere.normal)}</Text>
+                        <Text>Foil: {formatPrice(prices.cardsphere.foil)}</Text>
+                    </View>
+                </View>
+
+                <Text style={styles.lastUpdated}>
+                    Last updated: {card.last_updated ? new Date(card.last_updated).toLocaleString() : 'Never'}
+                </Text>
+            </TouchableOpacity>
+        );
+    }, []);
 
     const renderSetSection = ({ section }: { section: { setCode: string; data: any[] } }) => (
         <View style={styles.setHeader}>
@@ -154,18 +201,60 @@ const WatchlistScreen = () => {
         </View>
     );
 
+    useEffect(() => {
+        const verifyDatabase = async () => {
+            const isValid = await databaseService.verifyDatabaseState();
+            if (!isValid) {
+                console.log('[WatchlistScreen] Database verification failed, forcing price refresh...');
+                await handleRefreshPrices();
+            } else {
+                loadPriceData(searchQuery, false);
+            }
+        };
+        
+        verifyDatabase();
+    }, []);
+
     const handleRefreshPrices = async () => {
         try {
             setIsRefreshing(true);
+            console.log('[WatchlistScreen] Starting price refresh...');
+            
+            // Reinitialize database if needed
+            await databaseService.reinitializePrices();
+            
             // Force the price data update
-            await databaseService.shouldUpdatePrices(true); // Force update
-            await downloadAndImportPriceData((progress) => {
-                console.log(`[WatchlistScreen] Price data download progress: ${progress}%`);
-            });
+            const shouldUpdate = await databaseService.shouldUpdatePrices(true);
+            console.log('[WatchlistScreen] Should update prices:', shouldUpdate);
+            
+            if (shouldUpdate) {
+                // Download and import price data
+                console.log('[WatchlistScreen] Starting price data download...');
+                await downloadAndImportPriceData((progress) => {
+                    console.log(`[WatchlistScreen] Price data download progress: ${progress}%`);
+                }, true);
+                console.log('[WatchlistScreen] Price data download and import completed');
+
+                // Verify price data was imported
+                const priceCount = await databaseService.getPriceCount();
+                console.log(`[WatchlistScreen] Total prices in database after refresh: ${priceCount}`);
+                
+                if (priceCount === 0) {
+                    console.error('[WatchlistScreen] Price data import failed - no prices found in database');
+                    throw new Error('Price data import failed');
+                }
+            } else {
+                console.error('[WatchlistScreen] Force update failed - shouldUpdate returned false');
+                throw new Error('Force update failed');
+            }
+            
             // Reload price data after update
+            console.log('[WatchlistScreen] Reloading price data...');
             await loadPriceData(searchQuery, false);
+            console.log('[WatchlistScreen] Price refresh completed');
         } catch (error) {
             console.error('[WatchlistScreen] Error refreshing prices:', error);
+            // You might want to show an error message to the user here
         } finally {
             setIsRefreshing(false);
         }
@@ -215,14 +304,17 @@ const WatchlistScreen = () => {
                         <Icon name="refresh" size={20} color="#fff" />
                     )}
                 </TouchableOpacity>
+                <TouchableOpacity
+                    style={styles.debugButton}
+                    onPress={() => databaseService.printTenCardsRows()}
+                >
+                    <Icon name="bug" size={20} color="#fff" />
+                </TouchableOpacity>
             </View>
 
             <SectionList
-                sections={priceData.map(set => ({
-                    setCode: set.setCode,
-                    data: set.cards
-                }))}
-                renderItem={renderCard}
+                sections={priceData}
+                renderItem={({ item }) => renderCard(item)}
                 renderSectionHeader={renderSetSection}
                 keyExtractor={(item) => item.uuid}
                 onEndReached={() => {
@@ -231,6 +323,11 @@ const WatchlistScreen = () => {
                     }
                 }}
                 onEndReachedThreshold={0.5}
+                ListEmptyComponent={() => (
+                    <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyText}>No cards found</Text>
+                    </View>
+                )}
                 ListFooterComponent={() => (
                     isLoading && !isSearching ? (
                         <ActivityIndicator size="small" color="#2196F3" style={styles.footer} />
@@ -308,19 +405,53 @@ const styles = StyleSheet.create({
         color: '#666',
     },
     cardItem: {
-        padding: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: '#eee',
+        backgroundColor: 'white',
+        padding: 16,
+        marginVertical: 8,
+        marginHorizontal: 16,
+        borderRadius: 8,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
+    cardHeader: {
+        marginBottom: 12,
     },
     cardName: {
-        fontSize: 16,
-        fontWeight: '500',
-        marginBottom: 5,
+        fontSize: 18,
+        fontWeight: '600',
+        color: '#1a1a1a',
+    },
+    setCode: {
+        fontSize: 14,
+        color: '#666',
+        marginTop: 4,
+    },
+    priceGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        marginVertical: 8,
+    },
+    priceSource: {
+        width: '48%',
+        backgroundColor: '#f5f5f5',
+        padding: 8,
+        borderRadius: 4,
+        marginBottom: 8,
+    },
+    sourceHeader: {
+        fontWeight: '600',
+        marginBottom: 4,
+        color: '#333',
     },
     lastUpdated: {
         fontSize: 12,
-        color: '#666',
-        marginTop: 5,
+        color: '#999',
+        marginTop: 8,
+        textAlign: 'right',
     },
     loadingContainer: {
         flex: 1,
@@ -355,6 +486,25 @@ const styles = StyleSheet.create({
     },
     refreshButtonDisabled: {
         opacity: 0.7,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyText: {
+        fontSize: 16,
+        color: '#666',
+    },
+    debugButton: {
+        backgroundColor: '#FF9800',
+        padding: 10,
+        borderRadius: 20,
+        marginLeft: 10,
+        width: 40,
+        height: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 

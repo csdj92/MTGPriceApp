@@ -160,7 +160,10 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                 textRecognizer.process(inputImage)
                                     .addOnSuccessListener(executor) { text ->
                                         if (isSessionActive && previewSurface != null) {
-                                            val cardName = text.textBlocks
+                                            Log.d(TAG, "Raw OCR blocks: ${text.textBlocks.joinToString { it.text }}")
+                                            
+                                            // First pass: get all potential card name candidates
+                                            val candidates = text.textBlocks
                                                 .asSequence()
                                                 .map { it.text.trim() }
                                                 .filter { it.length in 3..50 }
@@ -170,10 +173,24 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                                 .filter { !it.contains(Regex("(?i)(Wizards of the Coast|™|©|Illustrated|Artist|Set|Collector|Number|MTG|Magic)")) }
                                                 .filter { !it.contains(Regex("[{}]")) }
                                                 .filter { it.matches(Regex("[A-Za-z\\s,'\\-]+")) }
-                                                .firstOrNull()
+                                                .toList()
+
+                                            Log.d(TAG, "Filtered candidates: $candidates")
+
+                                            // Find the best candidate (prefer uppercase names as they're usually titles)
+                                            val cardName = candidates
+                                                .filter { !it.equals("Personal Healthcare Companion", ignoreCase = true) } // Filter out subtitle
+                                                .maxByOrNull { name -> 
+                                                    when {
+                                                        name.uppercase() == name -> 3 // Prefer all uppercase
+                                                        name.split(" ").all { it.first().isUpperCase() } -> 2 // Then title case
+                                                        else -> 1 // Then anything else
+                                                    }
+                                                }
 
                                             if (!cardName.isNullOrBlank() && cardName != lastDetectedName) {
-                                                Thread.sleep(500)
+                                                Log.d(TAG, "Selected card name: $cardName")
+                                                Thread.sleep(250)
                                                 lastDetectedName = cardName
                                                 val params = Arguments.createMap().apply {
                                                     putString("text", cardName)
@@ -250,10 +267,23 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                 addTarget(surface)
                 imageReader?.surface?.let { addTarget(it) }
                 
-                // Use system defaults
+                // Optimize for text recognition
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                
+                // Enable auto white balance
+                set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+                
+                // Enable optical stabilization if available
+                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
+                
+                // Set scene mode for text
+                set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_BARCODE)
+                
+                // Prioritize sharpness over noise reduction
+                set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_FAST)
+                set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
             }
 
             val surfaces = mutableListOf<Surface>(surface)

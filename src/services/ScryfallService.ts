@@ -20,10 +20,19 @@ interface ScryfallCard {
     mana_cost?: string;
     type_line: string;
     oracle_text?: string;
+    booster?: string;
+    rulings_uri?: string;
+    edhrec_rank?: number;
     image_uris?: {
         normal: string;
         large: string;
         art_crop: string;
+    };
+    related_uris?: {
+        tcgplayer_infinite_articles: string;
+        tcgplayer_infinite_decks: string;
+        edhrec: string;
+        gatherer: string;
     };
     prices: {
         usd?: string;
@@ -40,12 +49,27 @@ interface ScryfallCard {
     };
     legalities: {
         standard: string;
+        commander: string;
+        future: string;
+        historic: string;
+        timeless: string;
+        gladiator: string;
         pioneer: string;
+        explorer: string;
         modern: string;
         legacy: string;
-        vintage: string;
-        commander: string;
         pauper: string;
+        vintage: string;
+        penny: string;
+        oathbreaker: string;
+        standardbrawl: string;
+        brawl: string;
+        alchemy: string;
+        paupercommander: string;
+        duel: string;
+        oldschool: string;
+        premodern: string;
+        predh: string;
         [key: string]: string;
     };
 }
@@ -120,6 +144,10 @@ class ScryfallService {
             text: scryfallCard.oracle_text,
             imageUrl: scryfallCard.image_uris?.normal,
             imageUris: scryfallCard.image_uris,
+            booster: scryfallCard.booster,
+            rulings_uri: scryfallCard.rulings_uri,
+            edhrec_rank: scryfallCard.edhrec_rank,
+            related_uris: scryfallCard.related_uris,
             prices: {
                 usd: scryfallCard.prices?.usd,
                 usdFoil: scryfallCard.prices?.usd_foil,
@@ -278,20 +306,19 @@ class ScryfallService {
         return extendedCards;
     }
 
-    async getCardByNameAndSet(cardName: string, setCode: string): Promise<ExtendedCard | null> {
+    async getCardByNameAndSet(cardNumber: string, setCode: string): Promise<ExtendedCard | null> {
         try {
-            const query = `!"${cardName}" set:${setCode}`;
-            const url = `${SCRYFALL_API_BASE}/cards/search?q=${encodeURIComponent(query)}`;
+            const url = `${SCRYFALL_API_BASE}/cards/${setCode.toLowerCase()}/${cardNumber}`;
             const data = await this.fetchWithThrottle(url);
 
-            if (!data || !data.data || data.data.length === 0) {
-                console.error('[ScryfallService] No card found with name and set:', cardName, setCode);
+            if (!data || !data.name) {
+                console.error('[ScryfallService] No card found with number and set:', cardNumber, setCode);
                 return null;
             }
-            console.log("data.data[0] card name and set", data.data[0]);
-            return this.transformScryfallCard(data.data[0]);
+            
+            return this.transformScryfallCard(data);
         } catch (error) {
-            console.error(`[ScryfallService] Error fetching card ${cardName} from set ${setCode}:`, error);
+            console.error(`[ScryfallService] Error fetching card ${cardNumber} from set ${setCode}:`, error);
             return null;
         }
     }

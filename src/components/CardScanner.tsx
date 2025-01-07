@@ -126,13 +126,13 @@ const CardScanner: React.FC<CardScannerProps> = ({
     };
 
     // Add monitoring for prop changes
-    useEffect(() => {
-        console.log('[CardScanner] Props updated:', {
-            scannedCardsCount: scannedCards?.length,
-            totalPrice,
-            cards: scannedCards?.map(card => card.name)
-        });
-    }, [scannedCards, totalPrice]);
+    // useEffect(() => {
+    //     console.log('[CardScanner] Props updated:', {
+    //         scannedCardsCount: scannedCards?.length,
+    //         totalPrice,
+    //         cards: scannedCards?.map(card => card.name)
+    //     });
+    // }, [scannedCards, totalPrice]);
 
     if (!hasPermission) {
         return (

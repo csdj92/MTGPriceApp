@@ -76,6 +76,7 @@ export interface RetailPrices {
 export interface PriceSource {
     retail?: RetailPrices;
     buylist?: RetailPrices;
+    currency?: 'USD' | 'EUR';
 }
 
 export interface PaperPrices {
@@ -85,9 +86,13 @@ export interface PaperPrices {
     tcgplayer?: PriceSource;
 }
 
+export interface MTGOPrices {
+    cardhoarder?: PriceSource;
+}
+
 export interface CardPrices {
     paper?: PaperPrices;
-    mtgo?: PriceSource;
+    mtgo?: MTGOPrices;
     arena?: PriceSource;
 }
 

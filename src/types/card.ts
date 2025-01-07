@@ -20,6 +20,15 @@ export interface ExtendedCard {
     manaCost?: string;
     text?: string;
     rarity?: string;
+    booster?: string;
+    rulings_uri?: string;
+    edhrec_rank?: number;
+    related_uris?: {
+        tcgplayer_infinite_articles: string;
+        tcgplayer_infinite_decks: string;
+        edhrec: string;
+        gatherer: string;
+    };
     imageUrl?: string;
     imageUris?: {
         small?: string;

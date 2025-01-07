@@ -81,6 +81,9 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:1.3.1"
     implementation "androidx.camera:camera-view:1.3.1"
 
+    // React Native Vector Icons
+    implementation(project(':react-native-vector-icons'))
+
     // Hermes or JSC
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

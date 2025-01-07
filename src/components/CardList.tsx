@@ -53,12 +53,27 @@ const LegalitiesDropdown = ({ legalities }: { legalities: ExtendedCard['legaliti
 
     const formatNames = {
         standard: 'Standard',
+        commander: 'Commander',
+        future: 'Future',
+        historic: 'Historic',
+        timeless: 'Timeless',
+        gladiator: 'Gladiator',
         pioneer: 'Pioneer',
+        explorer: 'Explorer',
         modern: 'Modern',
         legacy: 'Legacy',
-        vintage: 'Vintage',
-        commander: 'Commander',
         pauper: 'Pauper',
+        vintage: 'Vintage',
+        penny: 'Penny',
+        oathbreaker: 'Oathbreaker',
+        standardbrawl: 'Standard Brawl',
+        brawl: 'Brawl',
+        alchemy: 'Alchemy',
+        paupercommander: 'Pauper Commander',
+        duel: 'Duel',
+        oldschool: 'Old School',
+        premodern: 'Premodern',
+        predh: 'Predh',
     };
 
     return (
@@ -212,6 +227,58 @@ const ManaCost = ({ manaCost }: { manaCost: string }) => {
         </View>
     );
 };
+const EdhrecRank = ({ edhrecRank }: { edhrecRank: ExtendedCard['edhrec_rank'] }) => {
+    if (!edhrecRank) return null;
+    return <Text style={styles.edhrecRank}>EDHREC Rank: #{edhrecRank}</Text>;
+};
+const RelatedUris = ({ relatedUris }: { relatedUris: ExtendedCard['related_uris'] }) => {
+    if (!relatedUris) return null;
+    return (
+        <View style={styles.relatedUrisContainer}>
+            <Text style={styles.sectionTitle}>Related Links</Text>
+            {relatedUris.edhrec && (
+                <TouchableOpacity onPress={() => Linking.openURL(relatedUris.edhrec)}>
+                    <Text style={styles.linkText}>• View on EDHREC</Text>
+                </TouchableOpacity>
+            )}
+            {relatedUris.gatherer && (
+                <TouchableOpacity onPress={() => Linking.openURL(relatedUris.gatherer)}>
+                    <Text style={styles.linkText}>• View on Gatherer</Text>
+                </TouchableOpacity>
+            )}
+            {relatedUris.tcgplayer_infinite_articles && (
+                <TouchableOpacity onPress={() => Linking.openURL(relatedUris.tcgplayer_infinite_articles)}>
+                    <Text style={styles.linkText}>• TCGPlayer Articles</Text>
+                </TouchableOpacity>
+            )}
+            {relatedUris.tcgplayer_infinite_decks && (
+                <TouchableOpacity onPress={() => Linking.openURL(relatedUris.tcgplayer_infinite_decks)}>
+                    <Text style={styles.linkText}>• TCGPlayer Decks</Text>
+                </TouchableOpacity>
+            )}
+        </View>
+    );
+};
+const RulingsUri = ({ rulingsUri }: { rulingsUri: ExtendedCard['rulings_uri'] }) => {
+    if (!rulingsUri) return null;
+    return (
+        <TouchableOpacity onPress={() => Linking.openURL(rulingsUri)}>
+            <Text style={styles.linkText}>View Card Rulings</Text>
+        </TouchableOpacity>
+    );
+};
+const isBooster = ({ booster }: { booster: ExtendedCard['booster'] }) => {
+    if (booster === undefined) return null;
+    return (
+        <View style={styles.boosterContainer}>
+            <Icon name="package-variant" size={16} color="#666" />
+            <Text style={styles.booster}>
+                {booster ? 'Found in booster packs' : 'Not found in booster packs'}
+            </Text>
+        </View>
+    );
+};
+
 
 const CardItem = ({ card, onPress, onAddToCollection }: { card: ExtendedCard; onPress?: () => void; onAddToCollection?: (card: ExtendedCard) => void }) => (
     <TouchableOpacity
@@ -283,6 +350,11 @@ const CardItem = ({ card, onPress, onAddToCollection }: { card: ExtendedCard; on
                             <Text style={styles.sectionTitle}>Format Legality</Text>
                             <LegalitiesDropdown legalities={card.legalities} />
                         </View>
+
+                        <EdhrecRank edhrecRank={card.edhrec_rank} />
+                        <RelatedUris relatedUris={card.related_uris} />
+                        <RulingsUri rulingsUri={card.rulings_uri} />
+                        {isBooster({ booster: card.booster })}
                     </View>
                 </>
             )}
@@ -588,6 +660,32 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 14,
         fontWeight: '600',
+    },
+    edhrecRank: {
+        fontSize: 14,
+        color: '#666',
+        marginTop: 8,
+        fontWeight: '500',
+    },
+    relatedUrisContainer: {
+        marginTop: 12,
+        marginBottom: 12,
+    },
+    linkText: {
+        color: '#2196F3',
+        fontSize: 14,
+        marginVertical: 4,
+        textDecorationLine: 'underline',
+    },
+    boosterContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 8,
+        gap: 8,
+    },
+    booster: {
+        fontSize: 14,
+        color: '#666',
     },
 } as const);
 
