@@ -261,6 +261,14 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
                     await databaseService.addToScanHistory(cardWithTimestamp);
 
+                    // Add to set collection
+                    if (cardWithTimestamp.uuid) {
+                        const setCode = cardWithTimestamp.setCode || 'UNKNOWN';
+                        const setName = cardWithTimestamp.setName || 'Unknown Set';
+                        const setCollectionId = await databaseService.getOrCreateSetCollection(setCode, setName);
+                        await databaseService.addCardToCollection(cardWithTimestamp.uuid, setCollectionId);
+                    }
+
                     setScannedCards(prevCards => {
                         const currentCards = Array.isArray(prevCards) ? prevCards : [];
                         return [cardWithTimestamp, ...currentCards];

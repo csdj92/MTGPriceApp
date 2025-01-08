@@ -12,15 +12,16 @@ import SettingsScreen from '../screens/settings/SettingsScreen';
 import PriceLookupScreen from '../screens/price/PriceLookupScreen';
 import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScreen';
 import type { ExtendedCard } from '../types/card';
+import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
+import CardDetailsScreen from '../screens/CardDetailsScreen';
 
 export type RootStackParamList = {
     MainTabs: undefined;
-    Search: undefined;
     Collection: undefined;
-    PriceLookup: undefined;
-    Watchlist: undefined;
-    Settings: undefined;
     CollectionDetails: { collectionId: string };
+    CardDetails: { card: ExtendedCard };
+    SetCompletion: undefined;
+    PriceLookup: undefined;
 };
 
 export type MainTabParamList = {
@@ -72,27 +73,14 @@ const MainTabs = () => (
 
 const AppNavigator = () => (
     <NavigationContainer>
-        <Stack.Navigator>
-            <Stack.Screen
-                name="MainTabs"
-                component={MainTabs}
-                options={{ headerShown: false }}
-            />
-            <Stack.Screen
-                name="Collection"
-                component={CollectionScreen}
-                options={{ title: 'Collections' }}
-            />
-            <Stack.Screen
-                name="CollectionDetails"
-                component={CollectionDetailsScreen}
-                options={{ title: 'Collection' }}
-            />
-            <Stack.Screen
-                name="PriceLookup"
-                component={PriceLookupScreen}
-                options={{ title: 'Price Lookup' }}
-            />
+        <Stack.Navigator
+            screenOptions={{
+                headerShown: false,
+            }}
+        >
+            <Stack.Screen name="MainTabs" component={MainTabs} />
+            <Stack.Screen name="CollectionDetails" component={CollectionDetailsScreen} />
+            <Stack.Screen name="CardDetails" component={CardDetailsScreen} />
         </Stack.Navigator>
     </NavigationContainer>
 );

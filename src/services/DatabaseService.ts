@@ -31,11 +31,17 @@ export interface Card {
     }[];
 }
 
-export interface SetInfo {
+export type SetInfo = {
     code: string;
     name: string;
-    releaseDate?: string;
-    cardCount?: number;
+    cardCount: number;
+    highestPrice?: number;
+};
+
+interface SetCollectionStats {
+    totalCards: number;
+    collectedCards: number;
+    completionPercentage: number;
 }
 
 class DatabaseService {
@@ -784,6 +790,24 @@ class DatabaseService {
         }
     }
 
+    private async cleanupOldPriceHistory(): Promise<void> {
+        if (!this.mtgJsonDb) {
+            throw new Error('MTGJson database not initialized');
+        }
+
+        try {
+            const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+            await this.mtgJsonDb.executeSql(
+                'DELETE FROM price_history WHERE recorded_at < ?',
+                [thirtyDaysAgo]
+            );
+            console.log('[DatabaseService] Cleaned up price history older than 30 days');
+        } catch (error) {
+            console.error('[DatabaseService] Error cleaning up old price history:', error);
+            throw error;
+        }
+    }
+
     async updatePrices(priceData: Record<string, { 
         normal: number; 
         foil: number;
@@ -807,29 +831,46 @@ class DatabaseService {
         console.log(`[DatabaseService] Processing ${totalCards} cards`);
 
         try {
-            const batchSize = 1000;
-            const entries = Object.entries(priceData);
-            let processedCount = 0;
+            // First, clean up old price history
+            await this.cleanupOldPriceHistory();
 
-            for (let i = 0; i < entries.length; i += batchSize) {
-                const batch = entries.slice(i, i + batchSize);
-                const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
-                const values: any[] = [];
+            // Check if we already have a price entry for today
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayTimestamp = today.getTime();
 
-                batch.forEach(([uuid, prices]) => {
-                    values.push(
-                        uuid, prices.normal, prices.foil,
-                        prices.tcg_normal || 0, prices.tcg_foil || 0,
-                        prices.cardmarket_normal || 0, prices.cardmarket_foil || 0,
-                        prices.cardkingdom_normal || 0, prices.cardkingdom_foil || 0,
-                        prices.cardsphere_normal || 0, prices.cardsphere_foil || 0,
-                        prices.cardhoarder_normal || 0, prices.cardhoarder_foil || 0,
-                        now
-                    );
-                });
+            const [existingEntry] = await this.mtgJsonDb.executeSql(
+                `SELECT COUNT(*) as count 
+                 FROM price_history 
+                 WHERE recorded_at >= ?`,
+                [todayTimestamp]
+            );
 
-                await this.mtgJsonDb.transaction((tx) => {
-                    tx.executeSql(
+            if (existingEntry.rows.item(0).count > 0) {
+                console.log('[DatabaseService] Price history already recorded for today, skipping history update');
+                // Still update current prices
+                const batchSize = 1000;
+                const entries = Object.entries(priceData);
+                let processedCount = 0;
+
+                for (let i = 0; i < entries.length; i += batchSize) {
+                    const batch = entries.slice(i, i + batchSize);
+                    const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+                    const values: any[] = [];
+
+                    batch.forEach(([uuid, prices]) => {
+                        values.push(
+                            uuid, prices.normal, prices.foil,
+                            prices.tcg_normal || 0, prices.tcg_foil || 0,
+                            prices.cardmarket_normal || 0, prices.cardmarket_foil || 0,
+                            prices.cardkingdom_normal || 0, prices.cardkingdom_foil || 0,
+                            prices.cardsphere_normal || 0, prices.cardsphere_foil || 0,
+                            prices.cardhoarder_normal || 0, prices.cardhoarder_foil || 0,
+                            now
+                        );
+                    });
+
+                    await this.mtgJsonDb.executeSql(
                         `INSERT OR REPLACE INTO prices (
                             uuid, normal_price, foil_price,
                             tcg_normal_price, tcg_foil_price,
@@ -839,51 +880,81 @@ class DatabaseService {
                             cardhoarder_normal_price, cardhoarder_foil_price,
                             last_updated
                         ) VALUES ${placeholders}`,
-                        values,
-                        () => {
-                            processedCount += batch.length;
-                            console.log(`[DatabaseService] Processed ${processedCount}/${totalCards} cards`);
-                        },
-                        (_, error) => {
-                            console.error('[DatabaseService] Error in bulk price insert:', error);
-                            return false;
-                        }
+                        values
                     );
 
-                    // Bulk insert price history
-                    const historyPlaceholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
-                    const historyValues: any[] = [];
-                    
+                    processedCount += batch.length;
+                    console.log(`[DatabaseService] Processed ${processedCount}/${totalCards} cards`);
+                }
+            } else {
+                // Process in batches with both current prices and history
+                const batchSize = 1000;
+                const entries = Object.entries(priceData);
+                let processedCount = 0;
+
+                for (let i = 0; i < entries.length; i += batchSize) {
+                    const batch = entries.slice(i, i + batchSize);
+                    const placeholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+                    const values: any[] = [];
+
                     batch.forEach(([uuid, prices]) => {
-                        historyValues.push(
+                        values.push(
                             uuid, prices.normal, prices.foil,
                             prices.tcg_normal || 0, prices.tcg_foil || 0,
                             prices.cardmarket_normal || 0, prices.cardmarket_foil || 0,
                             prices.cardkingdom_normal || 0, prices.cardkingdom_foil || 0,
                             prices.cardsphere_normal || 0, prices.cardsphere_foil || 0,
+                            prices.cardhoarder_normal || 0, prices.cardhoarder_foil || 0,
                             now
                         );
                     });
 
-                    tx.executeSql(
-                        `INSERT INTO price_history (
-                            uuid, normal_price, foil_price,
-                            tcg_normal_price, tcg_foil_price,
-                            cardmarket_normal_price, cardmarket_foil_price,
-                            cardkingdom_normal_price, cardkingdom_foil_price,
-                            cardsphere_normal_price, cardsphere_foil_price,
-                            recorded_at
-                        ) VALUES ${historyPlaceholders}`,
-                        historyValues,
-                        () => {},
-                        (_, error) => {
-                            console.error('[DatabaseService] Error in bulk price history insert:', error);
-                            return false;
-                        }
-                    );
-                });
+                    await this.mtgJsonDb.transaction((tx) => {
+                        // Update current prices
+                        tx.executeSql(
+                            `INSERT OR REPLACE INTO prices (
+                                uuid, normal_price, foil_price,
+                                tcg_normal_price, tcg_foil_price,
+                                cardmarket_normal_price, cardmarket_foil_price,
+                                cardkingdom_normal_price, cardkingdom_foil_price,
+                                cardsphere_normal_price, cardsphere_foil_price,
+                                cardhoarder_normal_price, cardhoarder_foil_price,
+                                last_updated
+                            ) VALUES ${placeholders}`,
+                            values
+                        );
 
-                console.log(`[DatabaseService] Completed batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(entries.length/batchSize)}`);
+                        // Add to price history
+                        const historyPlaceholders = batch.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+                        const historyValues: any[] = [];
+                        
+                        batch.forEach(([uuid, prices]) => {
+                            historyValues.push(
+                                uuid, prices.normal, prices.foil,
+                                prices.tcg_normal || 0, prices.tcg_foil || 0,
+                                prices.cardmarket_normal || 0, prices.cardmarket_foil || 0,
+                                prices.cardkingdom_normal || 0, prices.cardkingdom_foil || 0,
+                                prices.cardsphere_normal || 0, prices.cardsphere_foil || 0,
+                                todayTimestamp // Use start of day timestamp for consistent daily records
+                            );
+                        });
+
+                        tx.executeSql(
+                            `INSERT INTO price_history (
+                                uuid, normal_price, foil_price,
+                                tcg_normal_price, tcg_foil_price,
+                                cardmarket_normal_price, cardmarket_foil_price,
+                                cardkingdom_normal_price, cardkingdom_foil_price,
+                                cardsphere_normal_price, cardsphere_foil_price,
+                                recorded_at
+                            ) VALUES ${historyPlaceholders}`,
+                            historyValues
+                        );
+                    });
+
+                    processedCount += batch.length;
+                    console.log(`[DatabaseService] Processed ${processedCount}/${totalCards} cards`);
+                }
             }
 
             await this.mtgJsonDb.executeSql(
@@ -901,29 +972,126 @@ class DatabaseService {
         }
     }
 
-    async getCardPriceHistory(uuid: string): Promise<{ normal: number; foil: number; timestamp: number }[]> {
+    async getCardPriceHistory(uuid: string): Promise<{
+        date: string;
+        normal: number;
+        foil: number;
+        tcgplayer: { normal: number; foil: number };
+        cardmarket: { normal: number; foil: number };
+        cardkingdom: { normal: number; foil: number };
+        cardsphere: { normal: number; foil: number };
+    }[]> {
         if (!this.mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
             const [result] = await this.mtgJsonDb.executeSql(
-                `SELECT normal_price, foil_price, recorded_at
-                 FROM price_history
-                 WHERE uuid = ?
-                 ORDER BY recorded_at DESC
-                 LIMIT 30`,
+                `SELECT 
+                    normal_price, foil_price,
+                    tcg_normal_price, tcg_foil_price,
+                    cardmarket_normal_price, cardmarket_foil_price,
+                    cardkingdom_normal_price, cardkingdom_foil_price,
+                    cardsphere_normal_price, cardsphere_foil_price,
+                    recorded_at
+                FROM price_history
+                WHERE uuid = ?
+                ORDER BY recorded_at DESC
+                LIMIT 30`,
                 [uuid]
             );
 
             return result.rows.raw().map(row => ({
-                normal: row.normal_price,
-                foil: row.foil_price,
-                timestamp: row.recorded_at
+                date: new Date(row.recorded_at).toISOString().split('T')[0],
+                normal: parseFloat(row.normal_price) || 0,
+                foil: parseFloat(row.foil_price) || 0,
+                tcgplayer: {
+                    normal: parseFloat(row.tcg_normal_price) || 0,
+                    foil: parseFloat(row.tcg_foil_price) || 0
+                },
+                cardmarket: {
+                    normal: parseFloat(row.cardmarket_normal_price) || 0,
+                    foil: parseFloat(row.cardmarket_foil_price) || 0
+                },
+                cardkingdom: {
+                    normal: parseFloat(row.cardkingdom_normal_price) || 0,
+                    foil: parseFloat(row.cardkingdom_foil_price) || 0
+                },
+                cardsphere: {
+                    normal: parseFloat(row.cardsphere_normal_price) || 0,
+                    foil: parseFloat(row.cardsphere_foil_price) || 0
+                }
             }));
         } catch (error) {
-            console.error('[DatabaseService] Error getting price history:', error);
-            throw error;
+            console.error('[DatabaseService] Error getting card price history:', error);
+            return [];
+        }
+    }
+
+    async getCardPriceHistoryStats(uuid: string): Promise<{
+        maxPrice: number;
+        minPrice: number;
+        avgPrice: number;
+        priceChange30d: number;
+        priceChange7d: number;
+        maxFoilPrice: number;
+        minFoilPrice: number;
+        avgFoilPrice: number;
+        foilPriceChange30d: number;
+        foilPriceChange7d: number;
+    }> {
+        if (!this.mtgJsonDb) {
+            throw new Error('MTGJson database not initialized');
+        }
+
+        try {
+            const history = await this.getCardPriceHistory(uuid);
+            if (history.length === 0) {
+                return {
+                    maxPrice: 0,
+                    minPrice: 0,
+                    avgPrice: 0,
+                    priceChange30d: 0,
+                    priceChange7d: 0,
+                    maxFoilPrice: 0,
+                    minFoilPrice: 0,
+                    avgFoilPrice: 0,
+                    foilPriceChange30d: 0,
+                    foilPriceChange7d: 0
+                };
+            }
+
+            const normalPrices = history.map(h => h.normal).filter(p => p > 0);
+            const foilPrices = history.map(h => h.foil).filter(p => p > 0);
+
+            const stats = {
+                maxPrice: Math.max(...normalPrices, 0),
+                minPrice: Math.min(...normalPrices.filter(p => p > 0), normalPrices[0] || 0),
+                avgPrice: normalPrices.length ? normalPrices.reduce((a, b) => a + b, 0) / normalPrices.length : 0,
+                priceChange30d: normalPrices.length >= 2 ? normalPrices[0] - normalPrices[normalPrices.length - 1] : 0,
+                priceChange7d: normalPrices.length >= 8 ? normalPrices[0] - normalPrices[Math.min(7, normalPrices.length - 1)] : 0,
+                maxFoilPrice: Math.max(...foilPrices, 0),
+                minFoilPrice: Math.min(...foilPrices.filter(p => p > 0), foilPrices[0] || 0),
+                avgFoilPrice: foilPrices.length ? foilPrices.reduce((a, b) => a + b, 0) / foilPrices.length : 0,
+                foilPriceChange30d: foilPrices.length >= 2 ? foilPrices[0] - foilPrices[foilPrices.length - 1] : 0,
+                foilPriceChange7d: foilPrices.length >= 8 ? foilPrices[0] - foilPrices[Math.min(7, foilPrices.length - 1)] : 0
+            };
+
+            return stats;
+        } catch (error) {
+            console.error('[DatabaseService] Error getting card price history stats:', error);
+            return {
+                maxPrice: 0,
+                minPrice: 0,
+                avgPrice: 0,
+                priceChange30d: 0,
+                priceChange7d: 0,
+                maxFoilPrice: 0,
+                minFoilPrice: 0,
+                avgFoilPrice: 0,
+                foilPriceChange30d: 0,
+                foilPriceChange7d: 0
+            };
         }
     }
 
@@ -1156,7 +1324,17 @@ class DatabaseService {
                 )
             `);
 
-            console.log('[DatabaseService] Price tables created successfully');
+            // Add indexes for better query performance
+            await this.mtgJsonDb.executeSql(`
+                CREATE INDEX IF NOT EXISTS idx_prices_last_updated ON prices(last_updated);
+                CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
+                CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price);
+                CREATE INDEX IF NOT EXISTS idx_prices_foil ON prices(foil_price);
+                CREATE INDEX IF NOT EXISTS idx_price_history_normal ON price_history(normal_price);
+                CREATE INDEX IF NOT EXISTS idx_price_history_foil ON price_history(foil_price);
+            `);
+
+            console.log('[DatabaseService] Price tables and indexes created successfully');
         } catch (error) {
             console.error('Error creating price tables:', error);
             throw error;
@@ -1339,6 +1517,256 @@ class DatabaseService {
         this.setListCache = null;
         this.setListLastUpdate = 0;
         console.log('[DatabaseService] Set list cache cleared');
+    }
+
+    async getSetCollections(): Promise<(Collection & SetCollectionStats)[]> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
+        try {
+            // Get all collections that are set-based (name starts with 'Set: ')
+            const collections = await this.db!.executeSql(
+                `SELECT * FROM collections WHERE name LIKE 'Set: %' ORDER BY name`
+            );
+
+            const setCollections: (Collection & SetCollectionStats)[] = [];
+
+            for (let i = 0; i < collections[0].rows.length; i++) {
+                const collection = collections[0].rows.item(i);
+                const setCode = collection.name.replace('Set: ', '');
+
+                // Get total cards in set from MTGJson database
+                const [totalResult] = await this.mtgJsonDb!.executeSql(
+                    'SELECT COUNT(*) as total FROM cards WHERE setCode = ?',
+                    [setCode]
+                );
+                const totalCards = totalResult.rows.item(0).total;
+
+                // Get collected cards count and total value
+                const [collectedResult] = await this.db!.executeSql(
+                    `SELECT 
+                        COUNT(*) as collected,
+                        SUM(CASE 
+                            WHEN JSON_VALID(cache.card_data) 
+                            THEN CAST(JSON_EXTRACT(cache.card_data, '$.prices.usd') AS REAL)
+                            ELSE 0 
+                        END) as total_value
+                    FROM collection_cards cc
+                    LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
+                    WHERE cc.collection_id = ?`,
+                    [collection.id]
+                );
+                const collectedCards = collectedResult.rows.item(0).collected;
+                const totalValue = collectedResult.rows.item(0).total_value || 0;
+
+                const completionPercentage = (collectedCards / totalCards) * 100;
+
+                setCollections.push({
+                    ...collection,
+                    totalCards,
+                    collectedCards,
+                    completionPercentage,
+                    totalValue
+                });
+            }
+
+            return setCollections;
+        } catch (error) {
+            console.error('Error getting set collections:', error);
+            throw error;
+        }
+    }
+
+    async getOrCreateSetCollection(setCode: string, setName: string): Promise<string> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
+        try {
+            const collectionName = `Set: ${setCode}`;
+            const [existingCollection] = await this.db!.executeSql(
+                'SELECT id FROM collections WHERE name = ?',
+                [collectionName]
+            );
+
+            if (existingCollection.rows.length > 0) {
+                return existingCollection.rows.item(0).id;
+            }
+
+            const description = `Collection for ${setName} (${setCode})`;
+            const collection = await this.createCollection(collectionName, description);
+            return collection.id;
+        } catch (error) {
+            console.error('Error getting/creating set collection:', error);
+            throw error;
+        }
+    }
+
+    async verifyPriceDataIntegrity(): Promise<{
+        isValid: boolean;
+        issues: string[];
+        totalPrices: number;
+        totalHistory: number;
+        daysOfHistory: number;
+        lastUpdate: Date | null;
+    }> {
+        if (!this.mtgJsonDb) {
+            throw new Error('MTGJson database not initialized');
+        }
+
+        const issues: string[] = [];
+        try {
+            // Check total number of prices
+            const [pricesResult] = await this.mtgJsonDb.executeSql(
+                'SELECT COUNT(*) as count FROM prices'
+            );
+            const totalPrices = pricesResult.rows.item(0).count;
+
+            // Check total number of history records
+            const [historyResult] = await this.mtgJsonDb.executeSql(
+                'SELECT COUNT(*) as count FROM price_history'
+            );
+            const totalHistory = historyResult.rows.item(0).count;
+
+            // Check number of days of history
+            const [daysResult] = await this.mtgJsonDb.executeSql(
+                'SELECT COUNT(DISTINCT DATE(recorded_at/1000, "unixepoch")) as days FROM price_history'
+            );
+            const daysOfHistory = daysResult.rows.item(0).days;
+
+            // Check last update
+            const [lastUpdateResult] = await this.mtgJsonDb.executeSql(
+                'SELECT MAX(last_updated) as last_update FROM prices'
+            );
+            const lastUpdate = lastUpdateResult.rows.item(0).last_update ? 
+                new Date(lastUpdateResult.rows.item(0).last_update) : null;
+
+            // Check for orphaned history records
+            const [orphanedResult] = await this.mtgJsonDb.executeSql(`
+                SELECT COUNT(*) as count 
+                FROM price_history ph 
+                LEFT JOIN prices p ON ph.uuid = p.uuid 
+                WHERE p.uuid IS NULL
+            `);
+            const orphanedRecords = orphanedResult.rows.item(0).count;
+            if (orphanedRecords > 0) {
+                issues.push(`Found ${orphanedRecords} orphaned history records`);
+            }
+
+            // Check for cards with missing history
+            const [missingHistoryResult] = await this.mtgJsonDb.executeSql(`
+                SELECT COUNT(*) as count 
+                FROM prices p 
+                LEFT JOIN price_history ph ON p.uuid = ph.uuid 
+                WHERE ph.uuid IS NULL
+            `);
+            const missingHistory = missingHistoryResult.rows.item(0).count;
+            if (missingHistory > 0) {
+                issues.push(`Found ${missingHistory} cards with no price history`);
+            }
+
+            // Check for invalid prices (negative or extremely high)
+            const [invalidPricesResult] = await this.mtgJsonDb.executeSql(`
+                SELECT COUNT(*) as count 
+                FROM prices 
+                WHERE normal_price < 0 
+                   OR foil_price < 0 
+                   OR normal_price > 100000 
+                   OR foil_price > 100000
+            `);
+            const invalidPrices = invalidPricesResult.rows.item(0).count;
+            if (invalidPrices > 0) {
+                issues.push(`Found ${invalidPrices} cards with invalid prices`);
+            }
+
+            return {
+                isValid: issues.length === 0,
+                issues,
+                totalPrices,
+                totalHistory,
+                daysOfHistory,
+                lastUpdate
+            };
+        } catch (error) {
+            console.error('[DatabaseService] Error verifying price data integrity:', error);
+            return {
+                isValid: false,
+                issues: ['Failed to verify price data integrity'],
+                totalPrices: 0,
+                totalHistory: 0,
+                daysOfHistory: 0,
+                lastUpdate: null
+            };
+        }
+    }
+
+    async debugPriceHistory(uuid: string): Promise<void> {
+        if (!this.mtgJsonDb) {
+            throw new Error('MTGJson database not initialized');
+        }
+
+        try {
+            // Get card name first
+            const [cardResult] = await this.mtgJsonDb.executeSql(
+                'SELECT name FROM cards WHERE uuid = ?',
+                [uuid]
+            );
+            const cardName = cardResult.rows.length > 0 ? cardResult.rows.item(0).name : 'Unknown Card';
+
+            // Get price history with formatted dates
+            const [result] = await this.mtgJsonDb.executeSql(`
+                SELECT 
+                    datetime(recorded_at/1000, 'unixepoch') as date,
+                    normal_price,
+                    foil_price,
+                    tcg_normal_price,
+                    tcg_foil_price,
+                    cardmarket_normal_price,
+                    cardmarket_foil_price
+                FROM price_history
+                WHERE uuid = ?
+                ORDER BY recorded_at DESC
+                LIMIT 30
+            `, [uuid]);
+
+            console.log(`\nPrice History for ${cardName} (${uuid}):`);
+            console.log('Date       | Normal  | Foil    | TCG     | TCG Foil| CardMkt | CardMkt Foil');
+            console.log('-----------|---------|---------|---------|---------|---------|-------------');
+            
+            for (let i = 0; i < result.rows.length; i++) {
+                const row = result.rows.item(i);
+                console.log(
+                    `${row.date.split(' ')[0]} | ` +
+                    `$${row.normal_price.toFixed(2).padStart(7)} | ` +
+                    `$${row.foil_price.toFixed(2).padStart(7)} | ` +
+                    `$${row.tcg_normal_price.toFixed(2).padStart(7)} | ` +
+                    `$${row.tcg_foil_price.toFixed(2).padStart(7)} | ` +
+                    `$${row.cardmarket_normal_price.toFixed(2).padStart(7)} | ` +
+                    `$${row.cardmarket_foil_price.toFixed(2).padStart(7)}`
+                );
+            }
+
+            // Get some basic stats
+            const [statsResult] = await this.mtgJsonDb.executeSql(`
+                SELECT 
+                    COUNT(DISTINCT DATE(recorded_at/1000, 'unixepoch')) as days,
+                    MIN(normal_price) as min_price,
+                    MAX(normal_price) as max_price,
+                    AVG(normal_price) as avg_price
+                FROM price_history
+                WHERE uuid = ?
+            `, [uuid]);
+
+            const stats = statsResult.rows.item(0);
+            console.log('\nStats:');
+            console.log(`Days of history: ${stats.days}`);
+            console.log(`Price range: $${stats.min_price.toFixed(2)} - $${stats.max_price.toFixed(2)}`);
+            console.log(`Average price: $${stats.avg_price.toFixed(2)}`);
+
+        } catch (error) {
+            console.error('[DatabaseService] Error debugging price history:', error);
+        }
     }
 
 }

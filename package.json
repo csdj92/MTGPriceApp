@@ -12,6 +12,7 @@
   "dependencies": {
     "@react-native-ml-kit/text-recognition": "^1.5.2",
     "@react-navigation/bottom-tabs": "^7.2.0",
+    "@react-navigation/material-top-tabs": "^7.1.0",
     "@react-navigation/native": "^7.0.14",
     "@react-navigation/native-stack": "^7.2.0",
     "@types/react-native-sqlite-storage": "^6.0.5",
@@ -19,10 +20,12 @@
     "react": "18.3.1",
     "react-native": "0.76.5",
     "react-native-fs": "^2.20.0",
+    "react-native-pager-view": "^6.6.1",
     "react-native-reanimated": "^3.16.6",
     "react-native-safe-area-context": "^5.0.0",
     "react-native-screens": "^4.4.0",
     "react-native-sqlite-storage": "^6.0.1",
+    "react-native-tab-view": "^4.0.5",
     "react-native-vector-icons": "^10.2.0",
     "react-native-vision-camera": "^4.6.3",
     "react-native-zip-archive": "^7.0.1"

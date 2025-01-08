@@ -10,6 +10,7 @@ import {
     Modal,
     ScrollView,
     FlatList,
+    Image,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
@@ -20,6 +21,7 @@ import debounce from 'lodash/debounce';
 import type { ExtendedCard } from '../../types/card';
 import type { SetInfo } from '../../services/DatabaseService';
 import { downloadAndImportPriceData } from '../../utils/priceData';
+import { getCachedImageUri, ensureCacheDirectory } from '../../utils/imageCache';
 
 const WatchlistScreen = () => {
     const navigation = useNavigation();
@@ -219,6 +221,11 @@ const WatchlistScreen = () => {
         }
     };
 
+    // Add initialization of cache directory
+    useEffect(() => {
+        ensureCacheDirectory();
+    }, []);
+
     const renderCard = useCallback((card: any) => {
         const formatPrice = (price: number) => price ? `$${price.toFixed(2)}` : 'N/A';
 
@@ -230,13 +237,61 @@ const WatchlistScreen = () => {
             cardsphere: { normal: 0, foil: 0 }
         };
 
+        // Calculate highest normal and foil prices
+        const highestNormal = Math.max(
+            prices.tcgplayer.normal,
+            prices.cardmarket.normal,
+            prices.cardkingdom.normal,
+            prices.cardsphere.normal
+        );
+
+        const highestFoil = Math.max(
+            prices.tcgplayer.foil,
+            prices.cardmarket.foil,
+            prices.cardkingdom.foil,
+            prices.cardsphere.foil
+        );
+
+        const [imageUri, setImageUri] = useState<string | null>(null);
+
+        useEffect(() => {
+            let isMounted = true;
+            const loadImage = async () => {
+                try {
+                    const uri = await getCachedImageUri(card.setCode, card.number);
+                    if (isMounted) {
+                        setImageUri(uri);
+                    }
+                } catch (error) {
+                    console.error('[WatchlistScreen] Error loading cached image:', error);
+                }
+            };
+            loadImage();
+            return () => { isMounted = false; };
+        }, [card.setCode, card.number]);
+
         return (
             <TouchableOpacity 
                 style={styles.cardItem}
                 onPress={() => handleCardPress(card)}
             >
                 <View style={styles.cardHeader}>
-                    <Text style={styles.cardName}>{card.name}</Text>
+                    <View style={styles.cardNameRow}>
+                        <View style={styles.cardNameAndImage}>
+                            <Image 
+                                source={{ uri: imageUri || `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=small` }}
+                                style={styles.cardThumbnail}
+                                resizeMode="contain"
+                            />
+                            <Text style={styles.cardName}>{card.name}</Text>
+                        </View>
+                        <View style={styles.priceRow}>
+                            <Text style={styles.priceLabel}>Normal:</Text>
+                            <Text style={styles.highestPrice}>{formatPrice(highestNormal)}</Text>
+                            <Text style={styles.priceLabel}>Foil:</Text>
+                            <Text style={styles.highestPrice}>{formatPrice(highestFoil)}</Text>
+                        </View>
+                    </View>
                     <Text style={styles.setCode}>{card.setCode} #{card.number}</Text>
                 </View>
                 
@@ -762,6 +817,48 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    setItemRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    setItemPrice: {
+        fontSize: 14,
+        color: '#2196F3',
+        fontWeight: 'bold',
+    },
+    cardNameRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+    },
+    priceRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    priceLabel: {
+        fontSize: 14,
+        color: '#666',
+        marginLeft: 8,
+    },
+    highestPrice: {
+        fontSize: 16,
+        color: '#2196F3',
+        fontWeight: 'bold',
+    },
+    cardNameAndImage: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    cardThumbnail: {
+        width: 40,
+        height: 56,
+        borderRadius: 4,
+        backgroundColor: '#f5f5f5',
     },
 });
 
