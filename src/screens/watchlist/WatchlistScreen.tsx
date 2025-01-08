@@ -67,15 +67,15 @@ const WatchlistScreen = () => {
                 }
             } else {
                 // Regular search
-                const prices = await databaseService.getCombinedPriceData(currentPage, PAGE_SIZE, query, sortBy);
-                if (prices.length < PAGE_SIZE) {
+                const cards = await databaseService.getAllCardsBySet(query || 'latest', PAGE_SIZE, (currentPage - 1) * PAGE_SIZE);
+                if (cards.length < PAGE_SIZE) {
                     setHasMore(false);
                 }
                 // Transform the data structure to match SectionList requirements
-                const transformedPrices = prices.map(section => ({
-                    setCode: section.setCode,
-                    data: section.cards
-                }));
+                const transformedPrices = [{
+                    setCode: cards[0]?.setCode || 'Unknown Set',
+                    data: cards
+                }];
                 setPriceData(prev => currentPage === 1 ? transformedPrices : [...prev, ...transformedPrices]);
             }
         } catch (error) {
@@ -110,7 +110,7 @@ const WatchlistScreen = () => {
 
     const handleSearch = (text: string) => {
         setSearchQuery(text);
-        if (text.length === 0) {
+        if (text.length === 3) {
             setCurrentPage(1);
             loadPriceData('', false);
         }

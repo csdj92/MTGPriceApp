@@ -11,26 +11,30 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import type { ExtendedCard } from '../../types/card';
+import type { LorcanaCard } from '../../types/lorcana';
 import CardSearch from '../../components/CardSearch';
 import CardList from '../../components/CardList';
+import LorcanaCardList from '../../components/LorcanaCardList';
 import CollectionSelectionModal from '../../components/CollectionSelectionModal';
 import { databaseService } from '../../services/DatabaseService';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 type SearchScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
+type SelectedCard = ExtendedCard | LorcanaCard;
+
 const SearchScreen = () => {
-    const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
+    const [selectedCard, setSelectedCard] = useState<SelectedCard | null>(null);
     const [isCollectionModalVisible, setIsCollectionModalVisible] = useState(false);
     const [isCardDetailsVisible, setIsCardDetailsVisible] = useState(false);
     const navigation = useNavigation<SearchScreenNavigationProp>();
 
-    const handleCardSelect = (card: ExtendedCard) => {
+    const handleCardSelect = (card: SelectedCard) => {
         setSelectedCard(card);
         setIsCardDetailsVisible(true);
     };
 
-    const handleAddToCollection = (card: ExtendedCard) => {
+    const handleAddToCollection = (card: SelectedCard) => {
         setIsCardDetailsVisible(false);
         setSelectedCard(card);
         setIsCollectionModalVisible(true);
@@ -40,24 +44,44 @@ const SearchScreen = () => {
         if (!selectedCard) return;
 
         try {
-            const cardWithUuid = await databaseService.addToCache(selectedCard);
-            if (!cardWithUuid.uuid) {
-                throw new Error('Failed to generate UUID for card');
-            }
-            await databaseService.addCardToCollection(cardWithUuid.uuid, collectionId);
-            Alert.alert(
-                'Success',
-                `Added ${selectedCard.name} to collection`,
-                [
-                    {
-                        text: 'OK',
-                        onPress: () => {
-                            setIsCollectionModalVisible(false);
-                            setSelectedCard(null);
+            // Handle MTG card
+            if ('name' in selectedCard) {
+                const cardWithUuid = await databaseService.addToCache(selectedCard);
+                if (!cardWithUuid.uuid) {
+                    throw new Error('Failed to generate UUID for card');
+                }
+                await databaseService.addCardToCollection(cardWithUuid.uuid, collectionId);
+                Alert.alert(
+                    'Success',
+                    `Added ${selectedCard.name} to collection`,
+                    [
+                        {
+                            text: 'OK',
+                            onPress: () => {
+                                setIsCollectionModalVisible(false);
+                                setSelectedCard(null);
+                            }
                         }
-                    }
-                ]
-            );
+                    ]
+                );
+            } 
+            // Handle Lorcana card
+            else {
+                // TODO: Implement Lorcana card collection handling
+                Alert.alert(
+                    'Success',
+                    `Added ${selectedCard.Name} to collection`,
+                    [
+                        {
+                            text: 'OK',
+                            onPress: () => {
+                                setIsCollectionModalVisible(false);
+                                setSelectedCard(null);
+                            }
+                        }
+                    ]
+                );
+            }
         } catch (error) {
             console.error('Error adding card to collection:', error);
             Alert.alert(
@@ -86,11 +110,20 @@ const SearchScreen = () => {
                     </TouchableOpacity>
                 </View>
                 {selectedCard && (
-                    <CardList
-                        cards={[{ ...selectedCard, isExpanded: true }]}
-                        isLoading={false}
-                        onAddToCollection={handleAddToCollection}
-                    />
+                    'Name' in selectedCard ? (
+                        <LorcanaCardList
+                            cards={[selectedCard]}
+                            isLoading={false}
+                            onCardPress={() => {}}
+                            onAddToCollection={(card) => handleAddToCollection(card)}
+                        />
+                    ) : (
+                        <CardList
+                            cards={[{ ...selectedCard, isExpanded: true }]}
+                            isLoading={false}
+                            onAddToCollection={(card) => handleAddToCollection(card)}
+                        />
+                    )
                 )}
             </SafeAreaView>
         </Modal>

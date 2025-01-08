@@ -289,8 +289,7 @@ class DatabaseService {
                     quantity INTEGER DEFAULT 1,
                     added_at TEXT NOT NULL,
                     PRIMARY KEY (collection_id, card_uuid),
-                    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
-                    FOREIGN KEY (card_uuid) REFERENCES collection_cache(uuid) ON DELETE CASCADE
+                    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
                 )
             `);
             console.log('Collection_cards table created/verified');
@@ -383,6 +382,17 @@ class DatabaseService {
         }
 
         try {
+            // Ensure collections table exists
+            await this.db!.executeSql(`
+                CREATE TABLE IF NOT EXISTS collections (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+            `);
+
             const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
             const now = new Date().toISOString();
 
@@ -422,14 +432,13 @@ class DatabaseService {
         }
 
         try {
+            // First get basic collection info
             const results = await this.db!.executeSql(`
                 SELECT 
                     c.*,
-                    COUNT(cc.card_uuid) as card_count,
-                    COALESCE(SUM(CAST(JSON_EXTRACT(cache.card_data, '$.prices.usd') AS REAL)), 0) as total_value
+                    COUNT(cc.card_uuid) as card_count
                 FROM collections c
                 LEFT JOIN collection_cards cc ON c.id = cc.collection_id
-                LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
                 GROUP BY c.id
                 ORDER BY c.updated_at DESC
             `);
@@ -443,9 +452,30 @@ class DatabaseService {
                     description: row.description,
                     createdAt: row.created_at,
                     updatedAt: row.updated_at,
-                    totalValue: row.total_value || 0,
+                    totalValue: 0, // We'll calculate this separately
                     cardCount: row.card_count || 0
                 });
+            }
+
+            // Now get total values for each collection
+            for (const collection of collections) {
+                const [valueResults] = await this.db!.executeSql(`
+                    SELECT 
+                        COALESCE(SUM(
+                            CASE 
+                                WHEN JSON_VALID(cache.card_data) 
+                                THEN CAST(JSON_EXTRACT(cache.card_data, '$.prices.usd') AS REAL)
+                                ELSE 0 
+                            END
+                        ), 0) as total_value
+                    FROM collection_cards cc
+                    LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
+                    WHERE cc.collection_id = ?
+                `, [collection.id]);
+
+                if (valueResults.rows.length > 0) {
+                    collection.totalValue = valueResults.rows.item(0).total_value || 0;
+                }
             }
 
             console.log('Loaded collections:', collections);
@@ -911,78 +941,6 @@ class DatabaseService {
         return result.rows.raw();
     }
 
-    async getCombinedPriceData(page: number, pageSize: number, search: string = '', sortBy: 'normal_price' | 'foil_price' = 'normal_price'): Promise<any[]> {
-        if (!this.db || !this.mtgJsonDb) {
-            throw new Error('Databases not initialized');
-        }
-
-        try {
-            const offset = (page - 1) * pageSize;
-
-            // If searching, first get all matching cards from MTGJson
-            let matchingCardUuids: string[] = [];
-            if (search) {
-                const [cardResult] = await this.mtgJsonDb.executeSql(`
-                    SELECT uuid 
-                    FROM cards 
-                    WHERE name LIKE ? OR setCode LIKE ?
-                `, [`%${search}%`, `%${search}%`]);
-
-                matchingCardUuids = cardResult.rows.raw().map((row: any) => row.uuid);
-
-                if (matchingCardUuids.length === 0) {
-                    return []; // No matches found in card database
-                }
-            }
-
-            // Then get price data with optional UUID filter
-            const [priceResult] = await this.db.executeSql(`
-                SELECT uuid, normal_price, foil_price, last_updated 
-                FROM prices 
-                ${search ? 'WHERE uuid IN (' + matchingCardUuids.map(() => '?').join(',') + ')' : ''}
-                ORDER BY ${sortBy} DESC
-                LIMIT ? OFFSET ?
-            `, [...(search ? matchingCardUuids : []), pageSize, offset]);
-
-            const prices = priceResult.rows.raw();
-
-            // Get card details for the filtered price data
-            const combinedData = [];
-            for (const price of prices) {
-                const [cardResult] = await this.mtgJsonDb.executeSql(`
-                    SELECT name, setCode, number, rarity 
-                    FROM cards 
-                    WHERE uuid = ?
-                `, [price.uuid]);
-
-                if (cardResult.rows.length > 0) {
-                    const cardDetails = cardResult.rows.item(0);
-                    combinedData.push({
-                        ...price,
-                        ...cardDetails
-                    });
-                }
-            }
-
-            // Group by setCode
-            const groupedData = combinedData.reduce((acc: any, card: any) => {
-                if (!acc[card.setCode]) {
-                    acc[card.setCode] = [];
-                }
-                acc[card.setCode].push(card);
-                return acc;
-            }, {});
-
-            return Object.entries(groupedData).map(([setCode, cards]) => ({
-                setCode,
-                cards
-            }));
-        } catch (error) {
-            console.error('Error getting combined price data:', error);
-            return [];
-        }
-    }
-
     async getAllCardsBySet(setCode: string, pageSize: number, offset: number): Promise<any[]> {
         if (!this.mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
@@ -1120,11 +1078,20 @@ class DatabaseService {
         }
 
         try {
-            // Drop existing tables to recreate with new schema
-            await this.mtgJsonDb.executeSql('DROP TABLE IF EXISTS prices');
-            await this.mtgJsonDb.executeSql('DROP TABLE IF EXISTS price_history');
+            // Check if tables already exist
+            const [tableCheck] = await this.mtgJsonDb.executeSql(`
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND (name='prices' OR name='price_history')
+            `);
 
-            // Create price-related tables
+            if (tableCheck.rows.length === 2) {
+                console.log('[DatabaseService] Price tables already exist, skipping creation');
+                return;
+            }
+
+            console.log('[DatabaseService] Creating price tables...');
+
+            // Create price-related tables only if they don't exist
             await this.mtgJsonDb.executeSql(`
                 CREATE TABLE IF NOT EXISTS prices (
                     uuid TEXT PRIMARY KEY NOT NULL,
@@ -1160,14 +1127,6 @@ class DatabaseService {
                     recorded_at INTEGER NOT NULL,
                     PRIMARY KEY (uuid, recorded_at),
                     FOREIGN KEY (uuid) REFERENCES prices(uuid) ON DELETE CASCADE
-                )
-            `);
-
-            await this.mtgJsonDb.executeSql(`
-                CREATE TABLE IF NOT EXISTS app_settings (
-                    key TEXT PRIMARY KEY NOT NULL,
-                    value TEXT NOT NULL,
-                    updated_at INTEGER NOT NULL
                 )
             `);
 

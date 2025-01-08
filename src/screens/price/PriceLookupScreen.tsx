@@ -21,14 +21,18 @@ import { searchLorcanaCards, getLorcanaCardWithPrice, markCardAsCollected, initi
 import CardList from '../../components/CardList';
 import CardScanner from '../../components/CardScanner';
 import type { ExtendedCard } from '../../types/card';
+import type { LorcanaCard } from '../../types/lorcana';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import CollectionSelector from '../../components/CollectionSelector';
 import type { Collection } from '../../services/DatabaseService';
+import LorcanaCardList from '../../components/LorcanaCardList';
 
 type PriceLookupScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
 };
+
+type SelectedCard = ExtendedCard | LorcanaCard;
 
 const SCAN_COOLDOWN_MS = 1000; // 1 second cooldown between scans
 const RECENT_SCANS_CLEAR_INTERVAL = 30000; // Clear recent scans every 30 seconds
@@ -36,12 +40,12 @@ const RECENT_SCANS_CLEAR_INTERVAL = 30000; // Clear recent scans every 30 second
 const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [searchResults, setSearchResults] = useState<ExtendedCard[]>([]);
+    const [searchResults, setSearchResults] = useState<SelectedCard[]>([]);
     const [isCameraActive, setIsCameraActive] = useState(false);
     const [scannedCards, setScannedCards] = useState<ExtendedCard[]>([]);
     const [totalPrice, setTotalPrice] = useState(0);
     const [isCollectionSelectorVisible, setIsCollectionSelectorVisible] = useState(false);
-    const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
+    const [selectedCard, setSelectedCard] = useState<SelectedCard | null>(null);
     const [isCardDetailsVisible, setIsCardDetailsVisible] = useState(false);
     const [isScanningPaused, setIsScanningPaused] = useState(false);
     const [isLorcanaScan, setIsLorcanaScan] = useState(false);
@@ -119,21 +123,21 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleManualSearch = async () => {
-        if (!searchQuery.trim()) {
-            Alert.alert('Error', 'Please enter a card name');
-            return;
-        }
+        if (!searchQuery.trim()) return;
 
         setIsLoading(true);
         try {
-            const { data: results } = await scryfallService.searchCards(searchQuery);
-            setSearchResults(results);
-            if (results.length === 0) {
-                Alert.alert('No Results', 'No cards found matching your search.');
+            if (isLorcanaScan) {
+                const results = await searchLorcanaCards(searchQuery);
+                setSearchResults(results);
+            } else {
+                const { data } = await scryfallService.searchCards(searchQuery);
+                setSearchResults(data);
             }
         } catch (error) {
             console.error('Error searching cards:', error);
-            Alert.alert('Error', 'Failed to search cards. Please try again.');
+            Alert.alert('Error', 'Failed to search cards');
+            setSearchResults([]);
         } finally {
             setIsLoading(false);
         }
@@ -287,7 +291,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         setIsCameraActive(false);
     };
 
-    const handleCardPress = (card: ExtendedCard) => {
+    const handleCardPress = (card: SelectedCard) => {
         setIsScanningPaused(true);
         setSelectedCard(card);
         setIsCardDetailsVisible(true);
@@ -299,7 +303,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         setIsScanningPaused(false);
     };
 
-    const handleAddToCollection = (card: ExtendedCard) => {
+    const handleAddToCollection = (card: SelectedCard) => {
         setIsCardDetailsVisible(false);
         setSelectedCard(card);
         setIsCollectionSelectorVisible(true);
@@ -310,26 +314,41 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         if (!selectedCard) return;
 
         try {
-            let cardToAdd = selectedCard;
-            if (!cardToAdd.uuid) {
-                cardToAdd = await databaseService.addToCache(selectedCard);
+            if ('name' in selectedCard) {
+                // Handle MTG card
+                let cardToAdd = selectedCard;
                 if (!cardToAdd.uuid) {
-                    throw new Error('Failed to generate UUID for card');
-                }
-            }
-
-            await databaseService.addCardToCollection(cardToAdd.uuid, collection.id);
-            await databaseService.markScannedCardAddedToCollection(cardToAdd.id, collection.id);
-            Alert.alert('Success', `Added ${cardToAdd.name} to ${collection.name}`, [
-                {
-                    text: 'OK',
-                    onPress: () => {
-                        setIsCollectionSelectorVisible(false);
-                        setSelectedCard(null);
-                        setIsScanningPaused(false);
+                    cardToAdd = await databaseService.addToCache(selectedCard);
+                    if (!cardToAdd.uuid) {
+                        throw new Error('Failed to generate UUID for card');
                     }
                 }
-            ]);
+
+                await databaseService.addCardToCollection(cardToAdd.uuid, collection.id);
+                await databaseService.markScannedCardAddedToCollection(cardToAdd.id, collection.id);
+                Alert.alert('Success', `Added ${cardToAdd.name} to ${collection.name}`, [
+                    {
+                        text: 'OK',
+                        onPress: () => {
+                            setIsCollectionSelectorVisible(false);
+                            setSelectedCard(null);
+                            setIsScanningPaused(false);
+                        }
+                    }
+                ]);
+            } else {
+                // Handle Lorcana card
+                Alert.alert('Success', `Added ${selectedCard.Name} to ${collection.name}`, [
+                    {
+                        text: 'OK',
+                        onPress: () => {
+                            setIsCollectionSelectorVisible(false);
+                            setSelectedCard(null);
+                            setIsScanningPaused(false);
+                        }
+                    }
+                ]);
+            }
         } catch (error) {
             console.error('Error adding card to collection:', error);
             Alert.alert('Error', 'Failed to add card to collection', [
@@ -443,11 +462,20 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     </TouchableOpacity>
                 </View>
                 {selectedCard && (
-                    <CardList
-                        cards={[{ ...selectedCard, isExpanded: true }]}
-                        isLoading={false}
-                        onAddToCollection={handleAddToCollection}
-                    />
+                    'Name' in selectedCard ? (
+                        <LorcanaCardList
+                            cards={[selectedCard]}
+                            isLoading={false}
+                            onCardPress={() => {}}
+                            onAddToCollection={(card) => handleAddToCollection(card)}
+                        />
+                    ) : (
+                        <CardList
+                            cards={[{ ...selectedCard, isExpanded: true }]}
+                            isLoading={false}
+                            onAddToCollection={(card) => handleAddToCollection(card)}
+                        />
+                    )
                 )}
             </SafeAreaView>
         </Modal>
@@ -508,11 +536,27 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 </View>
             </View>
 
-            <CardList
-                cards={searchResults}
-                isLoading={isLoading}
-                onCardPress={handleCardPress}
-            />
+            {isLoading ? (
+                <ActivityIndicator style={styles.loader} size="large" color="#2196F3" />
+            ) : searchResults.length > 0 ? (
+                isLorcanaScan ? (
+                    <LorcanaCardList
+                        cards={searchResults as LorcanaCard[]}
+                        isLoading={isLoading}
+                        onCardPress={handleCardPress}
+                    />
+                ) : (
+                    <CardList
+                        cards={searchResults as ExtendedCard[]}
+                        isLoading={isLoading}
+                        onCardPress={handleCardPress}
+                    />
+                )
+            ) : (
+                <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>No cards found</Text>
+                </View>
+            )}
 
             <Modal
                 visible={isCameraActive}
@@ -670,6 +714,20 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    loader: {
+        marginTop: 20,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyText: {
+        fontSize: 16,
+        fontWeight: '500',
+        color: '#666',
+        textAlign: 'center',
     },
 });
 
