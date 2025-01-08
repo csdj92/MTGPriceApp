@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     View,
     StyleSheet,
@@ -8,6 +8,8 @@ import {
     TextInput,
     SectionList,
     Modal,
+    ScrollView,
+    FlatList,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useNavigation } from '@react-navigation/native';
@@ -16,6 +18,7 @@ import { scryfallService } from '../../services/ScryfallService';
 import CardList from '../../components/CardList';
 import debounce from 'lodash/debounce';
 import type { ExtendedCard } from '../../types/card';
+import type { SetInfo } from '../../services/DatabaseService';
 import { downloadAndImportPriceData } from '../../utils/priceData';
 
 const WatchlistScreen = () => {
@@ -30,35 +33,98 @@ const WatchlistScreen = () => {
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [cardDetails, setCardDetails] = useState<ExtendedCard[]>([]);
+    const [sets, setSets] = useState<SetInfo[]>([]);
+    const [isSetModalVisible, setIsSetModalVisible] = useState(false);
+    const [selectedSet, setSelectedSet] = useState<SetInfo | null>(null);
     const PAGE_SIZE = 10;
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [setSearchText, setSetSearchText] = useState('');
+    const [isSetLoading, setIsSetLoading] = useState(false);
+    const [isSetModalLoading, setIsSetModalLoading] = useState(false);
+
+    // Add cleanup when screen loses focus
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('blur', () => {
+            setIsSetModalVisible(false);
+            setSetSearchText('');
+        });
+
+        return unsubscribe;
+    }, [navigation]);
+
+    // Add cleanup when component unmounts
+    useEffect(() => {
+        return () => {
+            setIsSetModalVisible(false);
+            setSetSearchText('');
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!databaseService.isMTGJsonDatabaseInitialized()) {
+            console.log('[WatchlistScreen] Database not initialized, skipping set load');
+            return;
+        }
+
+        const loadSets = async () => {
+            try {
+                setIsSetModalLoading(true);
+                console.log('[WatchlistScreen] Loading sets...');
+                const setList = await databaseService.getSetList();
+                console.log('[WatchlistScreen] Loaded sets:', setList.length);
+                if (setList.length === 0) {
+                    console.log('[WatchlistScreen] No sets found, checking database state...');
+                    await databaseService.verifyDatabaseState();
+                    // Try loading sets again
+                    const retrySetList = await databaseService.getSetList();
+                    console.log('[WatchlistScreen] Retry loaded sets:', retrySetList.length);
+                    setSets(retrySetList);
+                } else {
+                    setSets(setList);
+                }
+            } catch (error) {
+                console.error('[WatchlistScreen] Error loading sets:', error);
+            } finally {
+                setIsSetModalLoading(false);
+            }
+        };
+
+        loadSets();
+    }, []);
+
+    const handleSetModalOpen = () => {
+        if (!databaseService.isMTGJsonDatabaseInitialized()) {
+            console.log('[WatchlistScreen] Database not initialized, cannot open set modal');
+            return;
+        }
+        setIsSetModalVisible(true);
+    };
 
     const loadPriceData = useCallback(async (query: string, isSearchUpdate = false) => {
-        if (isSearchUpdate) {
+        if (selectedSet) {
+            setIsSetLoading(true);
+        } else if (isSearchUpdate) {
             setIsSearching(true);
         } else {
             setIsLoading(true);
         }
 
         try {
-            if (query.toLowerCase().startsWith('set:')) {
-                const setCode = query.split(':')[1].trim().toUpperCase();
-                console.log(`[WatchlistScreen] Searching for set: ${setCode}`);
+            if (selectedSet) {
+                console.log(`[WatchlistScreen] Loading cards for set: ${selectedSet.code}`);
 
                 // Get all cards from the set with prices
-                const setCards = await databaseService.getAllCardsBySet(setCode, 1000, 0);
-                console.log(`[WatchlistScreen] Found ${setCards.length} cards in set ${setCode}`);
-                // console.log('[WatchlistScreen] First card sample:', JSON.stringify(setCards[0], null, 2));
+                const setCards = await databaseService.getAllCardsBySet(selectedSet.code, 1000, 0);
+                console.log(`[WatchlistScreen] Found ${setCards.length} cards in set ${selectedSet.code}`);
 
                 if (setCards.length > 0) {
                     // Sort the cards by price
                     setCards.sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0));
                     
                     const sectionData = [{
-                        setCode,
+                        setCode: selectedSet.code,
                         data: setCards
                     }];
-                    // console.log('[WatchlistScreen] Section data structure:', JSON.stringify(sectionData[0], null, 2));
                     setPriceData(sectionData);
                     setHasMore(false); // No need to load more since we got all cards
                 } else {
@@ -66,16 +132,28 @@ const WatchlistScreen = () => {
                     setHasMore(false);
                 }
             } else {
-                // Regular search
-                const cards = await databaseService.getAllCardsBySet(query || 'latest', PAGE_SIZE, (currentPage - 1) * PAGE_SIZE);
+                // Get most expensive cards across all sets
+                const cards = await databaseService.getMostExpensiveCards(PAGE_SIZE, (currentPage - 1) * PAGE_SIZE, sortBy);
                 if (cards.length < PAGE_SIZE) {
                     setHasMore(false);
                 }
-                // Transform the data structure to match SectionList requirements
-                const transformedPrices = [{
-                    setCode: cards[0]?.setCode || 'Unknown Set',
+
+                // Group cards by set
+                const cardsBySet = cards.reduce((acc: { [key: string]: any[] }, card: { setCode: string | undefined }) => {
+                    const setCode = card.setCode || 'Unknown Set';
+                    if (!acc[setCode]) {
+                        acc[setCode] = [];
+                    }
+                    acc[setCode].push(card);
+                    return acc;
+                }, {});
+
+                // Transform into sections
+                const transformedPrices = Object.entries(cardsBySet).map(([setCode, cards]) => ({
+                    setCode,
                     data: cards
-                }];
+                }));
+
                 setPriceData(prev => currentPage === 1 ? transformedPrices : [...prev, ...transformedPrices]);
             }
         } catch (error) {
@@ -83,8 +161,9 @@ const WatchlistScreen = () => {
         } finally {
             setIsLoading(false);
             setIsSearching(false);
+            setIsSetLoading(false);
         }
-    }, [currentPage, sortBy]);
+    }, [currentPage, sortBy, selectedSet]);
 
     // Debounced search function with immediate execution for set: queries
     const debouncedSearch = useCallback(
@@ -260,6 +339,87 @@ const WatchlistScreen = () => {
         }
     };
 
+    const filteredSets = useMemo(() => {
+        if (sets.length > 0) {
+            return sets.filter(set => 
+                set.name.toLowerCase().includes(setSearchText.toLowerCase()) ||
+                set.code.toLowerCase().includes(setSearchText.toLowerCase())
+            );
+        }
+        return [];
+    }, [sets, setSearchText]);
+
+    const renderSetItem = ({ item: set }: { item: SetInfo }) => (
+        <TouchableOpacity
+            key={set.code}
+            style={styles.setItem}
+            onPress={() => {
+                setSelectedSet(set);
+                setIsSetModalVisible(false);
+                setSetSearchText('');
+                loadPriceData('');
+            }}
+        >
+            <Text style={styles.setItemText}>{set.name}</Text>
+            <Text style={styles.setItemCode}>{set.code}</Text>
+            <Text style={styles.setItemCount}>{set.cardCount} cards</Text>
+        </TouchableOpacity>
+    );
+
+    const renderSetModal = () => (
+        <Modal
+            visible={isSetModalVisible}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={() => {
+                setIsSetModalVisible(false);
+                setSetSearchText('');
+            }}
+            statusBarTranslucent={true}
+        >
+            <View style={[styles.modalOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}>
+                <View style={styles.setModalContainer}>
+                    <View style={styles.setModalHeader}>
+                        <Text style={styles.setModalTitle}>Select a Set</Text>
+                        <TouchableOpacity
+                            style={styles.closeButton}
+                            onPress={() => {
+                                setIsSetModalVisible(false);
+                                setSetSearchText('');
+                            }}
+                        >
+                            <Icon name="close" size={24} color="#000" />
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.setSearchContainer}>
+                        <Icon name="magnify" size={20} color="#666" style={styles.searchIcon} />
+                        <TextInput
+                            style={styles.setSearchInput}
+                            placeholder="Search sets..."
+                            value={setSearchText}
+                            onChangeText={setSetSearchText}
+                            autoCapitalize="none"
+                        />
+                    </View>
+                    {isSetModalLoading ? (
+                        <View style={styles.setModalLoadingContainer}>
+                            <ActivityIndicator size="small" color="#2196F3" />
+                            <Text style={styles.loadingText}>Loading sets...</Text>
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={filteredSets}
+                            renderItem={renderSetItem}
+                            keyExtractor={(set) => set.code}
+                            keyboardShouldPersistTaps="handled"
+                            keyboardDismissMode="on-drag"
+                        />
+                    )}
+                </View>
+            </View>
+        </Modal>
+    );
+
     if (isLoading && currentPage === 1) {
         return (
             <View style={styles.loadingContainer}>
@@ -271,22 +431,22 @@ const WatchlistScreen = () => {
 
     return (
         <View style={styles.container}>
-            <View style={styles.searchContainer}>
-                <View style={styles.searchInputContainer}>
-                    <TextInput
-                        style={styles.searchInput}
-                        placeholder="Type 'set:CODE' to view all cards in a set"
-                        onChangeText={handleSearch}
-                        value={searchQuery}
-                    />
-                    {isSearching && (
-                        <ActivityIndicator
-                            size="small"
-                            color="#2196F3"
-                            style={styles.searchSpinner}
-                        />
-                    )}
+            {isSetLoading && (
+                <View style={styles.loadingOverlay}>
+                    <ActivityIndicator size="large" color="#2196F3" />
+                    <Text style={styles.loadingText}>Loading set data...</Text>
                 </View>
+            )}
+            <View style={styles.searchContainer}>
+                <TouchableOpacity
+                    style={styles.setButton}
+                    onPress={handleSetModalOpen}
+                >
+                    <Text style={styles.setButtonText}>
+                        {selectedSet ? selectedSet.code : 'All Sets'}
+                    </Text>
+                    <Icon name="chevron-down" size={20} color="#000" />
+                </TouchableOpacity>
                 <TouchableOpacity
                     style={styles.sortButton}
                     onPress={() => setSortBy(prev => prev === 'normal_price' ? 'foil_price' : 'normal_price')}
@@ -318,7 +478,7 @@ const WatchlistScreen = () => {
                 renderSectionHeader={renderSetSection}
                 keyExtractor={(item) => item.uuid}
                 onEndReached={() => {
-                    if (!isLoading && !isSearching && hasMore) {
+                    if (!isLoading && !isSearching && hasMore && !selectedSet) {
                         setCurrentPage(prev => prev + 1);
                     }
                 }}
@@ -334,6 +494,8 @@ const WatchlistScreen = () => {
                     ) : null
                 )}
             />
+
+            {renderSetModal()}
 
             <Modal
                 visible={isModalVisible}
@@ -503,6 +665,101 @@ const styles = StyleSheet.create({
         marginLeft: 10,
         width: 40,
         height: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    setModalContainer: {
+        backgroundColor: 'white',
+        width: '100%',
+        height: '80%',
+        borderRadius: 10,
+        overflow: 'hidden',
+    },
+    setModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+        backgroundColor: 'white',
+    },
+    setModalTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    setList: {
+        flex: 1,
+    },
+    setItem: {
+        paddingVertical: 12,
+        paddingHorizontal: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+        backgroundColor: 'white',
+    },
+    setItemText: {
+        fontSize: 16,
+    },
+    setItemCount: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
+    },
+    setButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        paddingHorizontal: 15,
+        paddingVertical: 10,
+        borderRadius: 20,
+        marginRight: 10,
+    },
+    setButtonText: {
+        marginRight: 5,
+    },
+    setSearchContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+        backgroundColor: '#fff',
+    },
+    searchIcon: {
+        marginLeft: 5,
+    },
+    setSearchInput: {
+        flex: 1,
+        height: 40,
+        paddingHorizontal: 10,
+        fontSize: 16,
+    },
+    itemCode: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
+    },
+    setItemCode: {
+        fontSize: 14,
+        color: '#666',
+        marginTop: 2,
+    },
+    loadingOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    },
+    setModalLoadingContainer: {
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
