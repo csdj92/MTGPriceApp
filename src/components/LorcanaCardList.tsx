@@ -6,9 +6,9 @@ import {
     StyleSheet,
     ActivityIndicator,
     TouchableOpacity,
-    Image,
     Linking,
 } from 'react-native';
+import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getLorcanaCardPrice } from '../services/LorcanaService';
 import type { LorcanaCard } from '../types/lorcana';
@@ -158,10 +158,14 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
             {isExpanded && (
                 <View style={styles.expandedContent}>
                     {card.Image && (
-                        <Image
-                            source={{ uri: card.Image }}
+                        <FastImage
+                            source={{ 
+                                uri: card.Image,
+                                priority: FastImage.priority.normal,
+                                cache: FastImage.cacheControl.immutable
+                            }}
                             style={styles.cardImage}
-                            resizeMode="contain"
+                            resizeMode={FastImage.resizeMode.contain}
                         />
                     )}
                     {card.Body_Text && (

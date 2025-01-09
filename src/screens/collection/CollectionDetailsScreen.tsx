@@ -3,7 +3,7 @@ import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert } fr
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { databaseService } from '../../services/DatabaseService';
-import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardFromCollection } from '../../services/LorcanaService';
+import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardFromCollection, getLorcanaSetMissingCards } from '../../services/LorcanaService';
 import CardList from '../../components/CardList';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import LorcanaGridView from '../../components/LorcanaGridView';
@@ -56,7 +56,14 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         type: 'Lorcana'
                     });
                     navigation.setOptions({ title: lorcanaCollection.name });
-                    await loadMoreCards(1, 'Lorcana');
+                    
+                    // Extract set ID from the description (format: "Collection for Set Name (SET_ID)")
+                    const setIdMatch = lorcanaCollection.description?.match(/\((.*?)\)$/);
+                    if (setIdMatch && setIdMatch[1]) {
+                        const setId = setIdMatch[1];
+                        const allSetCards = await getLorcanaSetMissingCards(setId);
+                        setLorcanaCards(allSetCards.filter((card): card is LorcanaCardWithPrice => Boolean(card.Unique_ID)));
+                    }
                 }
             }
         } catch (error) {

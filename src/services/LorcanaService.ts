@@ -1046,3 +1046,45 @@ export const deleteLorcanaCardFromCollection = async (cardId: string, collection
     }
 };
 
+// Add this new function to get missing cards for a set
+export const getLorcanaSetMissingCards = async (setId: string): Promise<LorcanaCardWithPrice[]> => {
+    try {
+        const db = await getDB();
+        
+        // Get all cards from the set that are not in any collection
+        const [results] = await db.executeSql(`
+            SELECT lc.*, 
+                   CASE 
+                       WHEN lcc.card_id IS NOT NULL THEN 1 
+                       ELSE 0 
+                   END as collected
+            FROM lorcana_cards lc
+            LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
+            WHERE lc.Set_ID = ? AND lc.Unique_ID IS NOT NULL
+            ORDER BY lc.Card_Num ASC;
+        `, [setId]);
+
+        const cards: LorcanaCardWithPrice[] = [];
+        for (let i = 0; i < results.rows.length; i++) {
+            const card = results.rows.item(i);
+            if (card.Unique_ID) {  // Only add cards with a valid Unique_ID
+                cards.push({
+                    ...card,
+                    Unique_ID: card.Unique_ID, // Ensure this is explicitly set
+                    prices: {
+                        usd: card.price_usd,
+                        usd_foil: card.price_usd_foil,
+                        tcgplayer_id: null
+                    },
+                    collected: Boolean(card.collected)
+                });
+            }
+        }
+
+        return cards;
+    } catch (error) {
+        console.error('Error getting Lorcana set missing cards:', error);
+        throw error;
+    }
+};
+

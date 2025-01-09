@@ -6,11 +6,11 @@ import {
     TouchableOpacity,
     TextInput,
     FlatList,
-    Image,
     Modal,
     ScrollView,
     Dimensions
 } from 'react-native';
+import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
 
@@ -28,6 +28,7 @@ interface Filters {
     search: string;
     rarities: string[];
     colors: string[];
+    collectionStatus: 'all' | 'collected' | 'missing';
     priceRange: {
         min: number | null;
         max: number | null;
@@ -47,6 +48,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         search: '',
         rarities: [],
         colors: [],
+        collectionStatus: 'all',
         priceRange: { min: null, max: null }
     });
     const [showFilters, setShowFilters] = useState(false);
@@ -65,6 +67,14 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             // Text search
             if (filters.search && !card.Name?.toLowerCase().includes(filters.search.toLowerCase()) &&
                 !card.Body_Text?.toLowerCase().includes(filters.search.toLowerCase())) {
+                return false;
+            }
+
+            // Collection status filter
+            if (filters.collectionStatus === 'collected' && !card.collected) {
+                return false;
+            }
+            if (filters.collectionStatus === 'missing' && card.collected) {
                 return false;
             }
 
@@ -119,14 +129,32 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             style={styles.cardContainer}
             onPress={() => setSelectedCard(item)}
         >
-            <Image
-                source={{ uri: item.Image }}
-                style={styles.cardImage}
-                resizeMode="contain"
-            />
-            <View style={styles.cardInfo}>
-                <Text style={styles.cardName} numberOfLines={1}>{item.Name}</Text>
-                <Text style={styles.cardPrice}>
+            <View style={styles.cardImageContainer}>
+                <FastImage
+                    source={{ 
+                        uri: item.Image,
+                        priority: FastImage.priority.normal,
+                        cache: FastImage.cacheControl.immutable
+                    }}
+                    style={[
+                        styles.cardImage,
+                        !item.collected && styles.cardImageUncollected
+                    ]}
+                    resizeMode={FastImage.resizeMode.contain}
+                />
+                {!item.collected && (
+                    <View style={styles.missingOverlay}>
+                        <Icon name="plus-circle" size={24} color="white" />
+                        <Text style={styles.missingText}>Missing</Text>
+                    </View>
+                )}
+            </View>
+            <View style={[styles.cardInfo, !item.collected && styles.cardInfoUncollected]}>
+                <Text style={styles.cardNumber}>#{item.Card_Num || '0'}</Text>
+                <Text style={[styles.cardName, !item.collected && styles.cardNameUncollected]} numberOfLines={1}>
+                    {item.Name}
+                </Text>
+                <Text style={[styles.cardPrice, !item.collected && styles.cardPriceUncollected]}>
                     ${item.prices?.usd || '0.00'}
                 </Text>
             </View>
@@ -142,6 +170,57 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 onChangeText={text => setFilters(prev => ({ ...prev, search: text }))}
             />
             
+            <View style={styles.filterSection}>
+                <Text style={styles.filterTitle}>Collection Status</Text>
+                <View style={styles.filterOptions}>
+                    <TouchableOpacity
+                        style={[
+                            styles.filterChip,
+                            filters.collectionStatus === 'all' && styles.filterChipSelected
+                        ]}
+                        onPress={() => setFilters(prev => ({
+                            ...prev,
+                            collectionStatus: 'all'
+                        }))}
+                    >
+                        <Text style={[
+                            styles.filterChipText,
+                            filters.collectionStatus === 'all' && styles.filterChipTextSelected
+                        ]}>All Cards</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[
+                            styles.filterChip,
+                            filters.collectionStatus === 'collected' && styles.filterChipSelected
+                        ]}
+                        onPress={() => setFilters(prev => ({
+                            ...prev,
+                            collectionStatus: 'collected'
+                        }))}
+                    >
+                        <Text style={[
+                            styles.filterChipText,
+                            filters.collectionStatus === 'collected' && styles.filterChipTextSelected
+                        ]}>Collected</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[
+                            styles.filterChip,
+                            filters.collectionStatus === 'missing' && styles.filterChipSelected
+                        ]}
+                        onPress={() => setFilters(prev => ({
+                            ...prev,
+                            collectionStatus: 'missing'
+                        }))}
+                    >
+                        <Text style={[
+                            styles.filterChipText,
+                            filters.collectionStatus === 'missing' && styles.filterChipTextSelected
+                        ]}>Missing</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+
             <View style={styles.filterSection}>
                 <Text style={styles.filterTitle}>Rarity</Text>
                 <View style={styles.filterOptions}>
@@ -200,6 +279,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                     search: '',
                     rarities: [],
                     colors: [],
+                    collectionStatus: 'all',
                     priceRange: { min: null, max: null }
                 })}
             >
@@ -220,10 +300,14 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                     {selectedCard && (
                         <ScrollView>
                             <View style={styles.modalImageContainer}>
-                                <Image
-                                    source={{ uri: selectedCard.Image }}
+                                <FastImage
+                                    source={{ 
+                                        uri: selectedCard.Image,
+                                        priority: FastImage.priority.high,
+                                        cache: FastImage.cacheControl.immutable
+                                    }}
                                     style={styles.modalImage}
-                                    resizeMode="contain"
+                                    resizeMode={FastImage.resizeMode.contain}
                                 />
                                 <TouchableOpacity
                                     style={styles.modalCloseButton}
@@ -508,17 +592,57 @@ const styles = StyleSheet.create({
         flex: 1/3,
         padding: 4,
     },
-    cardImage: {
+    cardImageContainer: {
+        position: 'relative',
         width: '100%',
         aspectRatio: 0.72,
+    },
+    cardImage: {
+        width: '100%',
+        height: '100%',
         borderRadius: 8,
+    },
+    cardImageUncollected: {
+        opacity: 0.5,
+    },
+    missingOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        borderRadius: 8,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    missingText: {
+        color: 'white',
+        fontSize: 12,
+        fontWeight: '500',
+        marginTop: 4,
+    },
+    cardInfoUncollected: {
+        opacity: 0.7,
+    },
+    cardNameUncollected: {
+        color: '#999',
+    },
+    cardPriceUncollected: {
+        color: '#999',
     },
     cardInfo: {
         padding: 4,
     },
+    cardNumber: {
+        fontSize: 10,
+        color: '#666',
+        marginBottom: 2,
+    },
     cardName: {
         fontSize: 12,
         fontWeight: '500',
+        marginBottom: 2,
     },
     cardPrice: {
         fontSize: 12,
