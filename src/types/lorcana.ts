@@ -1,5 +1,6 @@
 export interface LorcanaCard {
-    id: number;
+    id?: number;
+    Unique_ID: string;
     Name: string;
     Set_Name: string;
     Set_ID?: string;
@@ -18,4 +19,21 @@ export interface LorcanaCard {
     price_usd?: string | null;
     price_usd_foil?: string | null;
     collected?: boolean;
+    Artist?: string;
+    Date_Added?: string;
+    Date_Modified?: string;
+    Franchise?: string;
+    Inkable?: boolean;
+    Lore?: number;
+}
+
+export interface LorcanaPrice {
+    usd: string | null;
+    usd_foil: string | null;
+    tcgplayer_id: string | null;
+}
+
+export interface LorcanaCardWithPrice extends LorcanaCard {
+    prices?: LorcanaPrice;
+    isExpanded?: boolean;
 } 

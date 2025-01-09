@@ -17,7 +17,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { scryfallService } from '../../services/ScryfallService';
 import { databaseService } from '../../services/DatabaseService';
-import { searchLorcanaCards, getLorcanaCardWithPrice, markCardAsCollected, initializeLorcanaDatabase, listAllCardNames, clearLorcanaDatabase, reloadLorcanaCards } from '../../services/LorcanaService';
+import { searchLorcanaCards, getLorcanaCardWithPrice, markCardAsCollected, initializeLorcanaDatabase, listAllCardNames, clearLorcanaDatabase, reloadLorcanaCards, getOrCreateLorcanaSetCollection, addCardToLorcanaCollection } from '../../services/LorcanaService';
 import CardList from '../../components/CardList';
 import CardScanner from '../../components/CardScanner';
 import type { ExtendedCard } from '../../types/card';
@@ -27,12 +27,14 @@ import type { RootStackParamList } from '../../navigation/AppNavigator';
 import CollectionSelector from '../../components/CollectionSelector';
 import type { Collection } from '../../services/DatabaseService';
 import LorcanaCardList from '../../components/LorcanaCardList';
+import { CommonActions } from '@react-navigation/native';
 
 type PriceLookupScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
 };
 
 type SelectedCard = ExtendedCard | LorcanaCard;
+type ScannedCard = Omit<ExtendedCard, 'type'> & { type: 'MTG' | 'Lorcana' };
 
 const SCAN_COOLDOWN_MS = 1000; // 1 second cooldown between scans
 const RECENT_SCANS_CLEAR_INTERVAL = 30000; // Clear recent scans every 30 seconds
@@ -42,7 +44,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const [isLoading, setIsLoading] = useState(false);
     const [searchResults, setSearchResults] = useState<SelectedCard[]>([]);
     const [isCameraActive, setIsCameraActive] = useState(false);
-    const [scannedCards, setScannedCards] = useState<ExtendedCard[]>([]);
+    const [scannedCards, setScannedCards] = useState<ScannedCard[]>([]);
     const [totalPrice, setTotalPrice] = useState(0);
     const [isCollectionSelectorVisible, setIsCollectionSelectorVisible] = useState(false);
     const [selectedCard, setSelectedCard] = useState<SelectedCard | null>(null);
@@ -103,7 +105,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         try {
             const history = await databaseService.getScanHistory();
             if (Array.isArray(history)) {
-                setScannedCards(history);
+                setScannedCards(history.map(card => ({ ...card, type: 'MTG' })));
                 updateTotalPrice(history);
             }
         } catch (error) {
@@ -182,55 +184,83 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         try {
             if (isLorcanaScan) {
                 console.log('[PriceLookupScreen] Searching Lorcana database...');
-                // Search in Lorcana database
                 const lorcanaResults = await searchLorcanaCards(text);
                 console.log(`[PriceLookupScreen] Found ${lorcanaResults?.length || 0} Lorcana results`);
-                
+
                 if (lorcanaResults && lorcanaResults.length > 0) {
                     const card = lorcanaResults[0];
-                    console.log('[PriceLookupScreen] Getting Lorcana card price...');
-                    const cardWithPrice = await getLorcanaCardWithPrice(card.unique_id);
+                    const cardWithPrice = await getLorcanaCardWithPrice(card.Unique_ID);
                     
                     if (cardWithPrice) {
-                        console.log('[PriceLookupScreen] Found Lorcana card with price:', cardWithPrice.name);
-                        // Convert Lorcana card to ExtendedCard format
-                        const extendedCard: ExtendedCard = {
-                            id: cardWithPrice.unique_id,
-                            name: cardWithPrice.name,
-                            setName: cardWithPrice.set_name,
-                            setCode: cardWithPrice.set_id || '',
-                            collectorNumber: String(cardWithPrice.card_num),
-                            imageUris: { normal: cardWithPrice.image },
+                        const scannedCard: ScannedCard = {
+                            id: cardWithPrice.Unique_ID,
+                            uuid: cardWithPrice.Unique_ID,
+                            name: cardWithPrice.Name || cardWithPrice.name,
+                            setName: cardWithPrice.Set_Name || cardWithPrice.set_name,
+                            setCode: cardWithPrice.Set_ID || cardWithPrice.set_id || '',
+                            collectorNumber: String(cardWithPrice.Card_Num || cardWithPrice.card_num),
+                            imageUris: { normal: cardWithPrice.Image || cardWithPrice.image },
                             prices: {
-                                usd: cardWithPrice.prices?.usd || null,
-                                usdFoil: cardWithPrice.prices?.usd_foil || null
+                                usd: cardWithPrice.price_usd || cardWithPrice.prices?.usd || null,
+                                usdFoil: cardWithPrice.price_usd_foil || cardWithPrice.prices?.usd_foil || null
                             },
-                            type: cardWithPrice.type || 'Card',
+                            type: 'Lorcana',
                             purchaseUrls: {},
                             legalities: {},
-                            scannedAt: now
+                            scannedAt: now,
+                            rarity: cardWithPrice.Rarity || cardWithPrice.rarity
                         };
 
+                        // Add to scanned cards list
                         setScannedCards(prevCards => {
-                            const currentCards = Array.isArray(prevCards) ? prevCards : [];
-                            return [extendedCard, ...currentCards];
+                            // Check for duplicates
+                            const isDuplicate = prevCards.some(card => 
+                                card.id === scannedCard.id && 
+                                (card.scannedAt || 0) > now - SCAN_COOLDOWN_MS
+                            );
+                            if (isDuplicate) return prevCards;
+                            return [scannedCard, ...prevCards];
                         });
 
+                        // Update total price
                         setTotalPrice(prevTotal => {
-                            const cardPrice = extendedCard.prices?.usd ? Number(extendedCard.prices.usd) : 0;
+                            const cardPrice = scannedCard.prices?.usd ? Number(scannedCard.prices.usd) : 0;
                             return prevTotal + cardPrice;
                         });
 
-                        // Mark as collected
-                        await markCardAsCollected(card.unique_id);
+                        // Add to set collection
+                        if (cardWithPrice.Set_ID && cardWithPrice.Set_Name) {
+                            try {
+                                console.log('[PriceLookupScreen] Adding to Lorcana set collection...');
+                                const setCollectionId = await getOrCreateLorcanaSetCollection(
+                                    cardWithPrice.Set_ID,
+                                    cardWithPrice.Set_Name
+                                );
+                                if (setCollectionId) {
+                                    await addCardToLorcanaCollection(cardWithPrice.Unique_ID, setCollectionId);
+                                    console.log('[PriceLookupScreen] Successfully added to set collection');
 
-                        if (Platform.OS === 'android') {
-                            ToastAndroid.show(`Added ${cardWithPrice.name}`, ToastAndroid.SHORT);
+                                    // Show toast notification
+                                    if (Platform.OS === 'android') {
+                                        ToastAndroid.show(`Added ${cardWithPrice.Name}`, ToastAndroid.SHORT);
+                                    }
+
+                                    // Keep scanning - removed navigation to Collection tab
+                                    console.log('[PriceLookupScreen] Card added, continuing scan...');
+                                } else {
+                                    console.error('[PriceLookupScreen] Failed to create set collection');
+                                }
+                            } catch (error) {
+                                console.error('[PriceLookupScreen] Error adding to set collection:', error);
+                            }
                         }
+
+                        // Mark as collected
+                        await markCardAsCollected(cardWithPrice.Unique_ID);
                     }
                 }
             } else {
-                // Existing MTG card scanning logic
+                // MTG card scanning
                 const searchResponse = await scryfallService.searchCards(text, 1);
                 const foundCards = searchResponse.data;
 
@@ -254,33 +284,31 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                         throw new Error('Failed to generate UUID for card');
                     }
 
-                    const cardWithTimestamp = {
+                    const scannedCard: ScannedCard = {
                         ...cardWithUuid,
+                        type: 'MTG',
                         scannedAt: now
                     };
 
-                    await databaseService.addToScanHistory(cardWithTimestamp);
+                    await databaseService.addToScanHistory(scannedCard);
 
                     // Add to set collection
-                    if (cardWithTimestamp.uuid) {
-                        const setCode = cardWithTimestamp.setCode || 'UNKNOWN';
-                        const setName = cardWithTimestamp.setName || 'Unknown Set';
+                    if (scannedCard.uuid) {
+                        const setCode = scannedCard.setCode || 'UNKNOWN';
+                        const setName = scannedCard.setName || setCode;
                         const setCollectionId = await databaseService.getOrCreateSetCollection(setCode, setName);
-                        await databaseService.addCardToCollection(cardWithTimestamp.uuid, setCollectionId);
+                        await databaseService.addCardToCollection(scannedCard.uuid, setCollectionId);
                     }
 
-                    setScannedCards(prevCards => {
-                        const currentCards = Array.isArray(prevCards) ? prevCards : [];
-                        return [cardWithTimestamp, ...currentCards];
-                    });
+                    setScannedCards(prevCards => [scannedCard, ...prevCards]);
 
                     setTotalPrice(prevTotal => {
-                        const cardPrice = cardWithUuid.prices?.usd ? Number(cardWithUuid.prices.usd) : 0;
+                        const cardPrice = scannedCard.prices?.usd ? Number(scannedCard.prices.usd) : 0;
                         return prevTotal + cardPrice;
                     });
 
                     if (Platform.OS === 'android') {
-                        ToastAndroid.show(`Added ${cardWithUuid.name}`, ToastAndroid.SHORT);
+                        ToastAndroid.show(`Added ${scannedCard.name}`, ToastAndroid.SHORT);
                     }
                 }
             }
@@ -401,11 +429,11 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         }
     };
 
-    const renderScannedCard = ({ item }: { item: ExtendedCard }) => (
+    const renderScannedCard = ({ item }: { item: ScannedCard }) => (
         <TouchableOpacity
             style={styles.scannedCardItem}
-            onPress={() => handleCardPress(item)}
-            onLongPress={() => handleAddToCollection(item)}
+            onPress={() => handleCardPress(item as ExtendedCard)}
+            onLongPress={() => handleAddToCollection(item as ExtendedCard)}
             activeOpacity={0.8}
             delayLongPress={500}
         >
@@ -418,7 +446,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         </TouchableOpacity>
     );
 
-    const keyExtractor = (item: ExtendedCard & { scannedAt?: number }) => {
+    const keyExtractor = (item: ScannedCard) => {
         if (item.scannedAt) {
             return `${item.uuid || item.id}-${item.scannedAt}`;
         }
@@ -442,7 +470,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             </View>
             {scannedCards.length > 0 && (
                 <View style={styles.scannedCardsContainer}>
-                    <FlatList
+                    <FlatList<ScannedCard>
                         data={scannedCards}
                         renderItem={renderScannedCard}
                         keyExtractor={keyExtractor}

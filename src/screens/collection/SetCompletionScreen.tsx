@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
     View,
     StyleSheet,
@@ -6,9 +6,11 @@ import {
     FlatList,
     ActivityIndicator,
     TouchableOpacity,
+    Alert,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { databaseService } from '../../services/DatabaseService';
+import { getLorcanaSetCollections, ensureLorcanaInitialized, reloadLorcanaCards } from '../../services/LorcanaService';
 import type { Collection } from '../../services/DatabaseService';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
@@ -23,72 +25,205 @@ interface SetCollection extends Collection {
     completionPercentage: number;
 }
 
-const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation }) => {
-    const [isLoading, setIsLoading] = useState(true);
-    const [setCollections, setSetCollections] = useState<SetCollection[]>([]);
+// Memoize the SetItem component
+const SetItem = memo(({ item, onDelete, onPress }: { 
+    item: SetCollection & { type: string },
+    onDelete: (id: string, name: string) => void,
+    onPress: (item: SetCollection & { type: string }) => void
+}) => (
+    <TouchableOpacity 
+        style={styles.setItem}
+        onPress={() => onPress(item)}
+    >
+        <View style={styles.setIcon}>
+            <Icon name={item.type === 'MTG' ? 'cards' : 'cards-playing-outline'} size={24} color="#666" />
+        </View>
+        <View style={styles.setInfo}>
+            <Text style={styles.setName}>{item.name}</Text>
+            <View style={styles.progressContainer}>
+                <View style={styles.progressBar}>
+                    <View 
+                        style={[
+                            styles.progressFill, 
+                            { width: `${item.completionPercentage}%` }
+                        ]} 
+                    />
+                </View>
+                <Text style={styles.progressText}>
+                    {item.collectedCards}/{item.totalCards} ({item.completionPercentage.toFixed(1)}%)
+                </Text>
+            </View>
+            <View style={styles.setStats}>
+                <Text style={styles.statsText}>
+                    ${(item.totalValue || 0).toFixed(2)}
+                </Text>
+            </View>
+        </View>
+        <View style={styles.actionButtons}>
+            <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => onDelete(item.id, item.name)}
+            >
+                <Icon name="delete" size={24} color="#ff5252" />
+            </TouchableOpacity>
+            <Icon name="chevron-right" size={24} color="#666" />
+        </View>
+    </TouchableOpacity>
+));
 
-    useEffect(() => {
-        loadSetCollections();
+const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation }) => {
+    // State hooks
+    const [isLoading, setIsLoading] = useState(true);
+    const [mtgCollections, setMtgCollections] = useState<SetCollection[]>([]);
+    const [lorcanaCollections, setLorcanaCollections] = useState<SetCollection[]>([]);
+    const [loadingMtg, setLoadingMtg] = useState(true);
+    const [loadingLorcana, setLoadingLorcana] = useState(true);
+
+    // Memoized callbacks
+    const loadSetCollections = useCallback(async () => {
+        console.log('[SetCompletionScreen] Starting to load collections...');
+        setIsLoading(true);
+        setLoadingMtg(true);
+        setLoadingLorcana(true);
+
+        // Load MTG collections
+        databaseService.getSetCollections()
+            .then(collections => {
+                console.log('[SetCompletionScreen] MTG collections loaded:', collections);
+                setMtgCollections(collections);
+                setLoadingMtg(false);
+            })
+            .catch(error => {
+                console.error('[SetCompletionScreen] Error loading MTG collections:', error);
+                setMtgCollections([]);
+                setLoadingMtg(false);
+            });
+
+        // Load Lorcana collections
+        ensureLorcanaInitialized()
+            .then(() => getLorcanaSetCollections())
+            .then(collections => {
+                console.log('[SetCompletionScreen] Lorcana collections loaded:', collections);
+                const mappedCollections = collections?.map(c => ({
+                    ...c,
+                    cardCount: c.collectedCards
+                })) || [];
+                setLorcanaCollections(mappedCollections);
+                setLoadingLorcana(false);
+            })
+            .catch(error => {
+                console.error('[SetCompletionScreen] Error loading Lorcana collections:', error);
+                setLorcanaCollections([]);
+                setLoadingLorcana(false);
+            });
+
+        // Set a timeout to clear loading state if it gets stuck
+        setTimeout(() => {
+            setIsLoading(false);
+            setLoadingMtg(false);
+            setLoadingLorcana(false);
+        }, 2000);
     }, []);
 
-    useEffect(() => {
-        const unsubscribe = navigation.addListener('focus', () => {
-            loadSetCollections();
-        });
+    const handleDeleteCollection = useCallback(async (collectionId: string, collectionName: string) => {
+        Alert.alert(
+            'Delete Collection',
+            `Are you sure you want to delete "${collectionName}"? This action cannot be undone.`,
+            [
+                {
+                    text: 'Cancel',
+                    style: 'cancel'
+                },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await databaseService.deleteCollection(collectionId);
+                            loadSetCollections();
+                        } catch (error) {
+                            console.error('Error deleting collection:', error);
+                            Alert.alert('Error', 'Failed to delete collection');
+                        }
+                    }
+                }
+            ]
+        );
+    }, [loadSetCollections]);
 
-        return unsubscribe;
+    const keyExtractor = useCallback((item: SetCollection & { type: string }) => item.id, []);
+
+    const getItemLayout = useCallback((_: any, index: number) => ({
+        length: 92,
+        offset: 92 * index,
+        index,
+    }), []);
+
+    const handleSetPress = useCallback((item: SetCollection & { type: string }) => {
+        // Extract set code from description which is in format "Collection for [setName] ([setCode])"
+        const setCodeMatch = item.description?.match(/\(([^)]+)\)$/);
+        const setCode = setCodeMatch ? setCodeMatch[1] : '';
+        
+        navigation.navigate('CollectionDetails', {
+            collectionId: item.id,
+            title: item.name
+        });
     }, [navigation]);
 
-    const loadSetCollections = async () => {
-        setIsLoading(true);
-        try {
-            const collections = await databaseService.getSetCollections();
-            setSetCollections(collections);
-        } catch (error) {
-            console.error('Error loading set collections:', error);
-        } finally {
+    const renderSetItem = useCallback(({ item }: { item: SetCollection & { type: string } }) => (
+        <SetItem 
+            item={item} 
+            onDelete={handleDeleteCollection}
+            onPress={handleSetPress}
+        />
+    ), [handleDeleteCollection, handleSetPress]);
+
+    // Memoized values
+    const allCollections = useMemo(() => {
+        console.log('[SetCompletionScreen] Updating collections:', { 
+            mtg: mtgCollections.length, 
+            lorcana: lorcanaCollections.length 
+        });
+        const combined = [
+            ...mtgCollections.map(c => ({ ...c, type: 'MTG' })),
+            ...lorcanaCollections.map(c => ({ ...c, type: 'Lorcana' }))
+        ].sort((a, b) => a.name.localeCompare(b.name));
+        return combined;
+    }, [mtgCollections, lorcanaCollections]);
+
+    const EmptyComponent = useMemo(() => (
+        <View style={styles.emptyContainer}>
+            <Icon name="cards-outline" size={64} color="#ccc" />
+            <Text style={styles.emptyText}>No Sets Found</Text>
+            <Text style={styles.emptySubtext}>
+                Scan cards to start tracking set completion
+            </Text>
+        </View>
+    ), []);
+
+    // Effects
+    useEffect(() => {
+        loadSetCollections();
+    }, [loadSetCollections]);
+
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('focus', loadSetCollections);
+        return unsubscribe;
+    }, [navigation, loadSetCollections]);
+
+    useEffect(() => {
+        console.log('[SetCompletionScreen] Loading states:', { loadingMtg, loadingLorcana });
+        if (!loadingMtg && !loadingLorcana) {
+            console.log('[SetCompletionScreen] All collections loaded, clearing loading state');
             setIsLoading(false);
         }
-    };
-
-    const renderSetItem = ({ item }: { item: SetCollection }) => (
-        <TouchableOpacity
-            style={styles.setItem}
-            onPress={() => navigation.navigate('CollectionDetails', { collectionId: item.id })}
-        >
-            <View style={styles.setIcon}>
-                <Icon name="cards" size={24} color="#666" />
-            </View>
-            <View style={styles.setInfo}>
-                <Text style={styles.setName}>{item.name}</Text>
-                <View style={styles.progressContainer}>
-                    <View style={styles.progressBar}>
-                        <View 
-                            style={[
-                                styles.progressFill, 
-                                { width: `${item.completionPercentage}%` }
-                            ]} 
-                        />
-                    </View>
-                    <Text style={styles.progressText}>
-                        {item.collectedCards}/{item.totalCards} ({item.completionPercentage.toFixed(1)}%)
-                    </Text>
-                </View>
-                <View style={styles.setStats}>
-                    <Text style={styles.statsText}>
-                        ${(item.totalValue || 0).toFixed(2)}
-                    </Text>
-                </View>
-            </View>
-            <Icon name="chevron-right" size={24} color="#666" />
-        </TouchableOpacity>
-    );
+    }, [loadingMtg, loadingLorcana]);
 
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#2196F3" />
-                <Text style={styles.loadingText}>Loading sets...</Text>
+                <Text style={styles.loadingText}>Loading collections...</Text>
             </View>
         );
     }
@@ -97,22 +232,36 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         <View style={styles.container}>
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Set Completion</Text>
+                <TouchableOpacity
+                    style={styles.forceInitButton}
+                    onPress={async () => {
+                        try {
+                            setIsLoading(true);
+                            await reloadLorcanaCards(); // Force reload all cards
+                            await loadSetCollections();
+                        } catch (error) {
+                            console.error('Error initializing Lorcana:', error);
+                            Alert.alert('Error', 'Failed to initialize Lorcana database');
+                        } finally {
+                            setIsLoading(false);
+                        }
+                    }}
+                >
+                    <Icon name="refresh" size={24} color="#2196F3" />
+                </TouchableOpacity>
             </View>
 
-            {setCollections.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                    <Icon name="cards-outline" size={64} color="#ccc" />
-                    <Text style={styles.emptyText}>No Sets Found</Text>
-                    <Text style={styles.emptySubtext}>
-                        Scan cards to start tracking set completion
-                    </Text>
-                </View>
-            ) : (
+            {allCollections.length === 0 ? EmptyComponent : (
                 <FlatList
-                    data={setCollections}
+                    data={allCollections}
                     renderItem={renderSetItem}
-                    keyExtractor={item => item.id}
+                    keyExtractor={keyExtractor}
                     contentContainerStyle={styles.listContainer}
+                    initialNumToRender={10}
+                    maxToRenderPerBatch={10}
+                    windowSize={5}
+                    removeClippedSubviews={true}
+                    getItemLayout={getItemLayout}
                 />
             )}
         </View>
@@ -227,6 +376,17 @@ const styles = StyleSheet.create({
         color: '#666',
         textAlign: 'center',
         marginTop: 8,
+    },
+    actionButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    deleteButton: {
+        padding: 8,
+    },
+    forceInitButton: {
+        padding: 8,
     },
 });
 

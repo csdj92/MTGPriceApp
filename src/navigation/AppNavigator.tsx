@@ -17,11 +17,12 @@ import CardDetailsScreen from '../screens/CardDetailsScreen';
 
 export type RootStackParamList = {
     MainTabs: undefined;
-    Collection: undefined;
-    CollectionDetails: { collectionId: string };
+    Collection: { collectionId: string; title: string; setCode: string } | undefined;
+    CollectionDetails: { collectionId: string; title: string };
     CardDetails: { card: ExtendedCard };
     SetCompletion: undefined;
     PriceLookup: undefined;
+    LorcanaCollection: { collectionId: string; title: string; setCode: string };
 };
 
 export type MainTabParamList = {
@@ -75,12 +76,31 @@ const AppNavigator = () => (
     <NavigationContainer>
         <Stack.Navigator
             screenOptions={{
-                headerShown: false,
+                headerShown: true,
             }}
         >
-            <Stack.Screen name="MainTabs" component={MainTabs} />
-            <Stack.Screen name="CollectionDetails" component={CollectionDetailsScreen} />
-            <Stack.Screen name="CardDetails" component={CardDetailsScreen} />
+            <Stack.Screen 
+                name="MainTabs" 
+                component={MainTabs}
+                options={{ headerShown: false }}
+            />
+            <Stack.Screen 
+                name="CollectionDetails" 
+                component={CollectionDetailsScreen}
+                options={({ route }) => ({
+                    title: route.params.title || 'Collection Details'
+                })}
+            />
+            <Stack.Screen 
+                name="CardDetails" 
+                component={CardDetailsScreen}
+                options={{ title: 'Card Details' }}
+            />
+            <Stack.Screen 
+                name="SetCompletion" 
+                component={SetCompletionScreen}
+                options={{ title: 'Set Completion' }}
+            />
         </Stack.Navigator>
     </NavigationContainer>
 );

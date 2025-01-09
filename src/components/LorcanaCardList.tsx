@@ -18,6 +18,7 @@ interface LorcanaCardListProps {
     isLoading: boolean;
     onCardPress?: (card: LorcanaCard) => void;
     onAddToCollection?: (card: LorcanaCard) => void;
+    onDeleteCard?: (card: LorcanaCard) => void;
 }
 
 const PriceDisplay = ({ card }: { card: LorcanaCard }) => (
@@ -34,10 +35,11 @@ const PriceDisplay = ({ card }: { card: LorcanaCard }) => (
     </View>
 );
 
-const LorcanaCardItem = ({ card, onPress, onAddToCollection }: { 
+const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: { 
     card: LorcanaCard; 
     onPress?: () => void;
     onAddToCollection?: (card: LorcanaCard) => void;
+    onDelete?: (card: LorcanaCard) => void;
 }) => {
     const [isExpanded, setIsExpanded] = useState(true);
     const [prices, setPrices] = useState<{ 
@@ -97,17 +99,28 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection }: {
                     <Text style={styles.cardName}>{card.Name}</Text>
                     <Text style={styles.setName}>{card.Set_Name}</Text>
                 </View>
-                {onAddToCollection && (
+                <View style={styles.headerButtons}>
+                    {onAddToCollection && (
+                        <TouchableOpacity
+                            style={styles.actionButton}
+                            onPress={(e) => {
+                                e.stopPropagation();
+                                onAddToCollection(card);
+                            }}
+                        >
+                            <Icon name="plus-circle-outline" size={24} color="#2196F3" />
+                        </TouchableOpacity>
+                    )}
                     <TouchableOpacity
-                        style={styles.addButton}
+                        style={[styles.actionButton, { marginLeft: 8 }]}
                         onPress={(e) => {
                             e.stopPropagation();
-                            onAddToCollection(card);
+                            onDelete?.(card);
                         }}
                     >
-                        <Icon name="plus-circle-outline" size={24} color="#2196F3" />
+                        <Icon name="delete-outline" size={24} color="#ff5252" />
                     </TouchableOpacity>
-                )}
+                </View>
             </View>
 
             <View style={styles.cardDetails}>
@@ -180,6 +193,7 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
     isLoading,
     onCardPress,
     onAddToCollection,
+    onDeleteCard,
 }) => {
     if (isLoading) {
         return <ActivityIndicator style={styles.loader} size="large" color="#2196F3" />;
@@ -193,9 +207,10 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
                     card={item}
                     onPress={() => onCardPress?.(item)}
                     onAddToCollection={onAddToCollection}
+                    onDelete={onDeleteCard}
                 />
             )}
-            keyExtractor={(item) => item.id.toString()}
+            keyExtractor={(item) => item.Unique_ID}
             contentContainerStyle={styles.listContainer}
         />
     );
@@ -331,6 +346,9 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: '600',
+    },
+    actionButton: {
+        padding: 4,
     },
 });
 
