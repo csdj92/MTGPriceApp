@@ -6,6 +6,7 @@ import { databaseService } from '../../services/DatabaseService';
 import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardFromCollection } from '../../services/LorcanaService';
 import CardList from '../../components/CardList';
 import LorcanaCardList from '../../components/LorcanaCardList';
+import LorcanaGridView from '../../components/LorcanaGridView';
 import type { ExtendedCard } from '../../types/card';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -22,6 +23,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     const [currentPage, setCurrentPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
     useEffect(() => {
         loadCollection();
@@ -203,25 +205,48 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                             lorcanaCards.reduce((sum, card) => sum + (card.prices?.usd ? parseFloat(card.prices.usd) : 0), 0).toFixed(2) 
                             : (collection?.totalValue || 0).toFixed(2)}
                     </Text>
-                    <TouchableOpacity onPress={toggleAllCards} style={styles.toggleButton}>
-                        <Text style={styles.toggleText}>
-                            {areAllExpanded ? 'Collapse All' : 'Expand All'}
-                        </Text>
-                        <Icon
-                            name={areAllExpanded ? 'chevron-up' : 'chevron-down'}
-                            size={24}
-                            color="#2196F3"
-                        />
-                    </TouchableOpacity>
+                    <View style={styles.headerButtons}>
+                        {collection?.type === 'Lorcana' && (
+                            <TouchableOpacity 
+                                onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')} 
+                                style={styles.viewButton}
+                            >
+                                <Icon
+                                    name={viewMode === 'list' ? 'view-grid' : 'view-list'}
+                                    size={24}
+                                    color="#2196F3"
+                                />
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity onPress={toggleAllCards} style={styles.toggleButton}>
+                            <Text style={styles.toggleText}>
+                                {areAllExpanded ? 'Collapse All' : 'Expand All'}
+                            </Text>
+                            <Icon
+                                name={areAllExpanded ? 'chevron-up' : 'chevron-down'}
+                                size={24}
+                                color="#2196F3"
+                            />
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </View>
             {collection?.type === 'Lorcana' ? (
-                <LorcanaCardList
-                    cards={lorcanaCards}
-                    isLoading={isLoading}
-                    onCardPress={handleCardPress}
-                    onDeleteCard={handleDeleteCard}
-                />
+                viewMode === 'list' ? (
+                    <LorcanaCardList
+                        cards={lorcanaCards}
+                        isLoading={isLoading}
+                        onCardPress={handleCardPress}
+                        onDeleteCard={handleDeleteCard}
+                    />
+                ) : (
+                    <LorcanaGridView
+                        cards={lorcanaCards}
+                        isLoading={isLoading}
+                        onCardPress={handleCardPress}
+                        onDeleteCard={handleDeleteCard}
+                    />
+                )
             ) : (
                 <CardList
                     cards={mtgCards}
@@ -256,6 +281,11 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
     },
+    headerButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
     statsText: {
         fontSize: 16,
         color: '#666',
@@ -269,6 +299,13 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#e0e0e0',
     },
+    viewButton: {
+        padding: 8,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        backgroundColor: '#f5f5f5',
+    },
     toggleText: {
         marginRight: 8,
         color: '#2196F3',
@@ -277,6 +314,11 @@ const styles = StyleSheet.create({
     },
     loadingMore: {
         paddingVertical: 16,
+    },
+    gridPlaceholder: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 

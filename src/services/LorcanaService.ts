@@ -915,7 +915,7 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
             FROM lorcana_cards lc
             INNER JOIN lorcana_collection_cards cc ON lc.Unique_ID = cc.card_id
             WHERE cc.collection_id = ?
-            ORDER BY cc.added_at DESC
+            ORDER BY lc.Card_Num ASC
             LIMIT ? OFFSET ?;
         `, [twentyFourHoursAgo, collectionId, pageSize, offset]);
 
