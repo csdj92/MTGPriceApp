@@ -204,12 +204,17 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     // Effects
     useEffect(() => {
         loadSetCollections();
-    }, [loadSetCollections]);
+    }, []);
 
+    // Add focus listener to refresh collections
     useEffect(() => {
-        const unsubscribe = navigation.addListener('focus', loadSetCollections);
+        const unsubscribe = navigation.addListener('focus', () => {
+            console.log('[SetCompletionScreen] Screen focused, reloading collections...');
+            loadSetCollections();
+        });
+
         return unsubscribe;
-    }, [navigation, loadSetCollections]);
+    }, [navigation]);
 
     useEffect(() => {
         console.log('[SetCompletionScreen] Loading states:', { loadingMtg, loadingLorcana });

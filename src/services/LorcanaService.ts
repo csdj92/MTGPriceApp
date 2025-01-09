@@ -693,15 +693,17 @@ export const addCardToLorcanaCollection = async (cardId: string, collectionId: s
         const db = await getDB();
         const now = new Date().toISOString();
 
-        // Verify the card exists
-        const [cardExists] = await db.executeSql(
-            'SELECT Unique_ID FROM lorcana_cards WHERE Unique_ID = ?',
+        // Get the card details first
+        const [cardDetails] = await db.executeSql(
+            'SELECT * FROM lorcana_cards WHERE Unique_ID = ?',
             [cardId]
         );
 
-        if (cardExists.rows.length === 0) {
+        if (cardDetails.rows.length === 0) {
             throw new Error(`Card ${cardId} not found in database`);
         }
+
+        const card = cardDetails.rows.item(0);
 
         // Verify the collection exists
         const [collectionExists] = await db.executeSql(
@@ -713,7 +715,14 @@ export const addCardToLorcanaCollection = async (cardId: string, collectionId: s
             throw new Error(`Collection ${collectionId} not found`);
         }
 
-        // Use a transaction to ensure both operations complete
+        // Fetch current price
+        const prices = await getLorcanaCardPrice({
+            Name: card.Name,
+            Set_Num: card.Set_Num,
+            Rarity: card.Rarity
+        });
+
+        // Use a transaction to ensure all operations complete
         await db.transaction(async (tx) => {
             // Add to collection_cards table
             await tx.executeSql(
@@ -727,10 +736,10 @@ export const addCardToLorcanaCollection = async (cardId: string, collectionId: s
                 [now, collectionId]
             );
 
-            // Mark card as collected
+            // Mark card as collected and update prices
             await tx.executeSql(
-                'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
-                [cardId]
+                'UPDATE lorcana_cards SET collected = 1, price_usd = ?, price_usd_foil = ?, last_updated = ? WHERE Unique_ID = ?',
+                [prices.usd, prices.usd_foil, now, cardId]
             );
         });
 
@@ -744,7 +753,7 @@ export const addCardToLorcanaCollection = async (cardId: string, collectionId: s
             throw new Error('Card was not added to collection - verification failed');
         }
 
-        console.log(`[LorcanaService] Successfully added card ${cardId} to collection ${collectionId}`);
+        console.log(`[LorcanaService] Successfully added card ${cardId} to collection ${collectionId} with prices:`, prices);
     } catch (error) {
         console.error('[LorcanaService] Error in addCardToLorcanaCollection:', error);
         throw error;
@@ -766,7 +775,50 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
         const db = await getDB();
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-        // Get all collections with their stats in a single query
+        // First, get all collections that need updating (recently modified or have outdated prices)
+        const [collectionsToUpdate] = await db.executeSql(`
+            SELECT DISTINCT c.id, c.updated_at
+            FROM lorcana_collections c
+            INNER JOIN lorcana_collection_cards lcc ON c.id = lcc.collection_id
+            INNER JOIN lorcana_cards lc ON lcc.card_id = lc.Unique_ID
+            WHERE c.name LIKE 'Set: %'
+            AND (
+                c.updated_at > lc.last_updated
+                OR lc.last_updated IS NULL 
+                OR lc.last_updated < ?
+            )
+        `, [twentyFourHoursAgo]);
+
+        // Update prices for collections that need it
+        for (let i = 0; i < collectionsToUpdate.rows.length; i++) {
+            const collection = collectionsToUpdate.rows.item(i);
+            const [cardsToUpdate] = await db.executeSql(`
+                SELECT lc.*
+                FROM lorcana_cards lc
+                INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
+                WHERE lcc.collection_id = ?
+            `, [collection.id]);
+
+            // Update all cards in this collection
+            for (let j = 0; j < cardsToUpdate.rows.length; j++) {
+                const card = cardsToUpdate.rows.item(j);
+                if (card.Name && card.Set_Num && card.Rarity) {
+                    const prices = await getLorcanaCardPrice({
+                        Name: card.Name,
+                        Set_Num: card.Set_Num,
+                        Rarity: card.Rarity
+                    });
+                    if (prices.usd) {
+                        await db.executeSql(
+                            'UPDATE lorcana_cards SET price_usd = ?, price_usd_foil = ?, last_updated = ? WHERE Unique_ID = ?',
+                            [prices.usd, prices.usd_foil, new Date().toISOString(), card.Unique_ID]
+                        );
+                    }
+                }
+            }
+        }
+
+        // Now get all collections with their updated stats
         const [results] = await db.executeSql(`
             WITH CollectionStats AS (
                 SELECT 
@@ -786,14 +838,7 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
                         FROM lorcana_cards lc
                         INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
                         WHERE lcc.collection_id = c.id
-                    ) as total_value,
-                    (
-                        SELECT COUNT(*)
-                        FROM lorcana_cards lc
-                        INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
-                        WHERE lcc.collection_id = c.id
-                        AND (lc.last_updated IS NULL OR lc.last_updated < ?)
-                    ) as cards_needing_update
+                    ) as total_value
                 FROM lorcana_collections c
                 LEFT JOIN (
                     SELECT collection_id, COUNT(*) as collected_count
@@ -811,18 +856,17 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
                 collected_cards,
                 total_cards,
                 total_value,
-                cards_needing_update,
                 CASE 
                     WHEN total_cards > 0 THEN (CAST(collected_cards AS FLOAT) / total_cards) * 100 
                     ELSE 0 
                 END as completion_percentage
             FROM CollectionStats
             ORDER BY name;
-        `, [twentyFourHoursAgo]);
+        `);
 
-        const collections = Array.from({length: results.rows.length}, (_, i) => {
+        return Array.from({length: results.rows.length}, (_, i) => {
             const row = results.rows.item(i);
-            const collection = {
+            return {
                 id: row.id,
                 name: row.name,
                 description: row.description,
@@ -833,50 +877,7 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
                 completionPercentage: row.completion_percentage,
                 totalValue: row.total_value || 0
             };
-
-            // If there are cards needing updates, schedule a background update
-            if (row.cards_needing_update > 0) {
-                // Don't await this - let it run in background
-                (async () => {
-                    try {
-                        const [cardResults] = await db.executeSql(`
-                            SELECT lc.*
-                            FROM lorcana_cards lc
-                            INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
-                            WHERE lcc.collection_id = ?
-                            AND (lc.last_updated IS NULL OR lc.last_updated < ?)
-                            LIMIT 10; -- Update in small batches to avoid overwhelming the API
-                        `, [row.id, twentyFourHoursAgo]);
-
-                        // Update prices in batches
-                        for (let j = 0; j < cardResults.rows.length; j++) {
-                            const card = cardResults.rows.item(j);
-                            if (card.Name && card.Set_Num && card.Rarity) {
-                                const prices = await getLorcanaCardPrice({
-                                    Name: card.Name,
-                                    Set_Num: card.Set_Num,
-                                    Rarity: card.Rarity
-                                });
-                                if (prices.usd) {
-                                    await db.executeSql(
-                                        'UPDATE lorcana_cards SET price_usd = ?, price_usd_foil = ?, last_updated = ? WHERE Unique_ID = ?',
-                                        [prices.usd, prices.usd_foil, new Date().toISOString(), card.Unique_ID]
-                                    );
-                                }
-                                // Add a small delay between API calls
-                                await new Promise(resolve => setTimeout(resolve, 100));
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Error updating collection prices:', error);
-                    }
-                })();
-            }
-
-            return collection;
         });
-
-        return collections;
     } catch (error) {
         console.error('Error getting Lorcana set collections:', error);
         throw error;
