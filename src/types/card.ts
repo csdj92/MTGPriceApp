@@ -43,6 +43,16 @@ export interface ExtendedCard {
         eur?: string | null;
         eurFoil?: string | null;
         tix?: string | null;
+        normal?: number;
+        foil?: number;
+        tcgplayer?: {
+            normal: number;
+            foil: number;
+        };
+        cardmarket?: {
+            normal: number;
+            foil: number;
+        };
     };
     purchaseUrls: {
         tcgplayer?: string;
@@ -55,4 +65,24 @@ export interface ExtendedCard {
     quantity?: number;
     scannedAt?: number;
     isExpanded?: boolean;
+    collected?: boolean;
+    hasNonFoil: boolean;
+    hasFoil: boolean;
+}
+
+export interface OcrResult {
+    text: string;
+    mainName: string;
+    subtype: string | null;
+    isLorcana: boolean;
+}
+
+export interface LorcanaCard extends Card {
+    version: string;  // The subtitle/version part of the card
+    isLorcana: true;
+}
+
+export interface MtgCard extends Card {
+    subtype: string | null;  // The subtype after the em dash in type line
+    isLorcana: false;
 } 

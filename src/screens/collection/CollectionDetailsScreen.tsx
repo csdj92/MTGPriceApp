@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
@@ -7,6 +7,7 @@ import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardF
 import CardList from '../../components/CardList';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import LorcanaGridView from '../../components/LorcanaGridView';
+import MTGGridView from '../../components/MTGGridView';
 import type { ExtendedCard } from '../../types/card';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -18,12 +19,12 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     const [mtgCards, setMtgCards] = useState<ExtendedCard[]>([]);
     const [lorcanaCards, setLorcanaCards] = useState<LorcanaCardWithPrice[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [collection, setCollection] = useState<{ name: string; totalValue: number; type: 'MTG' | 'Lorcana' } | null>(null);
+    const [collection, setCollection] = useState<{ id: string; name: string; totalValue: number; type: 'MTG' | 'Lorcana' } | null>(null);
     const [areAllExpanded, setAreAllExpanded] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
     useEffect(() => {
         loadCollection();
@@ -38,12 +39,21 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
 
             if (mtgCollection) {
                 setCollection({
+                    id: mtgCollection.id,
                     name: mtgCollection.name,
                     totalValue: mtgCollection.totalValue,
                     type: 'MTG'
                 });
                 navigation.setOptions({ title: mtgCollection.name });
-                await loadMoreCards(1, 'MTG');
+                
+                // Extract set code from the description (format: "Collection for [setName] ([setCode])")
+                const setCodeMatch = mtgCollection.description?.match(/\(([^)]+)\)$/);
+                if (setCodeMatch && setCodeMatch[1]) {
+                    const setCode = setCodeMatch[1];
+                    const allSetCards = await databaseService.getSetMissingCards(setCode);
+                    setMtgCards(allSetCards);
+                    setHasMore(false); // Disable pagination since we have all cards
+                }
             } else {
                 // If not found in MTG collections, check Lorcana collections
                 const lorcanaCollections = await getLorcanaSetCollections();
@@ -51,6 +61,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
 
                 if (lorcanaCollection) {
                     setCollection({
+                        id: lorcanaCollection.id,
                         name: lorcanaCollection.name,
                         totalValue: lorcanaCollection.totalValue,
                         type: 'Lorcana'
@@ -151,10 +162,13 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     };
 
-    const handleDeleteCard = async (card: LorcanaCardWithPrice) => {
+    const handleDeleteCard = useCallback(async (card: ExtendedCard | LorcanaCardWithPrice) => {
+        if (!collection) return;
+
+        const cardName = 'name' in card ? card.name : card.Name;
         Alert.alert(
             'Delete Card',
-            `Are you sure you want to remove "${card.Name}" from this collection?`,
+            `Are you sure you want to remove "${cardName}" from this collection?`,
             [
                 {
                     text: 'Cancel',
@@ -165,31 +179,36 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await deleteLorcanaCardFromCollection(card.Unique_ID, collectionId);
-                            setLorcanaCards(prevCards => {
-                                const updatedCards = prevCards.filter(c => c.Unique_ID !== card.Unique_ID);
-                                
-                                // Update total value after deletion
-                                const totalValue = updatedCards.reduce((sum, c) => {
-                                    const price = c.prices?.usd ? parseFloat(c.prices.usd) : 0;
-                                    return sum + price;
-                                }, 0);
-
-                                if (collection) {
-                                    setCollection(prev => prev ? { ...prev, totalValue } : null);
+                            if (collection.type === 'MTG' && 'uuid' in card) {
+                                if (card.uuid) {
+                                    await databaseService.removeCardFromCollection(card.uuid, collection.id);
+                                    setMtgCards(prev => prev.filter(c => c.uuid !== card.uuid));
                                 }
+                            } else if (collection.type === 'Lorcana' && 'Unique_ID' in card) {
+                                await databaseService.removeLorcanaCardFromCollection(card.Unique_ID, collection.id);
+                                setLorcanaCards(prev => {
+                                    const updatedCards = prev.filter(c => c.Unique_ID !== card.Unique_ID);
+                                    
+                                    // Update total value after deletion
+                                    const totalValue = updatedCards.reduce((sum, c) => {
+                                        const price = c.prices?.usd ? parseFloat(c.prices.usd) : 0;
+                                        return sum + price;
+                                    }, 0);
 
-                                return updatedCards;
-                            });
+                                    setCollection(prev => prev ? { ...prev, totalValue } : null);
+                                    
+                                    return updatedCards;
+                                });
+                            }
                         } catch (error) {
                             console.error('Error deleting card:', error);
-                            Alert.alert('Error', 'Failed to delete card');
+                            Alert.alert('Error', 'Failed to delete card from collection');
                         }
                     }
                 }
             ]
         );
-    };
+    }, [collection]);
 
     const cards = collection?.type === 'MTG' ? mtgCards : lorcanaCards;
 
@@ -213,18 +232,16 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                             : (collection?.totalValue || 0).toFixed(2)}
                     </Text>
                     <View style={styles.headerButtons}>
-                        {collection?.type === 'Lorcana' && (
-                            <TouchableOpacity 
-                                onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')} 
-                                style={styles.viewButton}
-                            >
-                                <Icon
-                                    name={viewMode === 'list' ? 'view-grid' : 'view-list'}
-                                    size={24}
-                                    color="#2196F3"
-                                />
-                            </TouchableOpacity>
-                        )}
+                        <TouchableOpacity 
+                            onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')} 
+                            style={styles.viewButton}
+                        >
+                            <Icon
+                                name={viewMode === 'list' ? 'view-grid' : 'view-list'}
+                                size={24}
+                                color="#2196F3"
+                            />
+                        </TouchableOpacity>
                         <TouchableOpacity onPress={toggleAllCards} style={styles.toggleButton}>
                             <Text style={styles.toggleText}>
                                 {areAllExpanded ? 'Collapse All' : 'Expand All'}
@@ -241,7 +258,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
             {collection?.type === 'Lorcana' ? (
                 viewMode === 'list' ? (
                     <LorcanaCardList
-                        cards={lorcanaCards}
+                        cards={lorcanaCards.filter(card => card.collected)}
                         isLoading={isLoading}
                         onCardPress={handleCardPress}
                         onDeleteCard={handleDeleteCard}
@@ -255,18 +272,31 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                     />
                 )
             ) : (
-                <CardList
-                    cards={mtgCards}
-                    isLoading={isLoading}
-                    onCardPress={handleCardPress}
-                    onEndReached={handleEndReached}
-                    onEndReachedThreshold={0.5}
-                    ListFooterComponent={
-                        isLoadingMore ? (
-                            <ActivityIndicator size="small" color="#2196F3" style={styles.loadingMore} />
-                        ) : null
-                    }
-                />
+                viewMode === 'list' ? (
+                    <CardList
+                        cards={mtgCards.filter(card => card.collected)}
+                        isLoading={isLoading}
+                        onCardPress={handleCardPress}
+                        onEndReached={handleEndReached}
+                        onEndReachedThreshold={0.5}
+                        ListFooterComponent={
+                            isLoadingMore ? (
+                                <ActivityIndicator size="small" color="#2196F3" style={styles.loadingMore} />
+                            ) : null
+                        }
+                    />
+                ) : (
+                    <MTGGridView
+                        cards={mtgCards}
+                        isLoading={isLoading}
+                        onCardPress={handleCardPress}
+                        onDeleteCard={card => {
+                            if (card.collected) {
+                                handleDeleteCard(card);
+                            }
+                        }}
+                    />
+                )
             )}
         </View>
     );

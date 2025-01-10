@@ -21,19 +21,63 @@ interface LorcanaCardListProps {
     onDeleteCard?: (card: LorcanaCard) => void;
 }
 
-const PriceDisplay = ({ card }: { card: LorcanaCard }) => (
-    <View style={styles.priceContainer}>
-        {card.price_usd && (
-            <Text style={styles.price}>USD: ${Number(card.price_usd).toFixed(2)}</Text>
-        )}
-        {card.price_usd_foil && (
-            <Text style={styles.price}>Foil: ${Number(card.price_usd_foil).toFixed(2)}</Text>
-        )}
-        {(!card.price_usd && !card.price_usd_foil) && (
-            <Text style={[styles.price, { color: '#666' }]}>No price data available</Text>
-        )}
-    </View>
-);
+const PriceDisplay = ({ card }: { card: LorcanaCard }) => {
+    const [prices, setPrices] = useState<{ 
+        usd: string | null; 
+        usd_foil: string | null;
+    }>({ 
+        usd: card.price_usd || null,
+        usd_foil: card.price_usd_foil || null
+    });
+    const [isLoadingPrices, setIsLoadingPrices] = useState(false);
+
+    useEffect(() => {
+        const fetchPrices = async () => {
+            if (!card.price_usd && !card.price_usd_foil) {
+                setIsLoadingPrices(true);
+                try {
+                    const priceData = await getLorcanaCardPrice({
+                        Name: card.Name,
+                        Set_Num: card.Set_Num,
+                        Rarity: card.Rarity
+                    });
+                    setPrices({
+                        usd: priceData.usd,
+                        usd_foil: priceData.usd_foil
+                    });
+                } catch (error) {
+                    console.error('Error fetching price for card:', error);
+                } finally {
+                    setIsLoadingPrices(false);
+                }
+            }
+        };
+
+        fetchPrices();
+    }, [card.Name, card.Set_Num, card.Rarity, card.price_usd, card.price_usd_foil]);
+
+    if (isLoadingPrices) {
+        return (
+            <View style={styles.priceContainer}>
+                <ActivityIndicator size="small" color="#666" />
+            </View>
+        );
+    }
+
+    return (
+        <View style={styles.priceContainer}>
+            {prices.usd && (
+                <Text style={styles.price}>USD: ${Number(prices.usd).toFixed(2)}</Text>
+            )}
+            {prices.usd_foil && (
+                <Text style={styles.price}>Foil: ${Number(prices.usd_foil).toFixed(2)}</Text>
+            )}
+            {(!prices.usd && !prices.usd_foil) && (
+                <Text style={[styles.price, { color: '#666' }]}>No price data available</Text>
+            )}
+        </View>
+    );
+};
 
 const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: { 
     card: LorcanaCard; 

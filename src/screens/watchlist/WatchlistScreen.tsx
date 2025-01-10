@@ -43,12 +43,15 @@ const WatchlistScreen = () => {
     const [setSearchText, setSetSearchText] = useState('');
     const [isSetLoading, setIsSetLoading] = useState(false);
     const [isSetModalLoading, setIsSetModalLoading] = useState(false);
+    const [imageCache, setImageCache] = useState<{[key: string]: string}>({});
 
     // Add cleanup when screen loses focus
     useEffect(() => {
         const unsubscribe = navigation.addListener('blur', () => {
             setIsSetModalVisible(false);
             setSetSearchText('');
+            setPriceData([]); // Clear data when leaving screen
+            setCurrentPage(1);
         });
 
         return unsubscribe;
@@ -59,6 +62,8 @@ const WatchlistScreen = () => {
         return () => {
             setIsSetModalVisible(false);
             setSetSearchText('');
+            setPriceData([]);
+            setCurrentPage(1);
         };
     }, []);
 
@@ -226,7 +231,8 @@ const WatchlistScreen = () => {
         ensureCacheDirectory();
     }, []);
 
-    const renderCard = useCallback((card: any) => {
+    // Memoize the card rendering function
+    const renderCard = useCallback(({ item: card }: { item: any }) => {
         const formatPrice = (price: number) => price ? `$${price.toFixed(2)}` : 'N/A';
 
         // Get prices from the card's prices object
@@ -258,9 +264,23 @@ const WatchlistScreen = () => {
             let isMounted = true;
             const loadImage = async () => {
                 try {
+                    // Check cache first
+                    const cacheKey = `${card.setCode}_${card.number}`;
+                    if (imageCache[cacheKey]) {
+                        if (isMounted) {
+                            setImageUri(imageCache[cacheKey]);
+                        }
+                        return;
+                    }
+
                     const uri = await getCachedImageUri(card.setCode, card.number);
                     if (isMounted) {
                         setImageUri(uri);
+                        // Update cache
+                        setImageCache(prev => ({
+                            ...prev,
+                            [cacheKey]: uri
+                        }));
                     }
                 } catch (error) {
                     console.error('[WatchlistScreen] Error loading cached image:', error);
@@ -326,14 +346,44 @@ const WatchlistScreen = () => {
                 </Text>
             </TouchableOpacity>
         );
-    }, []);
+    }, [imageCache]);
 
-    const renderSetSection = ({ section }: { section: { setCode: string; data: any[] } }) => (
+    // Memoize section header rendering
+    const renderSetSection = useCallback(({ section }: { section: { setCode: string; data: any[] } }) => (
         <View style={styles.setHeader}>
             <Text style={styles.setTitle}>{section.setCode}</Text>
             <Text style={styles.cardCount}>{section.data.length} cards</Text>
         </View>
-    );
+    ), []);
+
+    // Memoize filtered sets
+    const filteredSets = useMemo(() => {
+        if (sets.length > 0) {
+            return sets.filter(set => 
+                set.name.toLowerCase().includes(setSearchText.toLowerCase()) ||
+                set.code.toLowerCase().includes(setSearchText.toLowerCase())
+            );
+        }
+        return [];
+    }, [sets, setSearchText]);
+
+    // Memoize set item rendering
+    const renderSetItem = useCallback(({ item: set }: { item: SetInfo }) => (
+        <TouchableOpacity
+            key={set.code}
+            style={styles.setItem}
+            onPress={() => {
+                setSelectedSet(set);
+                setIsSetModalVisible(false);
+                setSetSearchText('');
+                loadPriceData('');
+            }}
+        >
+            <Text style={styles.setItemText}>{set.name}</Text>
+            <Text style={styles.setItemCode}>{set.code}</Text>
+            <Text style={styles.setItemCount}>{set.cardCount} cards</Text>
+        </TouchableOpacity>
+    ), [loadPriceData]);
 
     useEffect(() => {
         const verifyDatabase = async () => {
@@ -393,33 +443,6 @@ const WatchlistScreen = () => {
             setIsRefreshing(false);
         }
     };
-
-    const filteredSets = useMemo(() => {
-        if (sets.length > 0) {
-            return sets.filter(set => 
-                set.name.toLowerCase().includes(setSearchText.toLowerCase()) ||
-                set.code.toLowerCase().includes(setSearchText.toLowerCase())
-            );
-        }
-        return [];
-    }, [sets, setSearchText]);
-
-    const renderSetItem = ({ item: set }: { item: SetInfo }) => (
-        <TouchableOpacity
-            key={set.code}
-            style={styles.setItem}
-            onPress={() => {
-                setSelectedSet(set);
-                setIsSetModalVisible(false);
-                setSetSearchText('');
-                loadPriceData('');
-            }}
-        >
-            <Text style={styles.setItemText}>{set.name}</Text>
-            <Text style={styles.setItemCode}>{set.code}</Text>
-            <Text style={styles.setItemCount}>{set.cardCount} cards</Text>
-        </TouchableOpacity>
-    );
 
     const renderSetModal = () => (
         <Modal
@@ -506,30 +529,35 @@ const WatchlistScreen = () => {
                     style={styles.sortButton}
                     onPress={() => setSortBy(prev => prev === 'normal_price' ? 'foil_price' : 'normal_price')}
                 >
-                    <Text>Sort by: {sortBy === 'normal_price' ? 'Normal' : 'Foil'}</Text>
+                    <Icon name="sort" size={20} color="#000" style={styles.buttonIcon} />
+                    <Text style={styles.buttonText}>Sort: {sortBy === 'normal_price' ? 'Normal' : 'Foil'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={[styles.refreshButton, isRefreshing && styles.refreshButtonDisabled]}
+                    style={[styles.actionButton, isRefreshing && styles.refreshButtonDisabled]}
                     onPress={handleRefreshPrices}
                     disabled={isRefreshing}
                 >
                     {isRefreshing ? (
                         <ActivityIndicator size="small" color="#fff" />
                     ) : (
-                        <Icon name="refresh" size={20} color="#fff" />
+                        <>
+                            <Icon name="refresh" size={20} color="#fff" style={styles.buttonIcon} />
+                            <Text style={styles.actionButtonText}>Update</Text>
+                        </>
                     )}
                 </TouchableOpacity>
                 <TouchableOpacity
-                    style={styles.debugButton}
+                    style={styles.actionButton}
                     onPress={() => databaseService.printTenCardsRows()}
                 >
-                    <Icon name="bug" size={20} color="#fff" />
+                    <Icon name="bug" size={20} color="#fff" style={styles.buttonIcon} />
+                    <Text style={styles.actionButtonText}>Debug</Text>
                 </TouchableOpacity>
             </View>
 
             <SectionList
                 sections={priceData}
-                renderItem={({ item }) => renderCard(item)}
+                renderItem={renderCard}
                 renderSectionHeader={renderSetSection}
                 keyExtractor={(item) => item.uuid}
                 onEndReached={() => {
@@ -585,6 +613,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#f5f5f5',
         flexDirection: 'row',
         alignItems: 'center',
+        gap: 8,
     },
     searchInputContainer: {
         flex: 1,
@@ -603,9 +632,14 @@ const styles = StyleSheet.create({
         marginRight: 10,
     },
     sortButton: {
-        padding: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
         backgroundColor: '#fff',
+        paddingHorizontal: 15,
+        paddingVertical: 10,
         borderRadius: 20,
+        minWidth: 120,
+        justifyContent: 'center',
     },
     setHeader: {
         backgroundColor: '#f0f0f0',
@@ -775,7 +809,8 @@ const styles = StyleSheet.create({
         paddingHorizontal: 15,
         paddingVertical: 10,
         borderRadius: 20,
-        marginRight: 10,
+        minWidth: 100,
+        justifyContent: 'center',
     },
     setButtonText: {
         marginRight: 5,
@@ -859,6 +894,27 @@ const styles = StyleSheet.create({
         height: 56,
         borderRadius: 4,
         backgroundColor: '#f5f5f5',
+    },
+    buttonIcon: {
+        marginRight: 4,
+    },
+    buttonText: {
+        color: '#000',
+        fontSize: 14,
+    },
+    actionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2196F3',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 20,
+        minWidth: 90,
+        justifyContent: 'center',
+    },
+    actionButtonText: {
+        color: '#fff',
+        fontSize: 14,
     },
 });
 

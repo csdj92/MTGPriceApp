@@ -9,13 +9,13 @@ import {
   Dimensions,
 } from 'react-native';
 import LiveOcrPreview from './LiveOcrPreview';
-import type { ExtendedCard } from '../types/card';
+import type { ExtendedCard, OcrResult } from '../types/card';
 
 const { LiveOcr } = NativeModules;
 const liveOcrEmitter = new NativeEventEmitter(LiveOcr);
 
 interface CardScannerProps {
-  onTextDetected: (text: string) => void;
+  onTextDetected: (result: OcrResult) => void;
   onError: (error: Error) => void;
   scannedCards: ExtendedCard[];
   totalPrice: number;
@@ -38,9 +38,9 @@ const CardScanner: React.FC<CardScannerProps> = ({
   useEffect(() => {
     checkPermission();
 
-    const subscription = liveOcrEmitter.addListener('LiveOcrResult', (event) => {
+    const subscription = liveOcrEmitter.addListener('LiveOcrResult', (event: OcrResult) => {
       if (event.text && !isPaused) {
-        onTextDetected(event.text);
+        onTextDetected(event);
       }
     });
 
@@ -141,13 +141,6 @@ const CardScanner: React.FC<CardScannerProps> = ({
       <View style={[styles.previewContainer, aspectRatioStyle]}>
         <LiveOcrPreview style={StyleSheet.absoluteFill} isActive={isActive && !isPaused} />
       </View>
-
-      {scannedCards?.length > 0 && (
-        <View style={styles.counterBubble}>
-          <Text style={styles.counterText}>{scannedCards.length}</Text>
-          <Text style={styles.priceText}>${totalPrice.toFixed(2)}</Text>
-        </View>
-      )}
     </View>
   );
 };

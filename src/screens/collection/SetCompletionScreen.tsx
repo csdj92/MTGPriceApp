@@ -10,7 +10,14 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { databaseService } from '../../services/DatabaseService';
-import { getLorcanaSetCollections, ensureLorcanaInitialized, reloadLorcanaCards } from '../../services/LorcanaService';
+import { 
+    getLorcanaSetCollections, 
+    ensureLorcanaInitialized, 
+    reloadLorcanaCards,
+    getLorcanaCollectionCards,
+    deleteLorcanaCardFromCollection,
+    deleteLorcanaCollection
+} from '../../services/LorcanaService';
 import type { Collection } from '../../services/DatabaseService';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
@@ -125,7 +132,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         }, 2000);
     }, []);
 
-    const handleDeleteCollection = useCallback(async (collectionId: string, collectionName: string) => {
+    const handleDeleteCollection = useCallback(async (collectionId: string, collectionName: string, type: string) => {
         Alert.alert(
             'Delete Collection',
             `Are you sure you want to delete "${collectionName}"? This action cannot be undone.`,
@@ -139,7 +146,11 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await databaseService.deleteCollection(collectionId);
+                            if (type === 'MTG') {
+                                await databaseService.deleteCollection(collectionId);
+                            } else {
+                                await deleteLorcanaCollection(collectionId);
+                            }
                             loadSetCollections();
                         } catch (error) {
                             console.error('Error deleting collection:', error);
@@ -173,7 +184,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     const renderSetItem = useCallback(({ item }: { item: SetCollection & { type: string } }) => (
         <SetItem 
             item={item} 
-            onDelete={handleDeleteCollection}
+            onDelete={(id, name) => handleDeleteCollection(id, name, item.type)}
             onPress={handleSetPress}
         />
     ), [handleDeleteCollection, handleSetPress]);

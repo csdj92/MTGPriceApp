@@ -72,7 +72,10 @@ const CollectionsTab: React.FC = () => {
     const renderCollectionItem = ({ item }: { item: Collection }) => (
         <TouchableOpacity
             style={styles.collectionItem}
-            onPress={() => navigation.navigate('CollectionDetails', { collectionId: item.id })}
+            onPress={() => navigation.navigate('CollectionDetails', { 
+                collectionId: item.id,
+                title: item.name
+            })}
         >
             <View style={styles.collectionIcon}>
                 <Icon name="cards" size={24} color="#666" />

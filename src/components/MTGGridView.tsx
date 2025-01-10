@@ -8,17 +8,17 @@ import {
     FlatList,
     Modal,
     ScrollView,
-    Dimensions
+    Dimensions,
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import type { LorcanaCardWithPrice } from '../types/lorcana';
+import type { ExtendedCard } from '../types/card';
 
-interface LorcanaGridViewProps {
-    cards: LorcanaCardWithPrice[];
+interface MTGGridViewProps {
+    cards: ExtendedCard[];
     isLoading: boolean;
-    onCardPress: (card: LorcanaCardWithPrice) => void;
-    onDeleteCard: (card: LorcanaCardWithPrice) => void;
+    onCardPress: (card: ExtendedCard) => void;
+    onDeleteCard: (card: ExtendedCard) => void;
 }
 
 type SortOption = 'name' | 'price' | 'number';
@@ -37,7 +37,99 @@ interface Filters {
 
 const ITEMS_PER_PAGE = 12;
 
-const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
+const getBestPrice = (prices: any, isFoil: boolean = false) => {
+    if (!prices) return 0;
+    
+    // First try USD price
+    if (isFoil && prices.usdFoil) {
+        return parseFloat(prices.usdFoil);
+    }
+    if (!isFoil) {
+        if (prices.usd) {
+            return parseFloat(prices.usd);
+        }
+        // If no normal price, try using foil price as fallback
+        if (prices.usdFoil) {
+            return parseFloat(prices.usdFoil);
+        }
+    }
+    
+    // Then try normal/foil direct price
+    if (isFoil && prices.foil) {
+        return parseFloat(prices.foil);
+    }
+    if (!isFoil) {
+        if (prices.normal) {
+            return parseFloat(prices.normal);
+        }
+        // If no normal price, try using foil price as fallback
+        if (prices.foil) {
+            return parseFloat(prices.foil);
+        }
+    }
+    
+    // Try TCGPlayer
+    if (prices.tcgplayer?.retail) {
+        const tcgPrices = prices.tcgplayer.retail;
+        if (isFoil && tcgPrices.foil) {
+            const dates = Object.keys(tcgPrices.foil);
+            if (dates.length > 0) {
+                const latestDate = dates.sort().pop()!;
+                return tcgPrices.foil[latestDate];
+            }
+        }
+        if (!isFoil) {
+            if (tcgPrices.normal) {
+                const dates = Object.keys(tcgPrices.normal);
+                if (dates.length > 0) {
+                    const latestDate = dates.sort().pop()!;
+                    return tcgPrices.normal[latestDate];
+                }
+            }
+            // If no normal price, try using foil price as fallback
+            if (tcgPrices.foil) {
+                const dates = Object.keys(tcgPrices.foil);
+                if (dates.length > 0) {
+                    const latestDate = dates.sort().pop()!;
+                    return tcgPrices.foil[latestDate];
+                }
+            }
+        }
+    }
+    
+    // Try CardKingdom
+    if (prices.cardkingdom?.retail) {
+        const ckPrices = prices.cardkingdom.retail;
+        if (isFoil && ckPrices.foil) {
+            const dates = Object.keys(ckPrices.foil);
+            if (dates.length > 0) {
+                const latestDate = dates.sort().pop()!;
+                return ckPrices.foil[latestDate];
+            }
+        }
+        if (!isFoil) {
+            if (ckPrices.normal) {
+                const dates = Object.keys(ckPrices.normal);
+                if (dates.length > 0) {
+                    const latestDate = dates.sort().pop()!;
+                    return ckPrices.normal[latestDate];
+                }
+            }
+            // If no normal price, try using foil price as fallback
+            if (ckPrices.foil) {
+                const dates = Object.keys(ckPrices.foil);
+                if (dates.length > 0) {
+                    const latestDate = dates.sort().pop()!;
+                    return ckPrices.foil[latestDate];
+                }
+            }
+        }
+    }
+    
+    return 0;
+};
+
+const MTGGridView: React.FC<MTGGridViewProps> = ({
     cards,
     isLoading,
     onCardPress,
@@ -55,41 +147,37 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [sortBy, setSortBy] = useState<SortOption>('number');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
     const [currentPage, setCurrentPage] = useState(1);
-    const [selectedCard, setSelectedCard] = useState<LorcanaCardWithPrice | null>(null);
+    const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
+    const [showFoil, setShowFoil] = useState(false);
 
     // Filter options
-    const rarityOptions = ['Common', 'Uncommon', 'Rare', 'Super Rare', 'Legendary', 'Enchanted'];
-    const colorOptions = ['Amber', 'Amethyst', 'Emerald', 'Ruby', 'Sapphire', 'Steel'];
+    const rarityOptions = ['common', 'uncommon', 'rare', 'mythic'];
+    const colorOptions = ['White', 'Blue', 'Black', 'Red', 'Green', 'Colorless', 'Multicolor'];
 
     // Filter and sort cards
     const filteredCards = useCallback(() => {
         return cards.filter(card => {
             // Text search
-            if (filters.search && !card.Name?.toLowerCase().includes(filters.search.toLowerCase()) &&
-                !card.Body_Text?.toLowerCase().includes(filters.search.toLowerCase())) {
+            if (filters.search && !card.name?.toLowerCase().includes(filters.search.toLowerCase()) &&
+                !card.text?.toLowerCase().includes(filters.search.toLowerCase())) {
                 return false;
             }
 
             // Collection status filter
-            if (filters.collectionStatus === 'collected' && !card.collected) {
+            if (filters.collectionStatus === 'collected' && !card.quantity) {
                 return false;
             }
-            if (filters.collectionStatus === 'missing' && card.collected) {
+            if (filters.collectionStatus === 'missing' && card.quantity) {
                 return false;
             }
 
             // Rarity filter
-            if (filters.rarities.length > 0 && !filters.rarities.includes(card.Rarity || '')) {
-                return false;
-            }
-
-            // Color filter
-            if (filters.colors.length > 0 && !filters.colors.includes(card.Color || '')) {
+            if (filters.rarities.length > 0 && !filters.rarities.includes(card.rarity?.toLowerCase() || '')) {
                 return false;
             }
 
             // Price range filter
-            const price = card.prices?.usd ? parseFloat(card.prices.usd) : 0;
+            const price = getBestPrice(card.prices);
             if (filters.priceRange.min !== null && price < filters.priceRange.min) {
                 return false;
             }
@@ -102,16 +190,16 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             switch (sortBy) {
                 case 'name':
                     return sortDirection === 'asc' 
-                        ? (a.Name || '').localeCompare(b.Name || '')
-                        : (b.Name || '').localeCompare(a.Name || '');
+                        ? (a.name || '').localeCompare(b.name || '')
+                        : (b.name || '').localeCompare(a.name || '');
                 case 'price':
-                    const priceA = a.prices?.usd ? parseFloat(a.prices.usd) : 0;
-                    const priceB = b.prices?.usd ? parseFloat(b.prices.usd) : 0;
+                    const priceA = getBestPrice(a.prices);
+                    const priceB = getBestPrice(b.prices);
                     return sortDirection === 'asc' ? priceA - priceB : priceB - priceA;
                 case 'number':
                 default:
-                    const numA = a.Card_Num || 0;
-                    const numB = b.Card_Num || 0;
+                    const numA = parseInt(a.collectorNumber || '0');
+                    const numB = parseInt(b.collectorNumber || '0');
                     return sortDirection === 'asc' ? numA - numB : numB - numA;
             }
         });
@@ -124,42 +212,61 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         currentPage * ITEMS_PER_PAGE
     );
 
-    const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => (
-        <TouchableOpacity 
-            style={styles.cardContainer}
-            onPress={() => setSelectedCard(item)}
-        >
-            <View style={styles.cardImageContainer}>
-                <FastImage
-                    source={{ 
-                        uri: item.Image,
-                        priority: FastImage.priority.normal,
-                        cache: FastImage.cacheControl.immutable
-                    }}
-                    style={[
-                        styles.cardImage,
-                        !item.collected && styles.cardImageUncollected
-                    ]}
-                    resizeMode={FastImage.resizeMode.contain}
-                />
-                {!item.collected && (
-                    <View style={styles.missingOverlay}>
-                        <Icon name="plus-circle" size={24} color="white" />
-                        <Text style={styles.missingText}>Missing</Text>
+    const renderCard = ({ item }: { item: ExtendedCard }) => {
+        const imageUrl = item.imageUris?.normal || item.imageUrl;
+        console.log(`[Grid] Card image URL for ${item.name}:`, imageUrl);
+        
+        return (
+            <TouchableOpacity 
+                style={styles.cardContainer}
+                onPress={() => setSelectedCard(item)}
+            >
+                <View style={styles.cardImageContainer}>
+                    <FastImage
+                        source={{ 
+                            uri: imageUrl,
+                            priority: FastImage.priority.normal,
+                            cache: FastImage.cacheControl.immutable
+                        }}
+                        style={[
+                            styles.cardImage,
+                            !item.quantity && styles.cardImageUncollected
+                        ]}
+                        resizeMode={FastImage.resizeMode.contain}
+                    />
+                    {!item.quantity && (
+                        <View style={styles.missingOverlay}>
+                            <Icon name="plus-circle" size={24} color="white" />
+                            <Text style={styles.missingText}>Missing</Text>
+                        </View>
+                    )}
+                    {item.hasFoil && (
+                        <View style={styles.foilIndicator}>
+                            <Icon name="star" size={16} color="#FFD700" />
+                        </View>
+                    )}
+                </View>
+                <View style={[styles.cardInfo, !item.quantity && styles.cardInfoUncollected]}>
+                    <Text style={styles.cardNumber}>#{item.collectorNumber || '0'}</Text>
+                    <Text style={[styles.cardName, !item.quantity && styles.cardNameUncollected]} numberOfLines={1}>
+                        {item.name}
+                    </Text>
+                    <View style={styles.priceContainer}>
+                        {item.hasNonFoil && (
+                            <Text style={[styles.cardPrice, !item.quantity && styles.cardPriceUncollected]}>
+                                ${getBestPrice(item.prices, false).toFixed(2)}
+                            </Text>
+                        )}
+                        {item.hasFoil && (
+                            <Text style={[styles.foilPrice, !item.quantity && styles.cardPriceUncollected]}>
+                                ${getBestPrice(item.prices, true).toFixed(2)} ✨
+                            </Text>
+                        )}
                     </View>
-                )}
-            </View>
-            <View style={[styles.cardInfo, !item.collected && styles.cardInfoUncollected]}>
-                <Text style={styles.cardNumber}>#{item.Card_Num || '0'}</Text>
-                <Text style={[styles.cardName, !item.collected && styles.cardNameUncollected]} numberOfLines={1}>
-                    {item.Name}
-                </Text>
-                <Text style={[styles.cardPrice, !item.collected && styles.cardPriceUncollected]}>
-                    ${item.prices?.usd || '0.00'}
-                </Text>
-            </View>
-        </TouchableOpacity>
-    );
+                </View>
+            </TouchableOpacity>
+        );
+    };
 
     const renderFilters = () => (
         <View style={[styles.filtersPanel, !showFilters && styles.filtersPanelHidden]}>
@@ -247,32 +354,6 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 </View>
             </View>
 
-            <View style={styles.filterSection}>
-                <Text style={styles.filterTitle}>Color</Text>
-                <View style={styles.filterOptions}>
-                    {colorOptions.map(color => (
-                        <TouchableOpacity
-                            key={color}
-                            style={[
-                                styles.filterChip,
-                                filters.colors.includes(color) && styles.filterChipSelected
-                            ]}
-                            onPress={() => setFilters(prev => ({
-                                ...prev,
-                                colors: prev.colors.includes(color)
-                                    ? prev.colors.filter(c => c !== color)
-                                    : [...prev.colors, color]
-                            }))}
-                        >
-                            <Text style={[
-                                styles.filterChipText,
-                                filters.colors.includes(color) && styles.filterChipTextSelected
-                            ]}>{color}</Text>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-            </View>
-
             <TouchableOpacity
                 style={styles.resetButton}
                 onPress={() => setFilters({
@@ -288,60 +369,97 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         </View>
     );
 
-    const renderCardModal = () => (
-        <Modal
-            visible={selectedCard !== null}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={() => setSelectedCard(null)}
-        >
-            <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                    {selectedCard && (
-                        <ScrollView>
-                            <View style={styles.modalImageContainer}>
-                                <FastImage
-                                    source={{ 
-                                        uri: selectedCard.Image,
-                                        priority: FastImage.priority.high,
-                                        cache: FastImage.cacheControl.immutable
-                                    }}
-                                    style={styles.modalImage}
-                                    resizeMode={FastImage.resizeMode.contain}
-                                />
-                                <TouchableOpacity
-                                    style={styles.modalCloseButton}
-                                    onPress={() => setSelectedCard(null)}
-                                >
-                                    <Icon name="close" size={28} color="#666" />
-                                </TouchableOpacity>
-                            </View>
-                            <View style={styles.modalInfo}>
-                                <Text style={styles.modalTitle}>{selectedCard.Name}</Text>
-                                <Text style={styles.modalText}>Set: {selectedCard.Set_Name}</Text>
-                                <Text style={styles.modalText}>Card Number: {selectedCard.Card_Num}</Text>
-                                <Text style={styles.modalText}>Rarity: {selectedCard.Rarity}</Text>
-                                <Text style={styles.modalText}>Color: {selectedCard.Color}</Text>
-                                <Text style={styles.modalText}>Cost: {selectedCard.Cost}</Text>
-                                <Text style={styles.modalText}>Strength/Willpower: {selectedCard.Strength} / {selectedCard.Willpower}</Text>
-                                {selectedCard.Body_Text && (
-                                    <Text style={styles.modalText}>Card Text: {selectedCard.Body_Text}</Text>
-                                )}
-                                {selectedCard.Flavor_Text && (
-                                    <Text style={styles.modalFlavorText}>{selectedCard.Flavor_Text}</Text>
-                                )}
-                                <View style={styles.modalPrices}>
-                                    <Text style={styles.modalPriceTitle}>Prices:</Text>
-                                    <Text style={styles.modalPrice}>Normal: ${selectedCard.prices?.usd || '0.00'}</Text>
-                                    <Text style={styles.modalPrice}>Foil: ${selectedCard.prices?.usd_foil || '0.00'}</Text>
+    const renderCardModal = () => {
+        if (selectedCard) {
+            const baseUrl = selectedCard.imageUris?.normal || selectedCard.imageUrl;
+            const modalImageUrl = `${baseUrl}${showFoil ? '&version=foil' : ''}`;
+            console.log(`[Modal] Card image URL for ${selectedCard.name}:`, {
+                baseUrl,
+                isFoil: showFoil,
+                finalUrl: modalImageUrl
+            });
+        }
+        
+        return (
+            <Modal
+                visible={selectedCard !== null}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => {
+                    setSelectedCard(null);
+                    setShowFoil(false);
+                }}
+            >
+                <View style={styles.modalContainer}>
+                    <View style={styles.modalContent}>
+                        {selectedCard && (
+                            <ScrollView>
+                                <View style={styles.modalImageContainer}>
+                                    <FastImage
+                                        source={{ 
+                                            uri: `${selectedCard.imageUris?.normal || selectedCard.imageUrl}${showFoil ? '&version=foil' : ''}`,
+                                            priority: FastImage.priority.high,
+                                            cache: FastImage.cacheControl.immutable
+                                        }}
+                                        style={styles.modalImage}
+                                        resizeMode={FastImage.resizeMode.contain}
+                                    />
+                                    <TouchableOpacity
+                                        style={styles.modalCloseButton}
+                                        onPress={() => {
+                                            setSelectedCard(null);
+                                            setShowFoil(false);
+                                        }}
+                                    >
+                                        <Icon name="close" size={28} color="#666" />
+                                    </TouchableOpacity>
                                 </View>
-                            </View>
-                        </ScrollView>
-                    )}
+                                <View style={styles.modalInfo}>
+                                    <View style={styles.modalHeader}>
+                                        <Text style={styles.modalTitle}>{selectedCard.name}</Text>
+                                        {selectedCard.hasFoil && (
+                                            <TouchableOpacity 
+                                                style={[styles.foilToggle, showFoil && styles.foilToggleActive]}
+                                                onPress={() => setShowFoil(!showFoil)}
+                                            >
+                                                <Icon 
+                                                    name={showFoil ? "checkbox-marked" : "checkbox-blank-outline"} 
+                                                    size={24} 
+                                                    color={showFoil ? "#FFD700" : "#666"} 
+                                                />
+                                                <Text style={[styles.foilToggleText, showFoil && styles.foilToggleTextActive]}>
+                                                    Foil
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                    <Text style={styles.modalText}>Set: {selectedCard.setName}</Text>
+                                    <Text style={styles.modalText}>Card Number: {selectedCard.collectorNumber}</Text>
+                                    <Text style={styles.modalText}>Rarity: {selectedCard.rarity}</Text>
+                                    <Text style={styles.modalText}>Type: {selectedCard.type}</Text>
+                                    {selectedCard.manaCost && (
+                                        <Text style={styles.modalText}>Mana Cost: {selectedCard.manaCost}</Text>
+                                    )}
+                                    {selectedCard.text && (
+                                        <Text style={styles.modalText}>Card Text: {selectedCard.text}</Text>
+                                    )}
+                                    <View style={styles.modalPrices}>
+                                        <Text style={styles.modalPriceTitle}>Prices:</Text>
+                                        {selectedCard.hasNonFoil && (
+                                            <Text style={styles.modalPrice}>Normal: ${getBestPrice(selectedCard.prices, false).toFixed(2)}</Text>
+                                        )}
+                                        {selectedCard.hasFoil && (
+                                            <Text style={styles.modalPrice}>Foil: ${getBestPrice(selectedCard.prices, true).toFixed(2)}</Text>
+                                        )}
+                                    </View>
+                                </View>
+                            </ScrollView>
+                        )}
+                    </View>
                 </View>
-            </View>
-        </Modal>
-    );
+            </Modal>
+        );
+    };
 
     return (
         <View style={styles.container}>
@@ -426,7 +544,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             <FlatList
                 data={paginatedCards}
                 renderItem={renderCard}
-                keyExtractor={item => item.Unique_ID || ''}
+                keyExtractor={item => item.id}
                 numColumns={3}
                 contentContainerStyle={styles.grid}
             />
@@ -622,17 +740,11 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         marginTop: 4,
     },
-    cardInfoUncollected: {
-        opacity: 0.7,
-    },
-    cardNameUncollected: {
-        color: '#999',
-    },
-    cardPriceUncollected: {
-        color: '#999',
-    },
     cardInfo: {
         padding: 4,
+    },
+    cardInfoUncollected: {
+        opacity: 0.7,
     },
     cardNumber: {
         fontSize: 10,
@@ -644,9 +756,15 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         marginBottom: 2,
     },
+    cardNameUncollected: {
+        color: '#999',
+    },
     cardPrice: {
         fontSize: 12,
         color: '#666',
+    },
+    cardPriceUncollected: {
+        color: '#999',
     },
     pagination: {
         flexDirection: 'row',
@@ -717,12 +835,6 @@ const styles = StyleSheet.create({
         fontSize: 16,
         marginBottom: 8,
     },
-    modalFlavorText: {
-        fontSize: 16,
-        fontStyle: 'italic',
-        color: '#666',
-        marginBottom: 8,
-    },
     modalPrices: {
         marginTop: 16,
     },
@@ -735,6 +847,48 @@ const styles = StyleSheet.create({
         fontSize: 16,
         marginBottom: 4,
     },
+    foilIndicator: {
+        position: 'absolute',
+        top: 4,
+        right: 4,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        borderRadius: 12,
+        padding: 4,
+    },
+    priceContainer: {
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 2,
+    },
+    foilPrice: {
+        fontSize: 12,
+        color: '#666',
+        fontStyle: 'italic',
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    foilToggle: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 8,
+        borderRadius: 4,
+        backgroundColor: '#f5f5f5',
+        gap: 4,
+    },
+    foilToggleActive: {
+        backgroundColor: '#2196F3',
+    },
+    foilToggleText: {
+        fontSize: 14,
+        color: '#666',
+    },
+    foilToggleTextActive: {
+        color: 'white',
+    },
 });
 
-export default LorcanaGridView; 
+export default MTGGridView; 

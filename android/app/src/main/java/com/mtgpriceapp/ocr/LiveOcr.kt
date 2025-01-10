@@ -166,58 +166,101 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                 textRecognizer.process(inputImage)
                                     .addOnSuccessListener(executor) { text ->
                                         if (isSessionActive && previewSurface != null) {
-                                            Log.d(TAG, "Raw OCR blocks: ${
-                                                text.textBlocks.joinToString("\n") { it.text }
-                                            }")
-
-                                            val candidates = text.textBlocks
-                                                .asSequence()
-                                                .map { it.text.trim() }
-                                                // Basic length check
-                                                .filter { it.length in 3..50 }
-                                                // Exclude digits, slashes, set codes, mana costs, etc.
-                                                .filter { !it.contains(Regex("[\\d/]")) }
-                                                // Remove lines with typical MTG or Lorcana card types / keywords
-                                                .filter {
-                                                    !it.contains(
-                                                        Regex(
-                                                            "(?i)(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker|" + 
-                                                            "Choose one|Target opponent|Legendary|Hero|Villian|" + // Lorcana might have "Villain" or "Hero"
-                                                            "Action|Character|Item|Song|Dreamborn|Floodborn|Storyborn|Shift|Exert|Evasive|" +
-                                                            "Kicker|Flash|Wizards of the Coast|\\u2122|\\u00A9|" + 
-                                                            "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" + 
-                                                            "counter|dies|enters|destroy|exile|return|flying|" +
-                                                            "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
-                                                            "Power|Toughness|" + // just in case
-                                                            "FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE)" // known artists or set codes you want to exclude
-                                                        )
-                                                    )
+                                            // Debug log all blocks and lines
+                                            text.textBlocks.forEachIndexed { blockIndex, block ->
+                                                Log.d(TAG, "Block $blockIndex: '${block.text}'")
+                                                block.lines.forEachIndexed { lineIndex, line ->
+                                                    Log.d(TAG, "  line $lineIndex: '${line.text}'")
                                                 }
-                                                // Exclude curly braces or other bracket artifacts
-                                                .filter { !it.contains(Regex("[{}\\[\\]]")) }
-                                                // Must be mostly letters, spaces, punctuation like apostrophes or hyphens
-                                                .filter { it.matches(Regex("[A-Za-z\\s,'’‘\\-]+")) }
+                                            }
+
+                                            // Common keyword filter for both formats
+                                            val keywordFilter = Regex("(?i)(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker|" + 
+                                                "Choose one|Target opponent|Legendary|Hero|Villian|" + // Lorcana might have "Villain" or "Hero"
+                                                "Action|Character|Item|Song|Dreamborn|Floodborn|Storyborn|Shift|Exert|Evasive|" +
+                                                "Kicker|Flash|Wizards of the Coast|\\u2122|\\u00A9|" + 
+                                                "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" + 
+                                                "counter|dies|enters|destroy|exile|return|flying|" +
+                                                "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
+                                                "Power|Toughness|" + // just in case
+                                                "FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE)")
+
+                                            // Flatten all lines from all blocks
+                                            val allLines = text.textBlocks.flatMap { block ->
+                                                block.lines.map { it.text.trim() }
+                                            }.filter { it.isNotEmpty() }
+
+                                            Log.d(TAG, "All flattened lines: ${allLines.joinToString("\n")}")
+
+                                            val candidates = allLines
+                                                .asSequence()
+                                                .windowed(2)
+                                                .flatMap { lines ->
+                                                    val results = mutableListOf<Triple<String, String?, Boolean>>()
+                                                    
+                                                    val nameCandidate = lines[0].trim()
+                                                    val versionCandidate = lines[1].trim()
+                                                    
+                                                    Log.d(TAG, "Checking line pair: name='$nameCandidate' | version='$versionCandidate'")
+                                                    
+                                                    // Try Lorcana format (UPPERCASE - Version)
+                                                    if (nameCandidate.matches(Regex("[A-Z][A-Z\\s']+")) && 
+                                                        !nameCandidate.contains(keywordFilter)) {
+                                                        
+                                                        // Check if next line is a valid version string
+                                                        if (versionCandidate.matches(Regex("[A-Za-z][A-Za-z\\s\\-']+")) &&
+                                                            !versionCandidate.contains(keywordFilter)) {
+                                                            Log.d(TAG, "Found Lorcana card: $nameCandidate with version: $versionCandidate")
+                                                            results.add(Triple(nameCandidate, versionCandidate, true))
+                                                        }
+                                                    }
+                                                    
+                                                    // Only try MTG format if we haven't found a Lorcana card
+                                                    if (results.isEmpty()) {
+                                                        // Main card title (e.g. "Liliana of the Veil")
+                                                        if (nameCandidate.matches(Regex("[A-Z][a-zA-Z\\s,''\\-]+")) &&
+                                                            !nameCandidate.contains(keywordFilter)) {
+                                                            results.add(Triple(nameCandidate, null, false))
+                                                        }
+                                                    }
+                                                    
+                                                    results
+                                                }
                                                 .toList()
 
                                             Log.d(TAG, "Filtered candidates: $candidates")
 
-                                            // Choose best candidate by scoring
-                                            val bestName = candidates.maxByOrNull { computeNameScore(it) }
-
-                                            if (!bestName.isNullOrBlank() && bestName != lastDetectedName) {
-                                                Log.d(TAG, "Selected card name: $bestName")
-                                                // small delay to reduce spamming
-                                                Thread.sleep(250)
-
-                                                lastDetectedName = bestName
-                                                val params = Arguments.createMap().apply {
-                                                    putString("text", bestName)
+                                            // Choose best candidate
+                                            val bestCandidate = candidates.firstOrNull()
+                                            
+                                            if (bestCandidate != null) {
+                                                val (name, subtype, isLorcana) = bestCandidate
+                                                
+                                                val fullName = when {
+                                                    isLorcana && subtype != null -> "$name - $subtype"
+                                                    !isLorcana && subtype != null -> "$name ($subtype)"
+                                                    else -> name
                                                 }
-                                                reactApplicationContext
-                                                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                                                    .emit("LiveOcrResult", params)
 
-                                                Log.d(TAG, "Card name detected: $bestName")
+                                                if (fullName != lastDetectedName) {
+                                                    Log.d(TAG, "Selected card name: $fullName")
+                                                    // small delay to reduce spamming 1 sec
+                                                    Thread.sleep(1000)
+
+                                                    lastDetectedName = fullName
+                                                    val params = Arguments.createMap().apply {
+                                                        putString("text", fullName)
+                                                        putString("mainName", name)
+                                                        putString("subtype", subtype)
+                                                        putBoolean("isLorcana", isLorcana)
+                                                    }
+                                                    Log.d(TAG, "Emitting OCR result: mainName=$name, subtype=$subtype, isLorcana=$isLorcana")
+                                                    reactApplicationContext
+                                                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                                                        .emit("LiveOcrResult", params)
+
+                                                    Log.d(TAG, "Card name detected: $fullName")
+                                                }
                                             }
                                         }
                                     }
