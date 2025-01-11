@@ -214,8 +214,6 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
 
     const renderCard = ({ item }: { item: ExtendedCard }) => {
         const imageUrl = item.imageUris?.normal || item.imageUrl;
-        console.log(`[Grid] Card image URL for ${item.name}:`, imageUrl);
-        
         return (
             <TouchableOpacity 
                 style={styles.cardContainer}
@@ -369,97 +367,85 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
         </View>
     );
 
-    const renderCardModal = () => {
-        if (selectedCard) {
-            const baseUrl = selectedCard.imageUris?.normal || selectedCard.imageUrl;
-            const modalImageUrl = `${baseUrl}${showFoil ? '&version=foil' : ''}`;
-            console.log(`[Modal] Card image URL for ${selectedCard.name}:`, {
-                baseUrl,
-                isFoil: showFoil,
-                finalUrl: modalImageUrl
-            });
-        }
-        
-        return (
-            <Modal
-                visible={selectedCard !== null}
-                animationType="slide"
-                transparent={true}
-                onRequestClose={() => {
-                    setSelectedCard(null);
-                    setShowFoil(false);
-                }}
-            >
-                <View style={styles.modalContainer}>
-                    <View style={styles.modalContent}>
-                        {selectedCard && (
-                            <ScrollView>
-                                <View style={styles.modalImageContainer}>
-                                    <FastImage
-                                        source={{ 
-                                            uri: `${selectedCard.imageUris?.normal || selectedCard.imageUrl}${showFoil ? '&version=foil' : ''}`,
-                                            priority: FastImage.priority.high,
-                                            cache: FastImage.cacheControl.immutable
-                                        }}
-                                        style={styles.modalImage}
-                                        resizeMode={FastImage.resizeMode.contain}
-                                    />
-                                    <TouchableOpacity
-                                        style={styles.modalCloseButton}
-                                        onPress={() => {
-                                            setSelectedCard(null);
-                                            setShowFoil(false);
-                                        }}
-                                    >
-                                        <Icon name="close" size={28} color="#666" />
-                                    </TouchableOpacity>
-                                </View>
-                                <View style={styles.modalInfo}>
-                                    <View style={styles.modalHeader}>
-                                        <Text style={styles.modalTitle}>{selectedCard.name}</Text>
-                                        {selectedCard.hasFoil && (
-                                            <TouchableOpacity 
-                                                style={[styles.foilToggle, showFoil && styles.foilToggleActive]}
-                                                onPress={() => setShowFoil(!showFoil)}
-                                            >
-                                                <Icon 
-                                                    name={showFoil ? "checkbox-marked" : "checkbox-blank-outline"} 
-                                                    size={24} 
-                                                    color={showFoil ? "#FFD700" : "#666"} 
-                                                />
-                                                <Text style={[styles.foilToggleText, showFoil && styles.foilToggleTextActive]}>
-                                                    Foil
-                                                </Text>
-                                            </TouchableOpacity>
-                                        )}
-                                    </View>
-                                    <Text style={styles.modalText}>Set: {selectedCard.setName}</Text>
-                                    <Text style={styles.modalText}>Card Number: {selectedCard.collectorNumber}</Text>
-                                    <Text style={styles.modalText}>Rarity: {selectedCard.rarity}</Text>
-                                    <Text style={styles.modalText}>Type: {selectedCard.type}</Text>
-                                    {selectedCard.manaCost && (
-                                        <Text style={styles.modalText}>Mana Cost: {selectedCard.manaCost}</Text>
+    const renderCardModal = () => (
+        <Modal
+            visible={selectedCard !== null}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={() => {
+                setSelectedCard(null);
+                setShowFoil(false);
+            }}
+        >
+            <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                    {selectedCard && (
+                        <ScrollView>
+                            <View style={styles.modalImageContainer}>
+                                <FastImage
+                                    source={{ 
+                                        uri: `${selectedCard.imageUris?.normal || selectedCard.imageUrl}${showFoil ? '&version=foil' : ''}`,
+                                        priority: FastImage.priority.high,
+                                        cache: FastImage.cacheControl.immutable
+                                    }}
+                                    style={styles.modalImage}
+                                    resizeMode={FastImage.resizeMode.contain}
+                                />
+                                <TouchableOpacity
+                                    style={styles.modalCloseButton}
+                                    onPress={() => {
+                                        setSelectedCard(null);
+                                        setShowFoil(false);
+                                    }}
+                                >
+                                    <Icon name="close" size={28} color="#666" />
+                                </TouchableOpacity>
+                            </View>
+                            <View style={styles.modalInfo}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>{selectedCard.name}</Text>
+                                    {selectedCard.hasFoil && (
+                                        <TouchableOpacity 
+                                            style={[styles.foilToggle, showFoil && styles.foilToggleActive]}
+                                            onPress={() => setShowFoil(!showFoil)}
+                                        >
+                                            <Icon 
+                                                name={showFoil ? "checkbox-marked" : "checkbox-blank-outline"} 
+                                                size={24} 
+                                                color={showFoil ? "#FFD700" : "#666"} 
+                                            />
+                                            <Text style={[styles.foilToggleText, showFoil && styles.foilToggleTextActive]}>
+                                                Foil
+                                            </Text>
+                                        </TouchableOpacity>
                                     )}
-                                    {selectedCard.text && (
-                                        <Text style={styles.modalText}>Card Text: {selectedCard.text}</Text>
-                                    )}
-                                    <View style={styles.modalPrices}>
-                                        <Text style={styles.modalPriceTitle}>Prices:</Text>
-                                        {selectedCard.hasNonFoil && (
-                                            <Text style={styles.modalPrice}>Normal: ${getBestPrice(selectedCard.prices, false).toFixed(2)}</Text>
-                                        )}
-                                        {selectedCard.hasFoil && (
-                                            <Text style={styles.modalPrice}>Foil: ${getBestPrice(selectedCard.prices, true).toFixed(2)}</Text>
-                                        )}
-                                    </View>
                                 </View>
-                            </ScrollView>
-                        )}
-                    </View>
+                                <Text style={styles.modalText}>Set: {selectedCard.setName}</Text>
+                                <Text style={styles.modalText}>Card Number: {selectedCard.collectorNumber}</Text>
+                                <Text style={styles.modalText}>Rarity: {selectedCard.rarity}</Text>
+                                <Text style={styles.modalText}>Type: {selectedCard.type}</Text>
+                                {selectedCard.manaCost && (
+                                    <Text style={styles.modalText}>Mana Cost: {selectedCard.manaCost}</Text>
+                                )}
+                                {selectedCard.text && (
+                                    <Text style={styles.modalText}>Card Text: {selectedCard.text}</Text>
+                                )}
+                                <View style={styles.modalPrices}>
+                                    <Text style={styles.modalPriceTitle}>Prices:</Text>
+                                    {selectedCard.hasNonFoil && (
+                                        <Text style={styles.modalPrice}>Normal: ${getBestPrice(selectedCard.prices, false).toFixed(2)}</Text>
+                                    )}
+                                    {selectedCard.hasFoil && (
+                                        <Text style={styles.modalPrice}>Foil: ${getBestPrice(selectedCard.prices, true).toFixed(2)}</Text>
+                                    )}
+                                </View>
+                            </View>
+                        </ScrollView>
+                    )}
                 </View>
-            </Modal>
-        );
-    };
+            </View>
+        </Modal>
+    );
 
     return (
         <View style={styles.container}>

@@ -13,7 +13,7 @@ import {
     Image,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { databaseService } from '../../services/DatabaseService';
 import { scryfallService } from '../../services/ScryfallService';
 import CardList from '../../components/CardList';
@@ -45,67 +45,15 @@ const WatchlistScreen = () => {
     const [isSetModalLoading, setIsSetModalLoading] = useState(false);
     const [imageCache, setImageCache] = useState<{[key: string]: string}>({});
 
-    // Add cleanup when screen loses focus
+    // Remove the cleanup effects that clear data
     useEffect(() => {
         const unsubscribe = navigation.addListener('blur', () => {
             setIsSetModalVisible(false);
             setSetSearchText('');
-            setPriceData([]); // Clear data when leaving screen
-            setCurrentPage(1);
         });
 
         return unsubscribe;
     }, [navigation]);
-
-    // Add cleanup when component unmounts
-    useEffect(() => {
-        return () => {
-            setIsSetModalVisible(false);
-            setSetSearchText('');
-            setPriceData([]);
-            setCurrentPage(1);
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!databaseService.isMTGJsonDatabaseInitialized()) {
-            console.log('[WatchlistScreen] Database not initialized, skipping set load');
-            return;
-        }
-
-        const loadSets = async () => {
-            try {
-                setIsSetModalLoading(true);
-                console.log('[WatchlistScreen] Loading sets...');
-                const setList = await databaseService.getSetList();
-                console.log('[WatchlistScreen] Loaded sets:', setList.length);
-                if (setList.length === 0) {
-                    console.log('[WatchlistScreen] No sets found, checking database state...');
-                    await databaseService.verifyDatabaseState();
-                    // Try loading sets again
-                    const retrySetList = await databaseService.getSetList();
-                    console.log('[WatchlistScreen] Retry loaded sets:', retrySetList.length);
-                    setSets(retrySetList);
-                } else {
-                    setSets(setList);
-                }
-            } catch (error) {
-                console.error('[WatchlistScreen] Error loading sets:', error);
-            } finally {
-                setIsSetModalLoading(false);
-            }
-        };
-
-        loadSets();
-    }, []);
-
-    const handleSetModalOpen = () => {
-        if (!databaseService.isMTGJsonDatabaseInitialized()) {
-            console.log('[WatchlistScreen] Database not initialized, cannot open set modal');
-            return;
-        }
-        setIsSetModalVisible(true);
-    };
 
     const loadPriceData = useCallback(async (query: string, isSearchUpdate = false) => {
         if (selectedSet) {
@@ -170,7 +118,66 @@ const WatchlistScreen = () => {
             setIsSearching(false);
             setIsSetLoading(false);
         }
-    }, [currentPage, sortBy, selectedSet]);
+    }, [currentPage, sortBy, selectedSet, PAGE_SIZE]);
+
+    // Add useFocusEffect to load data when screen comes into focus
+    useFocusEffect(
+        useCallback(() => {
+            const loadInitialData = async () => {
+                if (!databaseService.isMTGJsonDatabaseInitialized()) {
+                    console.log('[WatchlistScreen] Database not initialized, initializing...');
+                    const isValid = await databaseService.verifyDatabaseState();
+                    if (!isValid) {
+                        console.log('[WatchlistScreen] Database verification failed, forcing price refresh...');
+                        await handleRefreshPrices();
+                    }
+                }
+                loadPriceData(searchQuery, false);
+            };
+
+            loadInitialData();
+        }, [searchQuery, loadPriceData])
+    );
+
+    useEffect(() => {
+        if (!databaseService.isMTGJsonDatabaseInitialized()) {
+            console.log('[WatchlistScreen] Database not initialized, skipping set load');
+            return;
+        }
+
+        const loadSets = async () => {
+            try {
+                setIsSetModalLoading(true);
+                console.log('[WatchlistScreen] Loading sets...');
+                const setList = await databaseService.getSetList();
+                console.log('[WatchlistScreen] Loaded sets:', setList.length);
+                if (setList.length === 0) {
+                    console.log('[WatchlistScreen] No sets found, checking database state...');
+                    await databaseService.verifyDatabaseState();
+                    // Try loading sets again
+                    const retrySetList = await databaseService.getSetList();
+                    console.log('[WatchlistScreen] Retry loaded sets:', retrySetList.length);
+                    setSets(retrySetList);
+                } else {
+                    setSets(setList);
+                }
+            } catch (error) {
+                console.error('[WatchlistScreen] Error loading sets:', error);
+            } finally {
+                setIsSetModalLoading(false);
+            }
+        };
+
+        loadSets();
+    }, []);
+
+    const handleSetModalOpen = () => {
+        if (!databaseService.isMTGJsonDatabaseInitialized()) {
+            console.log('[WatchlistScreen] Database not initialized, cannot open set modal');
+            return;
+        }
+        setIsSetModalVisible(true);
+    };
 
     // Debounced search function with immediate execution for set: queries
     const debouncedSearch = useCallback(

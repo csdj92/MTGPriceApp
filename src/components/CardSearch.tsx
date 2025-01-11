@@ -180,38 +180,40 @@ const CardSearch: React.FC<CardSearchProps> = ({
                 <ActivityIndicator style={styles.loader} size="small" color="#2196F3" />
             )}
 
-            {showSuggestions && suggestions.length > 0 && searchMode === 'mtg' && (
-                <View style={styles.suggestionsList}>
-                    {suggestions.map((suggestion) => (
-                        <TouchableOpacity
-                            key={suggestion}
-                            style={styles.suggestionItem}
-                            onPress={() => handleSuggestionSelect(suggestion)}
-                        >
-                            <Icon name="card-search" size={20} color="#666" style={styles.suggestionIcon} />
-                            <Text style={styles.suggestionText}>{suggestion}</Text>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-            )}
+            <View style={styles.resultsContainer}>
+                {showSuggestions && suggestions.length > 0 && searchMode === 'mtg' && (
+                    <View style={styles.suggestionsList}>
+                        {suggestions.map((suggestion) => (
+                            <TouchableOpacity
+                                key={suggestion}
+                                style={styles.suggestionItem}
+                                onPress={() => handleSuggestionSelect(suggestion)}
+                            >
+                                <Icon name="card-search" size={20} color="#666" style={styles.suggestionIcon} />
+                                <Text style={styles.suggestionText}>{suggestion}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                )}
 
-            {showResults && searchResults.length > 0 && !showSuggestions && (
-                searchMode === 'mtg' ? (
-                    <CardList
-                        cards={searchResults}
-                        isLoading={isLoading}
-                        onCardPress={onCardSelect}
-                        onAddToCollection={onAddToCollection}
-                    />
-                ) : (
-                    <LorcanaCardList
-                        cards={searchResults}
-                        isLoading={isLoading}
-                        onCardPress={onCardSelect}
-                        onAddToCollection={onAddToCollection}
-                    />
-                )
-            )}
+                {showResults && searchResults.length > 0 && !showSuggestions && (
+                    searchMode === 'mtg' ? (
+                        <CardList
+                            cards={searchResults}
+                            isLoading={isLoading}
+                            onCardPress={onCardSelect}
+                            onAddToCollection={onAddToCollection}
+                        />
+                    ) : (
+                        <LorcanaCardList
+                            cards={searchResults}
+                            isLoading={isLoading}
+                            onCardPress={onCardSelect}
+                            onAddToCollection={onAddToCollection}
+                        />
+                    )
+                )}
+            </View>
         </View>
     );
 };
@@ -219,6 +221,7 @@ const CardSearch: React.FC<CardSearchProps> = ({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        backgroundColor: '#f5f5f5',
     },
     tabContainer: {
         flexDirection: 'row',
@@ -247,10 +250,15 @@ const styles = StyleSheet.create({
     searchBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#fff',
         borderRadius: 8,
         padding: 8,
         marginBottom: 8,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 1.41,
     },
     searchIcon: {
         marginRight: 8,
@@ -267,15 +275,21 @@ const styles = StyleSheet.create({
     loader: {
         marginVertical: 8,
     },
+    resultsContainer: {
+        flex: 1,
+        backgroundColor: '#fff',
+        borderRadius: 8,
+        elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 1.41,
+        overflow: 'hidden',
+    },
     suggestionsList: {
         maxHeight: 200,
         backgroundColor: 'white',
         borderRadius: 8,
-        elevation: 4,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
     },
     suggestionItem: {
         flexDirection: 'row',

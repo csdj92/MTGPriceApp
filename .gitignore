@@ -76,3 +76,4 @@ yarn-error.log
 # SQLite database files
 android/app/src/main/assets/AllPrintings.sqlite
 *.sqlite
+*.db

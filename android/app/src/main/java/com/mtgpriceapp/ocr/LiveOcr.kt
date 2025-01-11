@@ -179,7 +179,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                                 "Choose one|Target opponent|Legendary|Hero|Villian|" + // Lorcana might have "Villain" or "Hero"
                                                 "Action|Character|Item|Song|Dreamborn|Floodborn|Storyborn|Shift|Exert|Evasive|" +
                                                 "Kicker|Flash|Wizards of the Coast|\\u2122|\\u00A9|" + 
-                                                "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" + 
+                                                "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" +
                                                 "counter|dies|enters|destroy|exile|return|flying|" +
                                                 "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
                                                 "Power|Toughness|" + // just in case
@@ -244,8 +244,8 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
 
                                                 if (fullName != lastDetectedName) {
                                                     Log.d(TAG, "Selected card name: $fullName")
-                                                    // small delay to reduce spamming 1 sec
-                                                    Thread.sleep(1000)
+                                                    // small delay to reduce spamming 1.75 sec
+                                                    Thread.sleep(1750)
 
                                                     lastDetectedName = fullName
                                                     val params = Arguments.createMap().apply {

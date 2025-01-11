@@ -7,8 +7,10 @@ import {
     Switch,
     ScrollView,
     Alert,
+    ActivityIndicator,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { databaseService } from '../../services/DatabaseService';
 
 interface SettingsSectionProps {
     title: string;
@@ -65,14 +67,13 @@ const SettingsScreen = () => {
     const [notifications, setNotifications] = useState(true);
     const [priceAlerts, setPriceAlerts] = useState(true);
     const [darkMode, setDarkMode] = useState(false);
+    const [isRebuilding, setIsRebuilding] = useState(false);
 
     const handleBackup = () => {
-        // TODO: Implement backup functionality
         Alert.alert('Coming Soon', 'Backup functionality will be available in a future update.');
     };
 
     const handleRestore = () => {
-        // TODO: Implement restore functionality
         Alert.alert('Coming Soon', 'Restore functionality will be available in a future update.');
     };
 
@@ -90,6 +91,36 @@ const SettingsScreen = () => {
                     style: 'destructive',
                     onPress: () => {
                         // TODO: Implement clear data functionality
+                    },
+                },
+            ]
+        );
+    };
+
+    const handleRebuildDatabase = async () => {
+        Alert.alert(
+            'Rebuild Database',
+            'Are you sure you want to rebuild the MTG database? This will download the latest data from MTGJson. This process may take several minutes.',
+            [
+                {
+                    text: 'Cancel',
+                    style: 'cancel',
+                },
+                {
+                    text: 'Rebuild',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            setIsRebuilding(true);
+                            await databaseService.downloadMTGJsonDatabase();
+                            await databaseService.updatePrices({});
+                            Alert.alert('Success', 'Database has been rebuilt successfully.');
+                        } catch (error) {
+                            console.error('Error rebuilding database:', error);
+                            Alert.alert('Error', 'Failed to rebuild database. Please try again.');
+                        } finally {
+                            setIsRebuilding(false);
+                        }
                     },
                 },
             ]
@@ -120,6 +151,21 @@ const SettingsScreen = () => {
                     value={darkMode}
                     onValueChange={setDarkMode}
                 />
+            </SettingsSection>
+
+            <SettingsSection title="Database Management">
+                <SettingsItem
+                    icon="database-refresh"
+                    title="Rebuild Database"
+                    subtitle="Download latest MTG data"
+                    onPress={handleRebuildDatabase}
+                />
+                {isRebuilding && (
+                    <View style={styles.rebuildingContainer}>
+                        <ActivityIndicator size="small" color="#2196F3" />
+                        <Text style={styles.rebuildingText}>Rebuilding database...</Text>
+                    </View>
+                )}
             </SettingsSection>
 
             <SettingsSection title="Data Management">
@@ -211,6 +257,18 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#666',
         marginTop: 2,
+    },
+    rebuildingContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+        backgroundColor: '#f5f5f5',
+    },
+    rebuildingText: {
+        marginLeft: 8,
+        fontSize: 14,
+        color: '#666',
     },
 });
 

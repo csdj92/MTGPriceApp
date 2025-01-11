@@ -1587,11 +1587,34 @@ class DatabaseService {
         }
 
         try {
+            // Create indexes if they don't exist
+            await this.mtgJsonDb.executeSql(`
+                CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price);
+                CREATE INDEX IF NOT EXISTS idx_prices_foil ON prices(foil_price);
+            `);
+
             const [result] = await this.mtgJsonDb.executeSql(`
-                SELECT *
-                FROM v_cards_with_prices
-                WHERE ${sortBy} > 0
-                ORDER BY ${sortBy} DESC
+                SELECT 
+                    c.uuid,
+                    c.name,
+                    c.setCode,
+                    c.number,
+                    c.rarity,
+                    COALESCE(p.normal_price, 0) as normal_price,
+                    COALESCE(p.foil_price, 0) as foil_price,
+                    COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
+                    COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
+                    COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
+                    COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price,
+                    COALESCE(p.cardkingdom_normal_price, 0) as cardkingdom_normal_price,
+                    COALESCE(p.cardkingdom_foil_price, 0) as cardkingdom_foil_price,
+                    COALESCE(p.cardsphere_normal_price, 0) as cardsphere_normal_price,
+                    COALESCE(p.cardsphere_foil_price, 0) as cardsphere_foil_price,
+                    p.last_updated
+                FROM cards c
+                LEFT JOIN prices p ON c.uuid = p.uuid
+                WHERE p.${sortBy} > 0
+                ORDER BY p.${sortBy} DESC
                 LIMIT ? OFFSET ?
             `, [pageSize, offset]);
 
@@ -1639,6 +1662,12 @@ class DatabaseService {
                 offset,
                 sortBy
             });
+
+            // Return cached data if available, even if expired
+            if (this.expensiveCardsCache[cacheKey]) {
+                return this.expensiveCardsCache[cacheKey].cards;
+            }
+            
             return [];
         }
     }
@@ -1654,13 +1683,23 @@ class DatabaseService {
         }
 
         try {
+            // Use a more efficient JOIN instead of a subquery
+            // Add indexes if they don't exist
+            await this.mtgJsonDb.executeSql(`
+                CREATE INDEX IF NOT EXISTS idx_cards_setcode ON cards(setCode);
+                CREATE INDEX IF NOT EXISTS idx_sets_code ON sets(code);
+                CREATE INDEX IF NOT EXISTS idx_sets_releasedate ON sets(releaseDate);
+            `);
+
             const [result] = await this.mtgJsonDb.executeSql(`
-                SELECT DISTINCT 
+                SELECT 
                     s.code as setCode,
                     s.name as setName,
                     s.releaseDate,
-                    (SELECT COUNT(*) FROM cards c WHERE c.setCode = s.code) as cardCount
+                    COUNT(c.uuid) as cardCount
                 FROM sets s
+                LEFT JOIN cards c ON s.code = c.setCode
+                GROUP BY s.code, s.name, s.releaseDate
                 ORDER BY s.releaseDate DESC, s.name ASC
             `);
 
@@ -1671,13 +1710,17 @@ class DatabaseService {
                 cardCount: row.cardCount
             }));
 
-            // Update cache
+            // Update cache with a longer duration since set data rarely changes
             this.setListCache = sets;
             this.setListLastUpdate = Date.now();
 
             return sets;
         } catch (error) {
             console.error('[DatabaseService] Error getting set list:', error);
+            // Return cached data even if expired in case of error
+            if (this.setListCache) {
+                return this.setListCache;
+            }
             return [];
         }
     }
