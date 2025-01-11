@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
     View,
     Text,
@@ -13,12 +13,14 @@ import {
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
+import { getLorcanaCardPrice } from '../services/LorcanaService';
 
 interface LorcanaGridViewProps {
     cards: LorcanaCardWithPrice[];
     isLoading: boolean;
     onCardPress: (card: LorcanaCardWithPrice) => void;
     onDeleteCard: (card: LorcanaCardWithPrice) => void;
+    onCardsUpdate?: (updatedCards: LorcanaCardWithPrice[]) => void;
 }
 
 type SortOption = 'name' | 'price' | 'number';
@@ -41,7 +43,8 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     cards,
     isLoading,
     onCardPress,
-    onDeleteCard
+    onDeleteCard,
+    onCardsUpdate
 }) => {
     // State
     const [filters, setFilters] = useState<Filters>({
@@ -56,6 +59,9 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
     const [currentPage, setCurrentPage] = useState(1);
     const [selectedCard, setSelectedCard] = useState<LorcanaCardWithPrice | null>(null);
+    const [updatingPrices, setUpdatingPrices] = useState(false);
+    // Add a ref to track cards that failed price lookup
+    const failedPriceLookups = React.useRef<Set<string>>(new Set());
 
     // Filter options
     const rarityOptions = ['Common', 'Uncommon', 'Rare', 'Super Rare', 'Legendary', 'Enchanted'];
@@ -124,6 +130,73 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         currentPage * ITEMS_PER_PAGE
     );
 
+    useEffect(() => {
+        const updatePrices = async () => {
+            if (updatingPrices) return;
+            setUpdatingPrices(true);
+
+            try {
+                // Filter out cards that already failed price lookup
+                const cardsNeedingPrices = paginatedCards.filter(card => 
+                    !card.prices?.usd && 
+                    !failedPriceLookups.current.has(card.Unique_ID)
+                );
+                
+                if (cardsNeedingPrices.length === 0) {
+                    setUpdatingPrices(false);
+                    return;
+                }
+
+                const updatePromises = cardsNeedingPrices.map(async (card) => {
+                    if (card.Name && card.Set_Num && card.Rarity) {
+                        try {
+                            const prices = await getLorcanaCardPrice({
+                                Name: card.Name,
+                                Set_Num: card.Set_Num,
+                                Rarity: card.Rarity
+                            });
+                            
+                            if (!prices) {
+                                // Add to failed lookups if no price was found
+                                failedPriceLookups.current.add(card.Unique_ID);
+                                return card;
+                            }
+                            
+                            return {
+                                ...card,
+                                prices
+                            };
+                        } catch (error) {
+                            // Add to failed lookups on error
+                            failedPriceLookups.current.add(card.Unique_ID);
+                            return card;
+                        }
+                    }
+                    return card;
+                });
+
+                const updatedCards = await Promise.all(updatePromises);
+                
+                // Merge updated cards with existing cards
+                const newCards = cards.map(card => {
+                    const updatedCard = updatedCards.find(uc => uc.Unique_ID === card.Unique_ID);
+                    return updatedCard || card;
+                });
+
+                // Update the parent component with the new card data
+                if (onCardsUpdate) {
+                    onCardsUpdate(newCards);
+                }
+            } catch (error) {
+                console.error('Error updating card prices:', error);
+            } finally {
+                setUpdatingPrices(false);
+            }
+        };
+
+        updatePrices();
+    }, [currentPage, cards]);
+
     const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => (
         <TouchableOpacity 
             style={styles.cardContainer}
@@ -155,7 +228,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                     {item.Name}
                 </Text>
                 <Text style={[styles.cardPrice, !item.collected && styles.cardPriceUncollected]}>
-                    ${item.prices?.usd || '0.00'}
+                    ${item.prices?.usd ? Number(item.prices.usd).toFixed(2) : '0.00'}
                 </Text>
             </View>
         </TouchableOpacity>

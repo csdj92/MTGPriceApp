@@ -48,8 +48,6 @@ const verifyAndRepairDatabase = async () => {
         // Drop existing tables to force recreation
         console.log('[LorcanaService] Dropping existing tables...');
         await db.transaction(async (tx) => {
-            await tx.executeSql('DROP TABLE IF EXISTS lorcana_collection_cards;');
-            await tx.executeSql('DROP TABLE IF EXISTS lorcana_collections;');
             await tx.executeSql('DROP TABLE IF EXISTS lorcana_cards;');
         });
         
@@ -272,10 +270,10 @@ const mapLorcastSetCodeToSetId = (setCode: string): string | null => {
     const setMapping: { [key: string]: string } = {
         '1': 'TFC',  // The First Chapter
         '2': 'ROF',  // Rise of the Floodborn
-        '3': 'ITI',  // Into the Inklands
-        '4': 'UR',   // Ursula's Return
-        '5': 'SS',   // Shimmering Skies
-        '6': 'AS',   // Azurite Sea
+        '3': 'INK',  // Into the Inklands
+        '4': 'URS',   // Ursula's Return
+        '5': 'SSK',   // Shimmering Skies
+        '6': 'AZS',   // Azurite Sea
         '7': 'AI'    // Archazia's Island
     };
     return setMapping[setCode] || null;
@@ -516,24 +514,27 @@ export const searchLorcanaCards = async (name: string, subtype?: string | null) 
 // Function to fetch current price for a card
 export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number; Rarity?: string }) => {
     try {
-        // Split name into base name and version at the hyphen
-        const [baseName, ...versionParts] = card.Name.split('-').map(part => part.trim());
-        const version = versionParts.join(' ');
+        // Split name into base name and version at " - " (space-hyphen-space)
+        // This preserves hyphens within names like "Happy-Go-Lucky"
+        const parts = card.Name.split(" - ");
+        const baseName = parts[0].trim();
+        const version = parts.length > 1 ? parts.slice(1).join(" - ").trim() : "";
 
         // Format rarity to lowercase after underscore
         const formattedRarity = card.Rarity ? card.Rarity.replace(' ', '_').replace('_R', '_r') : '';
         console.log('[LorcanaService] Formatted rarity:', formattedRarity);
 
         // Build search query using card details and properly encode each part
+        // Only include set if the card is not enchanted
         const queryParts = [
             `name:"${encodeURIComponent(baseName)}"`,
-            version ? `version:"${encodeURIComponent(version)}"` : '',
-            card.Set_Num ? `set:${encodeURIComponent(card.Set_Num)}` : '',
+            version && version !== "undefined" ? `version:"${encodeURIComponent(version)}"` : '',
+            card.Set_Num && card.Rarity !== 'Enchanted' ? `set:${encodeURIComponent(card.Set_Num)}` : '',
             formattedRarity ? `rarity:${encodeURIComponent(formattedRarity)}` : ''
         ].filter(Boolean);
         
         const query = `q=${queryParts.join(' ')}`;
-        console.log('[LorcanaService] Fetching price with query:', query);
+        console.log('[LorcanaService] Fetching price with query:', LorcastPriceApi + query);
         
         const response = await fetch(`${LorcastPriceApi}?${query}`);
         const data = await response.json();
@@ -552,9 +553,13 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
         const cardData = data.results[0];
         console.log('[LorcanaService] Card prices data:', cardData.prices);
 
+        // For enchanted cards, which only come in foil, use the foil price as the regular price too
+        const isEnchanted = card.Rarity === 'Enchanted';
+        const foilPrice = cardData.prices?.usd_foil || cardData.prices?.foil || null;
+
         const prices = {
-            usd: cardData.prices?.regular || cardData.prices?.usd || null,
-            usd_foil: cardData.prices?.foil || cardData.prices?.usd_foil || null,
+            usd: isEnchanted ? foilPrice : (cardData.prices?.regular || cardData.prices?.usd || null),
+            usd_foil: foilPrice,
             tcgplayer_id: cardData.tcgplayer_id || null
         };
 
@@ -876,6 +881,7 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
                         FROM lorcana_cards lc 
                         WHERE lc.Set_ID = SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1)
                         AND lc.Name IS NOT NULL
+                        AND lc.Unique_ID IS NOT NULL
                     ) as total_cards,
                     (
                         SELECT COALESCE(SUM(
@@ -1035,29 +1041,6 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
     }
 };
 
-// Helper function to update prices in background
-const updateCardPrices = async (cards: LorcanaCardWithPrice[], db: SQLiteDatabase) => {
-    try {
-        for (const card of cards) {
-            if (card.Name && card.Set_Num && card.Rarity) {  // Type guard to ensure required properties exist
-                const prices = await getLorcanaCardPrice({
-                    Name: card.Name,
-                    Set_Num: card.Set_Num,
-                    Rarity: card.Rarity
-                });
-                if (prices.usd) {
-                    await db.executeSql(
-                        'UPDATE lorcana_cards SET price_usd = ?, price_usd_foil = ?, last_updated = ? WHERE Unique_ID = ?',
-                        [prices.usd, prices.usd_foil, new Date().toISOString(), card.Unique_ID]
-                    );
-                }
-            }
-        }
-    } catch (error) {
-        console.error('Error updating card prices:', error);
-    }
-};
-
 // Add function to delete a card from a collection
 export const deleteLorcanaCardFromCollection = async (cardId: string, collectionId: string): Promise<void> => {
     try {
@@ -1109,8 +1092,12 @@ export const getLorcanaSetMissingCards = async (setId: string): Promise<LorcanaC
                    END as collected
             FROM lorcana_cards lc
             LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
-            WHERE lc.Set_ID = ? AND lc.Unique_ID IS NOT NULL
-            ORDER BY lc.Card_Num ASC;
+            WHERE lc.Set_ID = ? 
+            AND lc.Unique_ID IS NOT NULL 
+            AND lc.Name IS NOT NULL
+            ORDER BY 
+                CASE WHEN lc.Rarity = 'Enchanted' THEN 1 ELSE 0 END DESC,
+                lc.Card_Num ASC;
         `, [setId]);
 
         const cards: LorcanaCardWithPrice[] = [];
@@ -1219,7 +1206,7 @@ export const fetchAndStoreEnchantedCards = async () => {
                         Unique_ID: card.id || null,
                         Willpower: card.willpower || null,
                         price_usd: null,
-                        price_usd_foil: card.prices?.usd_foil?.toString() || null,
+                        price_usd_foil: card.prices?.usd_foil ? card.prices.usd_foil.toString() : null,
                         last_updated: new Date().toISOString(),
                         collected: 0
                     };

@@ -228,8 +228,9 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                 <View style={styles.headerContent}>
                     <Text style={styles.statsText}>
                         {cards.length} cards · ${collection?.type === 'Lorcana' ? 
-                            lorcanaCards.reduce((sum, card) => sum + (card.prices?.usd ? parseFloat(card.prices.usd) : 0), 0).toFixed(2) 
-                            : (collection?.totalValue || 0).toFixed(2)}
+                            lorcanaCards.reduce((sum, card) => 
+                                sum + (card.collected && card.prices?.usd ? Number(card.prices.usd) : 0), 0).toFixed(2) 
+                            : Number(collection?.totalValue || 0).toFixed(2)}
                     </Text>
                     <View style={styles.headerButtons}>
                         <TouchableOpacity 
@@ -269,6 +270,9 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         isLoading={isLoading}
                         onCardPress={handleCardPress}
                         onDeleteCard={handleDeleteCard}
+                        onCardsUpdate={updatedCards => {
+                            setLorcanaCards(updatedCards);
+                        }}
                     />
                 )
             ) : (
