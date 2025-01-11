@@ -28,6 +28,7 @@ import CollectionSelector from '../../components/CollectionSelector';
 import type { Collection } from '../../services/DatabaseService';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import { CommonActions } from '@react-navigation/native';
+import LorcanaCardSelectionModal from '../../components/LorcanaCardSelectionModal';
 
 type PriceLookupScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
@@ -36,7 +37,7 @@ type PriceLookupScreenProps = {
 type SelectedCard = ExtendedCard | LorcanaCard;
 type ScannedCard = Omit<ExtendedCard, 'type'> & { type: 'MTG' | 'Lorcana' };
 
-const SCAN_COOLDOWN_MS = 1000; // 1 second cooldown between scans
+const SCAN_COOLDOWN_MS = 1750; // 1 second cooldown between scans
 const RECENT_SCANS_CLEAR_INTERVAL = 30000; // Clear recent scans every 30 seconds
 
 const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => {
@@ -51,6 +52,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const [isCardDetailsVisible, setIsCardDetailsVisible] = useState(false);
     const [isScanningPaused, setIsScanningPaused] = useState(false);
     const [isLorcanaScan, setIsLorcanaScan] = useState(false);
+    const [multipleCardsModalVisible, setMultipleCardsModalVisible] = useState(false);
+    const [multipleCardsFound, setMultipleCardsFound] = useState<LorcanaCard[]>([]);
     const lastScannedRef = useRef<{
         text: string;
         timestamp: number;
@@ -172,159 +175,147 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         const now = Date.now();
         if (lastScannedRef.current) {
             const timeSinceLastScan = now - lastScannedRef.current.timestamp;
-            // Only apply cooldown if it's the exact same text
             if (timeSinceLastScan < SCAN_COOLDOWN_MS && lastScannedRef.current.text === normalizedText) {
                 console.log('[PriceLookupScreen] Scan ignored - within cooldown period');
-                return; // Still in cooldown period for this exact text
+                return;
             }
         }
 
-        // Set the last scanned reference immediately to prevent duplicate processing
         lastScannedRef.current = { text: normalizedText, timestamp: now };
 
         try {
-            // Use the screen's mode instead of the OCR result's flag
             if (isLorcanaScan) {
                 console.log('[PriceLookupScreen] Searching Lorcana database...');
-                // Pass mainName and subtype separately
                 const lorcanaResults = await searchLorcanaCards(result.mainName, result.subtype);
                 console.log(`[PriceLookupScreen] Found ${lorcanaResults?.length || 0} Lorcana results`);
 
                 if (lorcanaResults && lorcanaResults.length > 0) {
-                    const card = lorcanaResults[0];
-                    const cardWithPrice = await getLorcanaCardWithPrice(card.Unique_ID);
-                    
-                    if (cardWithPrice) {
-                        const scannedCard: ScannedCard = {
-                            id: cardWithPrice.Unique_ID,
-                            uuid: cardWithPrice.Unique_ID,
-                            name: cardWithPrice.Name || cardWithPrice.name,
-                            setName: cardWithPrice.Set_Name || cardWithPrice.set_name,
-                            setCode: cardWithPrice.Set_ID || cardWithPrice.set_id || '',
-                            collectorNumber: String(cardWithPrice.Card_Num || cardWithPrice.card_num),
-                            imageUris: { normal: cardWithPrice.Image || cardWithPrice.image },
-                            hasNonFoil: true,
-                            hasFoil: true,
-                            prices: {
-                                usd: cardWithPrice.price_usd || cardWithPrice.prices?.usd || null,
-                                usdFoil: cardWithPrice.price_usd_foil || cardWithPrice.prices?.usd_foil || null
-                            },
-                            type: 'Lorcana',
-                            purchaseUrls: {},
-                            legalities: {},
-                            scannedAt: now,
-                            rarity: cardWithPrice.Rarity || cardWithPrice.rarity
-                        };
-
-                        // Add to scanned cards list
-                        setScannedCards(prevCards => {
-                            // Check for duplicates
-                            const isDuplicate = prevCards.some(card => 
-                                card.id === scannedCard.id && 
-                                (card.scannedAt || 0) > now - SCAN_COOLDOWN_MS
-                            );
-                            if (isDuplicate) return prevCards;
-                            return [scannedCard, ...prevCards];
-                        });
-
-                        // Update total price
-                        setTotalPrice(prevTotal => {
-                            const cardPrice = scannedCard.prices?.usd ? Number(scannedCard.prices.usd) : 0;
-                            return prevTotal + cardPrice;
-                        });
-
-                        // Add to set collection
-                        if (cardWithPrice.Set_ID && cardWithPrice.Set_Name) {
-                            try {
-                                console.log('[PriceLookupScreen] Adding to Lorcana set collection...');
-                                const setCollectionId = await getOrCreateLorcanaSetCollection(
-                                    cardWithPrice.Set_ID,
-                                    cardWithPrice.Set_Name
-                                );
-                                if (setCollectionId) {
-                                    await addCardToLorcanaCollection(cardWithPrice.Unique_ID, setCollectionId);
-                                    console.log('[PriceLookupScreen] Successfully added to set collection');
-
-                                    // Show toast notification
-                                    if (Platform.OS === 'android') {
-                                        ToastAndroid.show(`Added ${cardWithPrice.Name}`, ToastAndroid.SHORT);
-                                    }
-
-                                    // Keep scanning - removed navigation to Collection tab
-                                    console.log('[PriceLookupScreen] Card added, continuing scan...');
-                                } else {
-                                    console.error('[PriceLookupScreen] Failed to create set collection');
-                                }
-                            } catch (error) {
-                                console.error('[PriceLookupScreen] Error adding to set collection:', error);
-                            }
-                        }
-
-                        // Mark as collected
-                        await markCardAsCollected(cardWithPrice.Unique_ID);
+                    if (lorcanaResults.length > 1) {
+                        // Multiple cards found, show selection modal
+                        setMultipleCardsFound(lorcanaResults);
+                        setMultipleCardsModalVisible(true);
+                        setIsScanningPaused(true);
+                        return;
                     }
+
+                    await processLorcanaCard(lorcanaResults[0], now);
                 }
             } else {
-                // MTG card scanning
+                // Existing MTG card scanning logic
                 const searchResponse = await scryfallService.searchCards(result.text, 1);
                 const foundCards = searchResponse.data;
 
                 if (foundCards.length > 0) {
-                    const newCard = foundCards[0];
-
-                    // Double check we haven't just added this card (race condition check)
-                    const lastFewCards = scannedCards.slice(0, 3);
-                    const isDuplicate = lastFewCards.some(card => {
-                        const timeDiff = now - (card.scannedAt || 0);
-                        return card.name.toLowerCase() === newCard.name.toLowerCase() && timeDiff < SCAN_COOLDOWN_MS;
-                    });
-
-                    if (isDuplicate) {
-                        return;
-                    }
-
-                    const cardWithUuid = await databaseService.addToCache(newCard);
-
-                    if (!cardWithUuid.uuid) {
-                        throw new Error('Failed to generate UUID for card');
-                    }
-
-                    const scannedCard: ScannedCard = {
-                        ...cardWithUuid,
-                        type: 'MTG',
-                        scannedAt: now
-                    };
-
-                    await databaseService.addToScanHistory(scannedCard);
-
-                    // Add to set collection
-                    if (scannedCard.uuid) {
-                        const setCode = scannedCard.setCode || 'UNKNOWN';
-                        const setName = scannedCard.setName || setCode;
-                        const setCollectionId = await databaseService.getOrCreateSetCollection(setCode, setName);
-                        await databaseService.addCardToCollection(scannedCard.uuid, setCollectionId);
-                    }
-
-                    setScannedCards(prevCards => [scannedCard, ...prevCards]);
-
-                    setTotalPrice(prevTotal => {
-                        const cardPrice = scannedCard.prices?.usd ? Number(scannedCard.prices.usd) : 0;
-                        return prevTotal + cardPrice;
-                    });
-
-                    if (Platform.OS === 'android') {
-                        ToastAndroid.show(`Added ${scannedCard.name}`, ToastAndroid.SHORT);
-                    }
+                    await processMTGCard(foundCards[0], now);
                 }
             }
         } catch (error) {
-            // On error, clear the last scanned reference to allow retry
             lastScannedRef.current = null;
             console.error('Error processing scan:', error);
             if (error instanceof Error && !error.message.includes('404')) {
                 Alert.alert('Error', 'Failed to process scan. Please try again.');
             }
         }
+    };
+
+    const processLorcanaCard = async (card: LorcanaCard, timestamp: number) => {
+        const cardWithPrice = await getLorcanaCardWithPrice(card.Unique_ID);
+        
+        if (cardWithPrice) {
+            const scannedCard: ScannedCard = {
+                id: cardWithPrice.Unique_ID,
+                uuid: cardWithPrice.Unique_ID,
+                name: cardWithPrice.Name || cardWithPrice.name,
+                setName: cardWithPrice.Set_Name || cardWithPrice.set_name,
+                setCode: cardWithPrice.Set_ID || cardWithPrice.set_id || '',
+                collectorNumber: String(cardWithPrice.Card_Num || cardWithPrice.card_num),
+                imageUris: { normal: cardWithPrice.Image || cardWithPrice.image },
+                hasNonFoil: true,
+                hasFoil: true,
+                prices: {
+                    usd: cardWithPrice.price_usd || cardWithPrice.prices?.usd || null,
+                    usdFoil: cardWithPrice.price_usd_foil || cardWithPrice.prices?.usd_foil || null
+                },
+                type: 'Lorcana',
+                purchaseUrls: {},
+                legalities: {},
+                scannedAt: timestamp,
+                rarity: cardWithPrice.Rarity || cardWithPrice.rarity
+            };
+
+            addScannedCard(scannedCard);
+            await handleLorcanaCollection(cardWithPrice);
+        }
+    };
+
+    const processMTGCard = async (card: ExtendedCard, timestamp: number) => {
+        const lastFewCards = scannedCards.slice(0, 3);
+        const isDuplicate = lastFewCards.some(existingCard => {
+            const timeDiff = timestamp - (existingCard.scannedAt || 0);
+            return existingCard.name.toLowerCase() === card.name.toLowerCase() && timeDiff < SCAN_COOLDOWN_MS;
+        });
+
+        if (!isDuplicate) {
+            const cardWithUuid = await databaseService.addToCache(card);
+            if (!cardWithUuid.uuid) {
+                throw new Error('Failed to generate UUID for card');
+            }
+
+            const scannedCard: ScannedCard = {
+                ...cardWithUuid,
+                type: 'MTG',
+                scannedAt: timestamp
+            };
+
+            addScannedCard(scannedCard);
+            await handleMTGCollection(scannedCard);
+        }
+    };
+
+    const addScannedCard = (scannedCard: ScannedCard) => {
+        setScannedCards(prevCards => [scannedCard, ...prevCards]);
+        setTotalPrice(prevTotal => {
+            const cardPrice = scannedCard.prices?.usd ? Number(scannedCard.prices.usd) : 0;
+            return prevTotal + cardPrice;
+        });
+
+        if (Platform.OS === 'android') {
+            ToastAndroid.show(`Added ${scannedCard.name}`, ToastAndroid.SHORT);
+        }
+    };
+
+    const handleLorcanaCollection = async (cardWithPrice: LorcanaCard) => {
+        if (cardWithPrice.Set_ID && cardWithPrice.Set_Name) {
+            try {
+                console.log('[PriceLookupScreen] Adding to Lorcana set collection...');
+                const setCollectionId = await getOrCreateLorcanaSetCollection(
+                    cardWithPrice.Set_ID,
+                    cardWithPrice.Set_Name
+                );
+                if (setCollectionId) {
+                    await addCardToLorcanaCollection(cardWithPrice.Unique_ID, setCollectionId);
+                    console.log('[PriceLookupScreen] Successfully added to set collection');
+                    await markCardAsCollected(cardWithPrice.Unique_ID);
+                }
+            } catch (error) {
+                console.error('[PriceLookupScreen] Error adding to set collection:', error);
+            }
+        }
+    };
+
+    const handleMTGCollection = async (scannedCard: ScannedCard) => {
+        if (scannedCard.uuid) {
+            const setCode = scannedCard.setCode || 'UNKNOWN';
+            const setName = scannedCard.setName || setCode;
+            const setCollectionId = await databaseService.getOrCreateSetCollection(setCode, setName);
+            await databaseService.addCardToCollection(scannedCard.uuid, setCollectionId);
+        }
+    };
+
+    const handleLorcanaCardSelection = async (selectedLorcanaCard: LorcanaCard) => {
+        setMultipleCardsModalVisible(false);
+        setIsScanningPaused(false);
+        await processLorcanaCard(selectedLorcanaCard, Date.now());
     };
 
     const handleScanError = (error: Error) => {
@@ -785,6 +776,16 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             />
 
             {renderCardDetailsModal()}
+
+            <LorcanaCardSelectionModal
+                visible={multipleCardsModalVisible}
+                cards={multipleCardsFound}
+                onSelect={handleLorcanaCardSelection}
+                onClose={() => {
+                    setMultipleCardsModalVisible(false);
+                    setIsScanningPaused(false);
+                }}
+            />
         </SafeAreaView>
     );
 };
