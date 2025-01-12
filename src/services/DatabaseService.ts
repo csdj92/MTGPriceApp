@@ -1,4 +1,4 @@
-import SQLite, { SQLError, ResultSet, Transaction } from 'react-native-sqlite-storage';
+import SQLite, { SQLError, ResultSet, Transaction, openDatabase } from 'react-native-sqlite-storage';
 import type { ExtendedCard } from '../types/card';
 import RNFS from 'react-native-fs';
 
@@ -44,9 +44,10 @@ interface SetCollectionStats {
     completionPercentage: number;
 }
 
+let mtgJsonDb: SQLite.SQLiteDatabase | null = null;
+
 class DatabaseService {
     private db: SQLite.SQLiteDatabase | null = null;
-    private mtgJsonDb: SQLite.SQLiteDatabase | null = null;
     private setListCache: SetInfo[] | null = null;
     private setListLastUpdate = 0;
     private readonly SET_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
@@ -81,18 +82,18 @@ class DatabaseService {
             }
 
             // Try to open the database to verify it's valid
-            this.mtgJsonDb = await SQLite.openDatabase({
+            mtgJsonDb = await SQLite.openDatabase({
                 name: mtgJsonPath,
                 location: 'Library',
                 createFromLocation: 1
             });
 
-            if (!this.mtgJsonDb) {
+            if (!mtgJsonDb) {
                 throw new Error('Failed to open MTGJson database');
             }
 
             // Verify we can query the database
-            const [tables] = await this.mtgJsonDb.executeSql(
+            const [tables] = await mtgJsonDb.executeSql(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             );
 
@@ -115,7 +116,7 @@ class DatabaseService {
     // double method we have initdatabase already
     private async initializeDatabase() {
         try {
-            if (this.mtgJsonDb) {
+            if (mtgJsonDb) {
                 return;
             }
 
@@ -148,7 +149,7 @@ class DatabaseService {
             }).promise;
 
             // Open the downloaded database
-            this.mtgJsonDb = await SQLite.openDatabase({
+            mtgJsonDb = await SQLite.openDatabase({
                 name: mtgJsonPath,
                 location: 'default',
                 createFromLocation: 1
@@ -169,7 +170,7 @@ class DatabaseService {
         const localTables = local[0].rows.raw().map(row => row.name);
 
         let mtgjsonTables: string[] = [];
-        if (this.mtgJsonDb) {
+        if (mtgJsonDb) {
             mtgjsonTables = await this.getMTGJsonTables();
         }
 
@@ -180,20 +181,20 @@ class DatabaseService {
     }
 
     async getMTGJsonTables(): Promise<string[]> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
-        const tables = await this.mtgJsonDb.executeSql('SELECT name FROM sqlite_master WHERE type="table"');
+        const tables = await mtgJsonDb.executeSql('SELECT name FROM sqlite_master WHERE type="table"');
         return tables[0].rows.raw().map(row => row.name);
     }
 
     async getCardDetailsByUuid(uuid: string): Promise<any> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
-            const [result] = await this.mtgJsonDb.executeSql(
+            const [result] = await mtgJsonDb.executeSql(
                 `SELECT name, setCode, number, rarity, types 
                  FROM cards 
                  WHERE uuid = ?`,
@@ -225,7 +226,7 @@ class DatabaseService {
             const prices = [];
             for (let i = 0; i < result.rows.length; i++) {
                 const item = result.rows.item(i);
-                if (!item.name && this.mtgJsonDb) {
+                if (!item.name && mtgJsonDb) {
                     // If card details not in our local cache, fetch from MTGJson database
                     const cardDetails = await this.getCardDetailsByUuid(item.uuid);
                     if (cardDetails) {
@@ -745,10 +746,10 @@ class DatabaseService {
             }
 
             // Ensure MTGJson database is initialized
-            if (!this.mtgJsonDb) {
+            if (!mtgJsonDb) {
                 console.log('[DatabaseService] MTGJson database not initialized, initializing now...');
                 await this.initializeDatabase();
-                if (!this.mtgJsonDb) {
+                if (!mtgJsonDb) {
                     throw new Error('Failed to initialize MTGJson database');
                 }
             }
@@ -872,17 +873,17 @@ class DatabaseService {
     }
 
     async addToCache(card: ExtendedCard): Promise<ExtendedCard> {
-        if (!this.db || !this.mtgJsonDb) {
+        if (!this.db || !mtgJsonDb) {
             await this.initDatabase();
             await this.initializeDatabase();
-            if (!this.db || !this.mtgJsonDb) {
+            if (!this.db || !mtgJsonDb) {
                 throw new Error('Failed to initialize databases');
             }
         }
 
         try {
             // First, try to find the card in MTGJson database to get the correct UUID
-            const [mtgJsonCard] = await this.mtgJsonDb.executeSql(`
+            const [mtgJsonCard] = await mtgJsonDb.executeSql(`
                 SELECT uuid 
                 FROM cards 
                 WHERE name = ? AND setCode = ?
@@ -913,13 +914,13 @@ class DatabaseService {
     }
 
     private async cleanupOldPriceHistory(): Promise<void> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
             const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-            await this.mtgJsonDb.executeSql(
+            await mtgJsonDb.executeSql(
                 'DELETE FROM price_history WHERE recorded_at < ?',
                 [thirtyDaysAgo]
             );
@@ -944,7 +945,7 @@ class DatabaseService {
         cardhoarder_normal?: number;
         cardhoarder_foil?: number;
     }>): Promise<void> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
@@ -961,7 +962,7 @@ class DatabaseService {
             today.setHours(0, 0, 0, 0);
             const todayTimestamp = today.getTime();
 
-            const [existingEntry] = await this.mtgJsonDb.executeSql(
+            const [existingEntry] = await mtgJsonDb.executeSql(
                 `SELECT COUNT(*) as count 
                  FROM price_history 
                  WHERE recorded_at >= ?`,
@@ -992,7 +993,7 @@ class DatabaseService {
                         );
                     });
 
-                    await this.mtgJsonDb.executeSql(
+                    await mtgJsonDb.executeSql(
                         `INSERT OR REPLACE INTO prices (
                             uuid, normal_price, foil_price,
                             tcg_normal_price, tcg_foil_price,
@@ -1031,7 +1032,7 @@ class DatabaseService {
                         );
                     });
 
-                    await this.mtgJsonDb.transaction((tx) => {
+                    await mtgJsonDb.transaction((tx) => {
                         // Update current prices
                         tx.executeSql(
                             `INSERT OR REPLACE INTO prices (
@@ -1079,13 +1080,13 @@ class DatabaseService {
                 }
             }
 
-            await this.mtgJsonDb.executeSql(
+            await mtgJsonDb.executeSql(
                 `INSERT OR REPLACE INTO app_settings (key, value, updated_at)
                  VALUES ('last_price_update', ?, ?)`,
                 [now.toString(), now]
             );
 
-            const [verifyResult] = await this.mtgJsonDb.executeSql('SELECT COUNT(*) as count FROM prices');
+            const [verifyResult] = await mtgJsonDb.executeSql('SELECT COUNT(*) as count FROM prices');
             console.log(`[DatabaseService] Updated prices: ${verifyResult.rows.item(0).count} records`);
 
         } catch (error) {
@@ -1103,12 +1104,12 @@ class DatabaseService {
         cardkingdom: { normal: number; foil: number };
         cardsphere: { normal: number; foil: number };
     }[]> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
-            const [result] = await this.mtgJsonDb.executeSql(
+            const [result] = await mtgJsonDb.executeSql(
                 `SELECT 
                     normal_price, foil_price,
                     tcg_normal_price, tcg_foil_price,
@@ -1162,7 +1163,7 @@ class DatabaseService {
         foilPriceChange30d: number;
         foilPriceChange7d: number;
     }> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
@@ -1238,13 +1239,13 @@ class DatabaseService {
     }
 
     async getPriceData(page: number, pageSize: number): Promise<{ uuid: string; normal_price: number; foil_price: number; last_updated: number; }[]> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
             const offset = (page - 1) * pageSize;
-            const [result] = await this.mtgJsonDb.executeSql(`
+            const [result] = await mtgJsonDb.executeSql(`
                 SELECT uuid, normal_price, foil_price, last_updated 
                 FROM prices 
                 ORDER BY last_updated DESC
@@ -1263,14 +1264,14 @@ class DatabaseService {
     }
 
     public isMTGJsonDatabaseInitialized(): boolean {
-        return this.mtgJsonDb !== null;
+        return mtgJsonDb !== null;
     }
 
     async getMTGJsonTable(tableName: string | undefined, limit: number = 100): Promise<any[]> {
-        if (!this.mtgJsonDb || !tableName) {
+        if (!mtgJsonDb || !tableName) {
             throw new Error('MTGJson database not initialized or invalid table name');
         }
-        const [result] = await this.mtgJsonDb.executeSql(
+        const [result] = await mtgJsonDb.executeSql(
             `SELECT * FROM ${tableName} LIMIT ?`,
             [limit]
         );
@@ -1278,7 +1279,7 @@ class DatabaseService {
     }
 
     async getAllCardsBySet(setCode: string, pageSize: number, offset: number): Promise<any[]> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
@@ -1291,7 +1292,7 @@ class DatabaseService {
 
         try {
             // Optimize the query by using a single JOIN and avoiding subqueries
-            const [result] = await this.mtgJsonDb.executeSql(`
+            const [result] = await mtgJsonDb.executeSql(`
                 SELECT 
                     c.uuid, 
                     c.name, 
@@ -1365,12 +1366,12 @@ class DatabaseService {
     }
 
     async getLastPriceUpdate(): Promise<number | null> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
-            const [result] = await this.mtgJsonDb.executeSql(
+            const [result] = await mtgJsonDb.executeSql(
                 `SELECT value FROM app_settings WHERE key = 'last_price_update'`
             );
 
@@ -1389,13 +1390,13 @@ class DatabaseService {
     }
 
     private async createPriceTables(): Promise<void> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
             // Check if tables already exist
-            const [tableCheck] = await this.mtgJsonDb.executeSql(`
+            const [tableCheck] = await mtgJsonDb.executeSql(`
                 SELECT name FROM sqlite_master 
                 WHERE type='table' AND (name='prices' OR name='price_history' OR name='app_settings')
             `);
@@ -1408,7 +1409,7 @@ class DatabaseService {
             console.log('[DatabaseService] Creating price and settings tables...');
 
             // Create app_settings table
-            await this.mtgJsonDb.executeSql(`
+            await mtgJsonDb.executeSql(`
                 CREATE TABLE IF NOT EXISTS app_settings (
                     key TEXT PRIMARY KEY NOT NULL,
                     value TEXT NOT NULL,
@@ -1418,7 +1419,7 @@ class DatabaseService {
             console.log('[DatabaseService] App settings table created');
 
             // Create price-related tables only if they don't exist
-            await this.mtgJsonDb.executeSql(`
+            await mtgJsonDb.executeSql(`
                 CREATE TABLE IF NOT EXISTS prices (
                     uuid TEXT PRIMARY KEY NOT NULL,
                     normal_price REAL DEFAULT 0,
@@ -1438,7 +1439,7 @@ class DatabaseService {
             `);
             console.log('[DatabaseService] Prices table created');
 
-            await this.mtgJsonDb.executeSql(`
+            await mtgJsonDb.executeSql(`
                 CREATE TABLE IF NOT EXISTS price_history (
                     uuid TEXT NOT NULL,
                     normal_price REAL DEFAULT 0,
@@ -1459,7 +1460,7 @@ class DatabaseService {
             console.log('[DatabaseService] Price history table created');
 
             // Add indexes for better query performance
-            await this.mtgJsonDb.executeSql(`
+            await mtgJsonDb.executeSql(`
                 CREATE INDEX IF NOT EXISTS idx_prices_last_updated ON prices(last_updated);
                 CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);
                 CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price);
@@ -1483,12 +1484,12 @@ class DatabaseService {
     }
 
     async getPriceCount(): Promise<number> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
-            const [result] = await this.mtgJsonDb.executeSql(
+            const [result] = await mtgJsonDb.executeSql(
                 'SELECT COUNT(*) as count FROM prices'
             );
             return result.rows.item(0).count;
@@ -1500,13 +1501,13 @@ class DatabaseService {
 
     async verifyDatabaseState(): Promise<boolean> {
         try {
-            if (!this.mtgJsonDb) {
+            if (!mtgJsonDb) {
                 console.log('[DatabaseService] MTGJson database not initialized, attempting to initialize...');
                 await this.initializeDatabase();
             }
 
             // Verify we can query the database
-            const [result] = await this.mtgJsonDb!.executeSql('SELECT COUNT(*) as count FROM prices');
+            const [result] = await mtgJsonDb!.executeSql('SELECT COUNT(*) as count FROM prices');
             const count = result.rows.item(0).count;
             console.log(`[DatabaseService] Found ${count} price entries in database`);
 
@@ -1527,19 +1528,19 @@ class DatabaseService {
             console.log('[DatabaseService] Starting price database reinitialization...');
 
             // Ensure MTGJson database is initialized
-            if (!this.mtgJsonDb) {
+            if (!mtgJsonDb) {
                 console.log('[DatabaseService] MTGJson database not initialized, initializing...');
                 await this.initializeDatabase();
-                if (!this.mtgJsonDb) {
+                if (!mtgJsonDb) {
                     throw new Error('Failed to initialize MTGJson database');
                 }
             }
 
             // Drop existing price-related tables
             console.log('[DatabaseService] Dropping existing price tables...');
-            await this.mtgJsonDb.executeSql('DROP TABLE IF EXISTS price_history');
-            await this.mtgJsonDb.executeSql('DROP TABLE IF EXISTS prices');
-            await this.mtgJsonDb.executeSql('DROP TABLE IF EXISTS app_settings');
+            await mtgJsonDb.executeSql('DROP TABLE IF EXISTS price_history');
+            await mtgJsonDb.executeSql('DROP TABLE IF EXISTS prices');
+            await mtgJsonDb.executeSql('DROP TABLE IF EXISTS app_settings');
 
             // Recreate tables
             console.log('[DatabaseService] Recreating price tables...');
@@ -1560,12 +1561,12 @@ class DatabaseService {
 
     // print all the rows in the cards table debug
     async printTenCardsRows(): Promise<void> {
-        const [result] = await this.mtgJsonDb!.executeSql('SELECT * FROM cards LIMIT 10');
+        const [result] = await mtgJsonDb!.executeSql('SELECT * FROM cards LIMIT 10');
         console.log('[DatabaseService] All cards:', JSON.stringify(result.rows.raw(), null, 2));
     }
 
     async getMostExpensiveCards(pageSize: number, offset: number, sortBy: 'normal_price' | 'foil_price'): Promise<any[]> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
@@ -1578,12 +1579,12 @@ class DatabaseService {
 
         try {
             // Create indexes if they don't exist
-            await this.mtgJsonDb.executeSql(`
+            await mtgJsonDb.executeSql(`
                 CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price);
                 CREATE INDEX IF NOT EXISTS idx_prices_foil ON prices(foil_price);
             `);
 
-            const [result] = await this.mtgJsonDb.executeSql(`
+            const [result] = await mtgJsonDb.executeSql(`
                 SELECT 
                     c.uuid,
                     c.name,
@@ -1668,20 +1669,20 @@ class DatabaseService {
             return this.setListCache;
         }
 
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
             // Use a more efficient JOIN instead of a subquery
             // Add indexes if they don't exist
-            await this.mtgJsonDb.executeSql(`
+            await mtgJsonDb.executeSql(`
                 CREATE INDEX IF NOT EXISTS idx_cards_setcode ON cards(setCode);
                 CREATE INDEX IF NOT EXISTS idx_sets_code ON sets(code);
                 CREATE INDEX IF NOT EXISTS idx_sets_releasedate ON sets(releaseDate);
             `);
 
-            const [result] = await this.mtgJsonDb.executeSql(`
+            const [result] = await mtgJsonDb.executeSql(`
                 SELECT 
                     s.code as setCode,
                     s.name as setName,
@@ -1735,10 +1736,10 @@ class DatabaseService {
             }
 
             // Ensure MTGJson database is initialized
-            if (!this.mtgJsonDb) {
+            if (!mtgJsonDb) {
                 console.log('[DatabaseService] MTGJson database not initialized, initializing...');
                 await this.initializeDatabase();
-                if (!this.mtgJsonDb) {
+                if (!mtgJsonDb) {
                     throw new Error('Failed to initialize MTGJson database');
                 }
             }        
@@ -1767,7 +1768,7 @@ class DatabaseService {
 
                 try {
                     // Get total unique cards in set from MTGJson database, grouping by collector number
-                    const [totalResult] = await this.mtgJsonDb.executeSql(`
+                    const [totalResult] = await mtgJsonDb.executeSql(`
                         WITH CardGroups AS (
                             SELECT 
                                 number,
@@ -1874,39 +1875,39 @@ class DatabaseService {
         daysOfHistory: number;
         lastUpdate: Date | null;
     }> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         const issues: string[] = [];
         try {
             // Check total number of prices
-            const [pricesResult] = await this.mtgJsonDb.executeSql(
+            const [pricesResult] = await mtgJsonDb.executeSql(
                 'SELECT COUNT(*) as count FROM prices'
             );
             const totalPrices = pricesResult.rows.item(0).count;
 
             // Check total number of history records
-            const [historyResult] = await this.mtgJsonDb.executeSql(
+            const [historyResult] = await mtgJsonDb.executeSql(
                 'SELECT COUNT(*) as count FROM price_history'
             );
             const totalHistory = historyResult.rows.item(0).count;
 
             // Check number of days of history
-            const [daysResult] = await this.mtgJsonDb.executeSql(
+            const [daysResult] = await mtgJsonDb.executeSql(
                 "SELECT COUNT(DISTINCT DATE(recorded_at/1000, 'unixepoch')) as days FROM price_history"
             );
             const daysOfHistory = daysResult.rows.item(0).days;
 
             // Check last update
-            const [lastUpdateResult] = await this.mtgJsonDb.executeSql(
+            const [lastUpdateResult] = await mtgJsonDb.executeSql(
                 'SELECT MAX(last_updated) as last_update FROM prices'
             );
             const lastUpdate = lastUpdateResult.rows.item(0).last_update ? 
                 new Date(lastUpdateResult.rows.item(0).last_update) : null;
 
             // Check for orphaned history records
-            const [orphanedResult] = await this.mtgJsonDb.executeSql(`
+            const [orphanedResult] = await mtgJsonDb.executeSql(`
                 SELECT COUNT(*) as count 
                 FROM price_history ph 
                 LEFT JOIN prices p ON ph.uuid = p.uuid 
@@ -1918,7 +1919,7 @@ class DatabaseService {
             }
 
             // Check for cards with missing history
-            const [missingHistoryResult] = await this.mtgJsonDb.executeSql(`
+            const [missingHistoryResult] = await mtgJsonDb.executeSql(`
                 SELECT COUNT(*) as count 
                 FROM prices p 
                 LEFT JOIN price_history ph ON p.uuid = ph.uuid 
@@ -1951,20 +1952,20 @@ class DatabaseService {
     }
 
     async debugPriceHistory(uuid: string): Promise<void> {
-        if (!this.mtgJsonDb) {
+        if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
         }
 
         try {
             // Get card name first
-            const [cardResult] = await this.mtgJsonDb.executeSql(
+            const [cardResult] = await mtgJsonDb.executeSql(
                 'SELECT name FROM cards WHERE uuid = ?',
                 [uuid]
             );
             const cardName = cardResult.rows.length > 0 ? cardResult.rows.item(0).name : 'Unknown Card';
 
             // Get price history with formatted dates
-            const [result] = await this.mtgJsonDb.executeSql(`
+            const [result] = await mtgJsonDb.executeSql(`
                 SELECT 
                     datetime(recorded_at/1000, 'unixepoch') as date,
                     normal_price,
@@ -1997,7 +1998,7 @@ class DatabaseService {
             }
 
             // Get some basic stats
-            const [statsResult] = await this.mtgJsonDb.executeSql(`
+            const [statsResult] = await mtgJsonDb.executeSql(`
                 SELECT 
                     COUNT(DISTINCT DATE(recorded_at/1000, 'unixepoch')) as days,
                     MIN(normal_price) as min_price,
@@ -2038,7 +2039,7 @@ class DatabaseService {
                 // Get card data from MTGJson database
                 for (let i = 0; i < missingCards.rows.length; i++) {
                     const cardUuid = missingCards.rows.item(i).card_uuid;
-                    const [cardResult] = await this.mtgJsonDb!.executeSql(`
+                    const [cardResult] = await mtgJsonDb!.executeSql(`
                         SELECT c.*, 
                             p.normal_price, p.foil_price,
                             p.tcg_normal_price, p.tcg_foil_price,
@@ -2154,10 +2155,10 @@ class DatabaseService {
     }
 
     async getSetMissingCards(setCode: string): Promise<ExtendedCard[]> {
-        if (!this.db || !this.mtgJsonDb) {
+        if (!this.db || !mtgJsonDb) {
             await this.initDatabase();
             await this.initializeDatabase();
-            if (!this.db || !this.mtgJsonDb) {
+            if (!this.db || !mtgJsonDb) {
                 throw new Error('Failed to initialize databases');
             }
         }
@@ -2176,7 +2177,7 @@ class DatabaseService {
                 collectionId = codeResult.rows.item(0).id;
             } else {
                 // Try to find by set name from MTGJson
-                const [setResult] = await this.mtgJsonDb.executeSql(
+                const [setResult] = await mtgJsonDb.executeSql(
                     "SELECT name FROM sets WHERE code = ?",
                     [setCode.toUpperCase()]
                 );
@@ -2197,7 +2198,7 @@ class DatabaseService {
             }
 
             // Get cards and prices from MTGJson database
-            const [results] = await this.mtgJsonDb.executeSql(`
+            const [results] = await mtgJsonDb.executeSql(`
                 SELECT 
                     c.uuid,
                     c.name,
@@ -2321,5 +2322,28 @@ class DatabaseService {
     }
 
 }
+
+export const getDB = async () => {
+    if (mtgJsonDb) return mtgJsonDb;
+    console.log('[DatabaseService] Initializing database...');
+    try {
+        const dbName = 'mtg.db';
+        console.log('[DatabaseService] Database name:', dbName);
+
+        mtgJsonDb = await openDatabase({
+            name: dbName,
+            location: 'default',
+            createFromLocation: 2
+        });
+
+        await mtgJsonDb.executeSql('PRAGMA foreign_keys = ON;');
+        await mtgJsonDb.executeSql('PRAGMA journal_mode = WAL;');
+        
+        return mtgJsonDb;
+    } catch (error) {
+        console.error('[DatabaseService] Database initialization failed:', error);
+        throw error;
+    }
+};
 
 export const databaseService = new DatabaseService(); 

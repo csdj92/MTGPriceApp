@@ -67,6 +67,8 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
 
     // Variables for movement detection
     private var lastBoundingBox: Rect? = null
+    // Higher value (e.g., 100):Less sensitive to movementRequires larger movements to trigger new scansReduces duplicate scans
+    // Lower CPU/battery usage Might miss cards if user moves camera too quickly
     private val MOVEMENT_THRESHOLD = 50  // Adjust this value as needed
 
     override fun getName() = NAME

@@ -32,8 +32,17 @@ const styles = StyleSheet.create({
         width: '80%',    // Corresponds to AOI_WIDTH_PERCENT
         height: '40%',   // Corresponds to AOI_HEIGHT_PERCENT
         borderWidth: 2,
-        borderColor: 'yellow',
-        backgroundColor: 'rgba(255, 255, 0, 0.1)',
+        borderColor: '#FFD700',  // More subtle gold color
+        borderRadius: 8,         // Rounded corners
+        backgroundColor: 'rgba(255, 215, 0, 0.05)',  // More subtle gold tint
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
     },
 });
 

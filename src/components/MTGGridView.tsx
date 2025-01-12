@@ -13,12 +13,14 @@ import {
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { ExtendedCard } from '../types/card';
+import { getDB } from '../services/DatabaseService';
 
 interface MTGGridViewProps {
     cards: ExtendedCard[];
     isLoading: boolean;
     onCardPress: (card: ExtendedCard) => void;
     onDeleteCard: (card: ExtendedCard) => void;
+    onCardsUpdate?: (updatedCards: ExtendedCard[]) => void;
 }
 
 type SortOption = 'name' | 'price' | 'number';
@@ -133,7 +135,8 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
     cards,
     isLoading,
     onCardPress,
-    onDeleteCard
+    onDeleteCard,
+    onCardsUpdate
 }) => {
     // State
     const [filters, setFilters] = useState<Filters>({
@@ -149,6 +152,8 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
     const [currentPage, setCurrentPage] = useState(1);
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
     const [showFoil, setShowFoil] = useState(false);
+    const [showVersionModal, setShowVersionModal] = useState(false);
+    const [availableVersions, setAvailableVersions] = useState<ExtendedCard[]>([]);
 
     // Filter options
     const rarityOptions = ['common', 'uncommon', 'rare', 'mythic'];
@@ -212,12 +217,85 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
         currentPage * ITEMS_PER_PAGE
     );
 
+    const handleLongPress = (card: ExtendedCard) => {
+        fetchAvailableVersions(card);
+        setSelectedCard(card);
+        setShowVersionModal(true);
+    };
+
+    const fetchAvailableVersions = async (card: ExtendedCard) => {
+        try {
+            const db = await getDB();
+            // Use MTGJson database to fetch all versions of the card
+            const [results] = await db.executeSql(
+                `SELECT 
+                    c.uuid as id,
+                    c.name,
+                    c.setCode,
+                    s.name as setName,
+                    c.number as collectorNumber,
+                    c.type,
+                    c.manaCost,
+                    c.text,
+                    c.rarity,
+                    c.hasFoil,
+                    c.hasNonFoil,
+                    p.normal_price,
+                    p.foil_price
+                FROM cards c
+                LEFT JOIN sets s ON c.setCode = s.code
+                LEFT JOIN prices p ON c.uuid = p.uuid
+                WHERE c.name = ?
+                ORDER BY s.releaseDate DESC`,
+                [card.name]
+            );
+
+            const versions = [];
+            for (let i = 0; i < results.rows.length; i++) {
+                const row = results.rows.item(i);
+                versions.push({
+                    ...row,
+                    prices: {
+                        normal: row.normal_price,
+                        foil: row.foil_price
+                    },
+                    imageUris: card.imageUris, // Keep the same image URIs for now
+                    hasNonFoil: Boolean(row.hasNonFoil),
+                    hasFoil: Boolean(row.hasFoil)
+                });
+            }
+            setAvailableVersions(versions);
+        } catch (error) {
+            console.error('Error fetching card versions:', error);
+        }
+    };
+
+    const handleVersionChange = (newVersion: ExtendedCard) => {
+        if (onCardsUpdate) {
+            const updatedCards = cards.map(card =>
+                card.id === selectedCard?.id ? newVersion : card
+            );
+            onCardsUpdate(updatedCards);
+        }
+        setShowVersionModal(false);
+    };
+
+    const addToCollection = (card: ExtendedCard) => {
+        if (onCardsUpdate) {
+            const updatedCards = cards.map(c =>
+                c.id === card.id ? { ...c, quantity: 1 } : c
+            );
+            onCardsUpdate(updatedCards);
+        }
+    };
+
     const renderCard = ({ item }: { item: ExtendedCard }) => {
         const imageUrl = item.imageUris?.normal || item.imageUrl;
         return (
             <TouchableOpacity 
                 style={styles.cardContainer}
                 onPress={() => setSelectedCard(item)}
+                onLongPress={() => handleLongPress(item)}
             >
                 <View style={styles.cardImageContainer}>
                     <FastImage
@@ -447,6 +525,58 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
         </Modal>
     );
 
+    const renderVersionModal = () => (
+        <Modal
+            visible={showVersionModal}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowVersionModal(false)}
+        >
+            <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                    <Text style={styles.modalTitle}>Select Card Version</Text>
+                    <ScrollView>
+                        {availableVersions.map(version => (
+                            <TouchableOpacity
+                                key={version.id}
+                                style={styles.versionOption}
+                                onPress={() => handleVersionChange(version)}
+                            >
+                                <Text style={styles.versionText}>{version.name} ({version.setName})</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                    {!selectedCard?.quantity && (
+                        <TouchableOpacity
+                            style={styles.addButton}
+                            onPress={() => {
+                                addToCollection(selectedCard!);
+                                setShowVersionModal(false);
+                            }}
+                        >
+                            <Text style={styles.addButtonText}>Add to Collection</Text>
+                        </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                        style={styles.deleteButton}
+                        onPress={() => {
+                            onDeleteCard(selectedCard!);
+                            setShowVersionModal(false);
+                        }}
+                    >
+                        <Text style={styles.deleteButtonText}>Delete Card</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.modalCloseButton}
+                        onPress={() => setShowVersionModal(false)}
+                    >
+                        <Icon name="close" size={24} color="#000" />
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
@@ -570,6 +700,7 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
             </View>
 
             {renderCardModal()}
+            {renderVersionModal()}
         </View>
     );
 };
@@ -874,6 +1005,36 @@ const styles = StyleSheet.create({
     },
     foilToggleTextActive: {
         color: 'white',
+    },
+    versionOption: {
+        padding: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e0e0e0',
+    },
+    versionText: {
+        fontSize: 16,
+    },
+    addButton: {
+        marginTop: 16,
+        padding: 12,
+        backgroundColor: '#4CAF50',
+        borderRadius: 8,
+        alignItems: 'center',
+    },
+    addButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+    },
+    deleteButton: {
+        marginTop: 16,
+        padding: 12,
+        backgroundColor: '#f44336',
+        borderRadius: 8,
+        alignItems: 'center',
+    },
+    deleteButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
     },
 });
 
