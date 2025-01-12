@@ -13,7 +13,7 @@ import {
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
-import { getLorcanaCardPrice } from '../services/LorcanaService';
+import { getLorcanaCardPrice, getDB } from '../services/LorcanaService';
 
 interface LorcanaGridViewProps {
     cards: LorcanaCardWithPrice[];
@@ -130,109 +130,158 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         currentPage * ITEMS_PER_PAGE
     );
 
-    useEffect(() => {
-        const updatePrices = async () => {
-            if (updatingPrices) return;
-            setUpdatingPrices(true);
+    // Move price update logic to a separate function
+    const updatePrices = useCallback(async () => {
+        if (updatingPrices) return;
+        setUpdatingPrices(true);
 
-            try {
-                // Filter out cards that already failed price lookup
-                const cardsNeedingPrices = paginatedCards.filter(card => 
-                    !card.prices?.usd && 
-                    !failedPriceLookups.current.has(card.Unique_ID)
-                );
-                
-                if (cardsNeedingPrices.length === 0) {
-                    setUpdatingPrices(false);
-                    return;
-                }
+        try {
+            // Calculate timestamp for 24 hours ago
+            const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            
+            // Filter out cards that already failed price lookup or have recent prices
+            const cardsNeedingPrices = paginatedCards.filter(card => 
+                (!card.prices?.usd || !card.last_updated || card.last_updated < twentyFourHoursAgo) && 
+                !failedPriceLookups.current.has(card.Unique_ID)
+            );
+            
+            if (cardsNeedingPrices.length === 0) {
+                setUpdatingPrices(false);
+                return;
+            }
 
-                const updatePromises = cardsNeedingPrices.map(async (card) => {
-                    if (card.Name && card.Set_Num && card.Rarity) {
-                        try {
-                            const prices = await getLorcanaCardPrice({
-                                Name: card.Name,
-                                Set_Num: card.Set_Num,
-                                Rarity: card.Rarity
-                            });
-                            
-                            if (!prices) {
-                                // Add to failed lookups if no price was found
-                                failedPriceLookups.current.add(card.Unique_ID);
-                                return card;
-                            }
-                            
-                            return {
-                                ...card,
-                                prices
-                            };
-                        } catch (error) {
-                            // Add to failed lookups on error
+            const updatePromises = cardsNeedingPrices.map(async (card) => {
+                if (card.Name && card.Set_Num && card.Rarity) {
+                    try {
+                        const prices = await getLorcanaCardPrice({
+                            Name: card.Name,
+                            Set_Num: card.Set_Num,
+                            Rarity: card.Rarity
+                        });
+                        
+                        if (!prices) {
+                            // Add to failed lookups if no price was found
                             failedPriceLookups.current.add(card.Unique_ID);
                             return card;
                         }
+
+                        // Update prices in database
+                        const db = await getDB();
+                        await db.executeSql(
+                            `UPDATE lorcana_cards 
+                             SET price_usd = ?, 
+                                 price_usd_foil = ?, 
+                                 last_updated = ? 
+                             WHERE Unique_ID = ?`,
+                            [
+                                prices.usd,
+                                prices.usd_foil,
+                                new Date().toISOString(),
+                                card.Unique_ID
+                            ]
+                        );
+                        
+                        return {
+                            ...card,
+                            prices,
+                            last_updated: new Date().toISOString()
+                        };
+                    } catch (error) {
+                        // Add to failed lookups on error
+                        failedPriceLookups.current.add(card.Unique_ID);
+                        return card;
                     }
-                    return card;
-                });
-
-                const updatedCards = await Promise.all(updatePromises);
-                
-                // Merge updated cards with existing cards
-                const newCards = cards.map(card => {
-                    const updatedCard = updatedCards.find(uc => uc.Unique_ID === card.Unique_ID);
-                    return updatedCard || card;
-                });
-
-                // Update the parent component with the new card data
-                if (onCardsUpdate) {
-                    onCardsUpdate(newCards);
                 }
-            } catch (error) {
-                console.error('Error updating card prices:', error);
-            } finally {
-                setUpdatingPrices(false);
+                return card;
+            });
+
+            const updatedCards = await Promise.all(updatePromises);
+            
+            // Merge updated cards with existing cards
+            const newCards = cards.map(card => {
+                const updatedCard = updatedCards.find(uc => uc.Unique_ID === card.Unique_ID);
+                return updatedCard || card;
+            });
+
+            // Update the parent component with the new card data
+            if (onCardsUpdate) {
+                onCardsUpdate(newCards);
             }
-        };
+        } catch (error) {
+            console.error('Error updating card prices:', error);
+        } finally {
+            setUpdatingPrices(false);
+        }
+    }, [cards, paginatedCards, updatingPrices, onCardsUpdate]);
 
+    // Call updatePrices when cards change or on initial mount
+    useEffect(() => {
         updatePrices();
-    }, [currentPage, cards]);
+    }, [updatePrices, paginatedCards]);  // Add dependencies to trigger on card changes
 
-    const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => (
-        <TouchableOpacity 
-            style={styles.cardContainer}
-            onPress={() => setSelectedCard(item)}
-        >
-            <View style={styles.cardImageContainer}>
-                <FastImage
-                    source={{ 
-                        uri: item.Image,
-                        priority: FastImage.priority.normal,
-                        cache: FastImage.cacheControl.immutable
-                    }}
-                    style={[
-                        styles.cardImage,
-                        !item.collected && styles.cardImageUncollected
-                    ]}
-                    resizeMode={FastImage.resizeMode.contain}
-                />
-                {!item.collected && (
-                    <View style={styles.missingOverlay}>
-                        <Icon name="plus-circle" size={24} color="white" />
-                        <Text style={styles.missingText}>Missing</Text>
-                    </View>
-                )}
-            </View>
-            <View style={[styles.cardInfo, !item.collected && styles.cardInfoUncollected]}>
-                <Text style={styles.cardNumber}>#{item.Card_Num || '0'}</Text>
-                <Text style={[styles.cardName, !item.collected && styles.cardNameUncollected]} numberOfLines={1}>
-                    {item.Name}
-                </Text>
-                <Text style={[styles.cardPrice, !item.collected && styles.cardPriceUncollected]}>
-                    ${item.prices?.usd ? Number(item.prices.usd).toFixed(2) : '0.00'}
-                </Text>
-            </View>
-        </TouchableOpacity>
-    );
+    // Keep the page change effect separate
+    useEffect(() => {
+        if (currentPage > 1) {  // Only update on actual page changes
+            updatePrices();
+        }
+    }, [currentPage, updatePrices]);
+
+    const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => {
+        return (
+            <TouchableOpacity 
+                style={styles.cardContainer}
+                onPress={() => setSelectedCard(item)}
+            >
+                <View style={styles.cardImageContainer}>
+                    {item.Image ? (
+                        <FastImage
+                            source={{ 
+                                uri: item.Image,
+                                priority: FastImage.priority.low,
+                                cache: FastImage.cacheControl.immutable,
+                                headers: {
+                                    'User-Agent': 'MTGPriceApp/1.0',
+                                    'Accept': 'image/*'
+                                }
+                            }}
+                            style={[
+                                styles.cardImage,
+                                !item.collected && styles.cardImageUncollected
+                            ]}
+                            resizeMode={FastImage.resizeMode.contain}
+                            onError={() => {
+                                console.log('[LorcanaGridView] Failed to load image:', {
+                                    url: item.Image,
+                                    name: item.Name
+                                });
+                            }}
+                            onLoadStart={() => console.log('[LorcanaGridView] Started loading:', item.Name)}
+                            onLoadEnd={() => console.log('[LorcanaGridView] Finished loading:', item.Name)}
+                        />
+                    ) : (
+                        <View style={[styles.cardImage, styles.placeholderImage]}>
+                            <Icon name="image-off" size={24} color="#666" />
+                        </View>
+                    )}
+                    {!item.collected && (
+                        <View style={styles.missingOverlay}>
+                            <Icon name="plus-circle" size={24} color="white" />
+                            <Text style={styles.missingText}>Missing</Text>
+                        </View>
+                    )}
+                </View>
+                <View style={[styles.cardInfo, !item.collected && styles.cardInfoUncollected]}>
+                    <Text style={styles.cardNumber}>#{item.Card_Num || '0'}</Text>
+                    <Text style={[styles.cardName, !item.collected && styles.cardNameUncollected]} numberOfLines={1}>
+                        {item.Name}
+                    </Text>
+                    <Text style={[styles.cardPrice, !item.collected && styles.cardPriceUncollected]}>
+                        ${item.prices?.usd ? Number(item.prices.usd).toFixed(2) : '0.00'}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+        );
+    };
 
     const renderFilters = () => (
         <View style={[styles.filtersPanel, !showFilters && styles.filtersPanelHidden]}>
@@ -807,6 +856,13 @@ const styles = StyleSheet.create({
     modalPrice: {
         fontSize: 16,
         marginBottom: 4,
+    },
+    placeholderImage: {
+        backgroundColor: '#f5f5f5',
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: '100%',
+        height: '100%'
     },
 });
 

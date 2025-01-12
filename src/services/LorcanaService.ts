@@ -11,7 +11,8 @@ let dbInstance: SQLiteDatabase | null = null
 let isInitialized = false
 let initializationPromise: Promise<void> | null = null
 
-const getDB = async () => {
+// Export getDB function
+export const getDB = async () => {
     if (dbInstance) return dbInstance;
     console.log('[LorcanaService] Initializing database...');
     try {
@@ -527,26 +528,88 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
         // Build search query using card details and properly encode each part
         // Only include set if the card is not enchanted
         const queryParts = [
-            `name:"${encodeURIComponent(baseName)}"`,
-            version && version !== "undefined" ? `version:"${encodeURIComponent(version)}"` : '',
-            card.Set_Num && card.Rarity !== 'Enchanted' ? `set:${encodeURIComponent(card.Set_Num)}` : '',
-            formattedRarity ? `rarity:${encodeURIComponent(formattedRarity)}` : ''
+            `name:"${baseName.replace(/"/g, '\\"')}"`, // Escape quotes in name
+            version ? `version:"${version.replace(/"/g, '\\"')}"` : '',
+            card.Set_Num && card.Rarity !== 'Enchanted' ? `set:${card.Set_Num}` : '',
+            formattedRarity ? `rarity:${formattedRarity}` : ''
         ].filter(Boolean);
         
-        const query = `q=${queryParts.join(' ')}`;
-        console.log('[LorcanaService] Fetching price with query:', LorcastPriceApi + query);
+        // Encode the entire query string after building it
+        const query = `q=${encodeURIComponent(queryParts.join(' '))}`;
+        console.log('[LorcanaService] Fetching price with query:', LorcastPriceApi + '?' + query);
         
         const response = await fetch(`${LorcastPriceApi}?${query}`);
         const data = await response.json();
         console.log('[LorcanaService] API response:', data);
 
         if (!data.results || !Array.isArray(data.results) || data.results.length === 0) {
-            console.log('[LorcanaService] No results found for card:', card.Name);
-            return {
-                usd: null,
-                usd_foil: null,
-                tcgplayer_id: null
-            };
+            // Try a more lenient search if exact match fails
+            const lenientQuery = `q=${encodeURIComponent(`name:"${baseName.replace(/"/g, '\\"')}"`)}`;
+            console.log('[LorcanaService] Trying lenient search:', LorcastPriceApi + '?' + lenientQuery);
+            
+            const lenientResponse = await fetch(`${LorcastPriceApi}?${lenientQuery}`);
+            const lenientData = await lenientResponse.json();
+            
+            if (!lenientData.results || !Array.isArray(lenientData.results) || lenientData.results.length === 0) {
+                console.log('[LorcanaService] No results found for card:', card.Name);
+                return {
+                    usd: null,
+                    usd_foil: null,
+                    tcgplayer_id: null
+                };
+            }
+            
+            // Find the best match from lenient results
+            const exactMatch = lenientData.results.find((result: { name: string; version?: string }) => {
+                const nameMatches = result.name.toLowerCase() === baseName.toLowerCase();
+                if (!version || !result.version) return nameMatches;
+                
+                // Normalize versions by removing extra spaces, converting to lowercase, and removing special characters
+                const normalizeVersion = (str: string) => str
+                    .toLowerCase()
+                    .replace(/\s+/g, ' ')
+                    .replace(/[^a-z0-9 ]/g, '')
+                    .trim();
+                
+                const normalizedVersion = normalizeVersion(version);
+                const normalizedResultVersion = normalizeVersion(result.version);
+                
+                // Log the comparison for debugging
+                console.log('[LorcanaService] Version comparison:', {
+                    original: version,
+                    normalized: normalizedVersion,
+                    resultOriginal: result.version,
+                    resultNormalized: normalizedResultVersion
+                });
+                
+                // Check for exact match first
+                if (normalizedVersion === normalizedResultVersion) return nameMatches;
+                
+                // Check for substring match (in case our version is partial)
+                if (normalizedResultVersion.includes(normalizedVersion) || 
+                    normalizedVersion.includes(normalizedResultVersion)) {
+                    return nameMatches;
+                }
+                
+                // Calculate similarity (allow for small typos)
+                const distance = levenshteinDistance(normalizedVersion, normalizedResultVersion);
+                const maxLength = Math.max(normalizedVersion.length, normalizedResultVersion.length);
+                const similarity = 1 - (distance / maxLength);
+                
+                // Accept if similarity is high enough (90% similar)
+                return nameMatches && similarity > 0.9;
+            });
+            
+            if (!exactMatch) {
+                console.log('[LorcanaService] No exact match found in lenient results');
+                return {
+                    usd: null,
+                    usd_foil: null,
+                    tcgplayer_id: null
+                };
+            }
+            
+            data.results = [exactMatch];
         }
 
         // Use the first result from the results array
@@ -1258,4 +1321,29 @@ export const fetchAndStoreEnchantedCards = async () => {
         throw error;
     }
 };
+
+// Add this helper function for calculating string similarity
+function levenshteinDistance(str1: string, str2: string): number {
+    const m = str1.length;
+    const n = str2.length;
+    const dp: number[][] = Array(m + 1).fill(0).map(() => Array(n + 1).fill(0));
+
+    for (let i = 0; i <= m; i++) dp[i][0] = i;
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (str1[i - 1] === str2[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1];
+            } else {
+                dp[i][j] = Math.min(
+                    dp[i - 1][j - 1] + 1,  // substitution
+                    dp[i - 1][j] + 1,      // deletion
+                    dp[i][j - 1] + 1       // insertion
+                );
+            }
+        }
+    }
+    return dp[m][n];
+}
 

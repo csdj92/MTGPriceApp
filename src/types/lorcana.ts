@@ -36,4 +36,6 @@ export interface LorcanaPrice {
 export interface LorcanaCardWithPrice extends LorcanaCard {
     prices?: LorcanaPrice;
     isExpanded?: boolean;
+    collected?: boolean;
+    last_updated?: string;
 } 
