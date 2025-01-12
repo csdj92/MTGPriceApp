@@ -8,7 +8,8 @@ import {
     FlatList,
     Modal,
     ScrollView,
-    Dimensions
+    Dimensions,
+    ActivityIndicator
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -57,9 +58,10 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [showFilters, setShowFilters] = useState(false);
     const [sortBy, setSortBy] = useState<SortOption>('number');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-    const [currentPage, setCurrentPage] = useState(1);
     const [selectedCard, setSelectedCard] = useState<LorcanaCardWithPrice | null>(null);
     const [updatingPrices, setUpdatingPrices] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
     // Add a ref to track cards that failed price lookup
     const failedPriceLookups = React.useRef<Set<string>>(new Set());
 
@@ -123,13 +125,6 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         });
     }, [cards, filters, sortBy, sortDirection]);
 
-    // Pagination
-    const totalPages = Math.ceil(filteredCards().length / ITEMS_PER_PAGE);
-    const paginatedCards = filteredCards().slice(
-        (currentPage - 1) * ITEMS_PER_PAGE,
-        currentPage * ITEMS_PER_PAGE
-    );
-
     // Move price update logic to a separate function
     const updatePrices = useCallback(async () => {
         if (updatingPrices) return;
@@ -140,7 +135,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
             
             // Filter out cards that already failed price lookup or have recent prices
-            const cardsNeedingPrices = paginatedCards.filter(card => 
+            const cardsNeedingPrices = filteredCards().filter(card => 
                 (!card.prices?.usd || !card.last_updated || card.last_updated < twentyFourHoursAgo) && 
                 !failedPriceLookups.current.has(card.Unique_ID)
             );
@@ -212,19 +207,27 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         } finally {
             setUpdatingPrices(false);
         }
-    }, [cards, paginatedCards, updatingPrices, onCardsUpdate]);
+    }, [cards, filteredCards, updatingPrices, onCardsUpdate]);
 
     // Call updatePrices when cards change or on initial mount
     useEffect(() => {
         updatePrices();
-    }, [updatePrices, paginatedCards]);  // Add dependencies to trigger on card changes
+    }, [updatePrices]);  // Add dependencies to trigger on card changes
 
-    // Keep the page change effect separate
-    useEffect(() => {
-        if (currentPage > 1) {  // Only update on actual page changes
-            updatePrices();
+    const loadMoreCards = async () => {
+        if (isLoadingMore || !hasMore) return;
+        setIsLoadingMore(true);
+
+        try {
+            // Logic to load more cards goes here
+            // For example, you might fetch more cards from an API or database
+            // and then update the state with the new cards
+        } catch (error) {
+            console.error('Error loading more cards:', error);
+        } finally {
+            setIsLoadingMore(false);
         }
-    }, [currentPage, updatePrices]);
+    };
 
     const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => {
         return (
@@ -255,8 +258,6 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                                     name: item.Name
                                 });
                             }}
-                            onLoadStart={() => console.log('[LorcanaGridView] Started loading:', item.Name)}
-                            onLoadEnd={() => console.log('[LorcanaGridView] Finished loading:', item.Name)}
                         />
                     ) : (
                         <View style={[styles.cardImage, styles.placeholderImage]}>
@@ -546,46 +547,15 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             {renderFilters()}
 
             <FlatList
-                data={paginatedCards}
+                data={filteredCards()}
                 renderItem={renderCard}
                 keyExtractor={item => item.Unique_ID || ''}
                 numColumns={3}
                 contentContainerStyle={styles.grid}
+                onEndReached={loadMoreCards}
+                onEndReachedThreshold={0.5}
+                ListFooterComponent={isLoadingMore ? <ActivityIndicator size="large" color="#2196F3" /> : null}
             />
-
-            <View style={styles.pagination}>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === 1 && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(1)}
-                    disabled={currentPage === 1}
-                >
-                    <Icon name="page-first" size={24} color={currentPage === 1 ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === 1 && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                >
-                    <Icon name="chevron-left" size={24} color={currentPage === 1 ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-                <Text style={styles.pageText}>
-                    Page {currentPage} of {totalPages}
-                </Text>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === totalPages && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                >
-                    <Icon name="chevron-right" size={24} color={currentPage === totalPages ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === totalPages && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(totalPages)}
-                    disabled={currentPage === totalPages}
-                >
-                    <Icon name="page-last" size={24} color={currentPage === totalPages ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-            </View>
 
             {renderCardModal()}
         </View>

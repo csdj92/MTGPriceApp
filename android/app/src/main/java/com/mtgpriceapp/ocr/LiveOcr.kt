@@ -3,8 +3,13 @@ package com.mtgpriceapp.ocr
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.hardware.camera2.*
+import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
 import android.os.HandlerThread
@@ -19,6 +24,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
@@ -32,6 +38,11 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         private const val TAG = "LiveOcr"
         const val NAME = "LiveOcr"
         private const val MAX_IMAGES = 2  // ML Kit recommendation for backpressure
+        private const val COOLDOWN_MS = 2000L  // 2 seconds cooldown
+        private const val AOI_LEFT_PERCENT = 0.1f  // 10% from the left
+        private const val AOI_TOP_PERCENT = 0.3f   // 30% from the top
+        private const val AOI_WIDTH_PERCENT = 0.8f // 80% width
+        private const val AOI_HEIGHT_PERCENT = 0.4f // 40% height
     }
 
     private var cameraDevice: CameraDevice? = null
@@ -51,6 +62,12 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     private val textRecognizer: TextRecognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
+
+    private val recentScans = mutableListOf<Pair<String, Long>>()
+
+    // Variables for movement detection
+    private var lastBoundingBox: Rect? = null
+    private val MOVEMENT_THRESHOLD = 50  // Adjust this value as needed
 
     override fun getName() = NAME
 
@@ -161,7 +178,19 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                         if (image != null) {
                             try {
                                 val rotation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-                                val inputImage = InputImage.fromMediaImage(image, rotation)
+                                
+                                // Define AOI based on image dimensions
+                                val width = image.width
+                                val height = image.height
+
+                                val left = (width * AOI_LEFT_PERCENT).toInt()
+                                val top = (height * AOI_TOP_PERCENT).toInt()
+                                val cropWidth = (width * AOI_WIDTH_PERCENT).toInt()
+                                val cropHeight = (height * AOI_HEIGHT_PERCENT).toInt()
+
+                                val croppedImage = cropImage(image, left, top, cropWidth, cropHeight)
+
+                                val inputImage = InputImage.fromBitmap(croppedImage, rotation)
 
                                 textRecognizer.process(inputImage)
                                     .addOnSuccessListener(executor) { text ->
@@ -242,24 +271,20 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                                                     else -> name
                                                 }
 
+                                                // Get bounding box of the first text block
+                                                val boundingBox = if (text.textBlocks.isNotEmpty()) {
+                                                    text.textBlocks[0].boundingBox
+                                                } else {
+                                                    null
+                                                }
+
                                                 if (fullName != lastDetectedName) {
                                                     Log.d(TAG, "Selected card name: $fullName")
-                                                    // small delay to reduce spamming 1.75 sec
-                                                    Thread.sleep(1750)
-
+                                                    
+                                                    // Emit OCR result with double scan and movement prevention
+                                                    sendOcrResult(fullName, name, subtype, isLorcana, boundingBox)
+                                                    
                                                     lastDetectedName = fullName
-                                                    val params = Arguments.createMap().apply {
-                                                        putString("text", fullName)
-                                                        putString("mainName", name)
-                                                        putString("subtype", subtype)
-                                                        putBoolean("isLorcana", isLorcana)
-                                                    }
-                                                    Log.d(TAG, "Emitting OCR result: mainName=$name, subtype=$subtype, isLorcana=$isLorcana")
-                                                    reactApplicationContext
-                                                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                                                        .emit("LiveOcrResult", params)
-
-                                                    Log.d(TAG, "Card name detected: $fullName")
                                                 }
                                             }
                                         }
@@ -493,5 +518,74 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         if (name.contains("'")) score += 1
 
         return score
+    }
+
+    private fun sendOcrResult(fullName: String, name: String, subtype: String?, isLorcana: Boolean, boundingBox: Rect?) {
+        val currentTime = System.currentTimeMillis()
+        // Remove scans older than cooldown
+        recentScans.removeAll { currentTime - it.second > COOLDOWN_MS }
+
+        if (recentScans.any { it.first.equals(fullName, ignoreCase = true) }) {
+            Log.d(TAG, "Duplicate scan detected for: $fullName. Ignoring.")
+            return
+        }
+
+        // Movement detection: check if the bounding box has moved sufficiently
+        if (boundingBox != null && lastBoundingBox != null) {
+            val dx = abs(boundingBox.centerX() - lastBoundingBox!!.centerX())
+            val dy = abs(boundingBox.centerY() - lastBoundingBox!!.centerY())
+            if (dx < MOVEMENT_THRESHOLD && dy < MOVEMENT_THRESHOLD) {
+                Log.d(TAG, "Card position hasn't moved significantly (dx=$dx, dy=$dy). Ignoring scan.")
+                return
+            }
+        }
+
+        // Add to recent scans
+        recentScans.add(Pair(fullName, currentTime))
+
+        // Update the last bounding box
+        lastBoundingBox = boundingBox
+
+        val params = Arguments.createMap().apply {
+            putString("text", fullName)
+            putString("mainName", name)
+            putString("subtype", subtype)
+            putBoolean("isLorcana", isLorcana)
+        }
+        Log.d(TAG, "Emitting OCR result: mainName=$name, subtype=$subtype, isLorcana=$isLorcana")
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("LiveOcrResult", params)
+
+        Log.d(TAG, "Card name detected: $fullName")
+    }
+
+    /**
+     * Crops the YUV image to the specified rectangle and converts it to a Bitmap.
+     */
+    private fun cropImage(image: Image, left: Int, top: Int, width: Int, height: Int): Bitmap {
+        // Convert YUV_420_888 to Bitmap
+        val yBuffer = image.planes[0].buffer
+        val uBuffer = image.planes[1].buffer
+        val vBuffer = image.planes[2].buffer
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        // U and V are swapped
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, out)
+        val fullBitmap = BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+
+        // Crop to AOI
+        return Bitmap.createBitmap(fullBitmap, left, top, width, height)
     }
 }

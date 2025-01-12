@@ -8,7 +8,7 @@ import {
   PermissionsAndroid,
   Dimensions,
 } from 'react-native';
-import LiveOcrPreview from './LiveOcrPreview';
+import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { ExtendedCard, OcrResult } from '../types/card';
 
 const { LiveOcr } = NativeModules;
@@ -71,17 +71,37 @@ const CardScanner: React.FC<CardScannerProps> = ({
     const screenWidth = screen.width;
     const screenHeight = screen.height;
 
-    // Scale preview to fit screen height
-    const scale = screenHeight / previewHeight;
-    const scaledWidth = previewWidth * scale;
-    const horizontalOffset = (screenWidth - scaledWidth) / 2;
+    const previewAspectRatio = previewWidth / previewHeight;
+    const screenAspectRatio = screenWidth / screenHeight;
+
+    let scale: number;
+    let scaledWidth: number;
+    let scaledHeight: number;
+    let horizontalOffset: number;
+    let verticalOffset: number;
+
+    if (previewAspectRatio > screenAspectRatio) {
+        // Preview is wider than screen
+        scale = screenHeight / previewHeight;
+        scaledWidth = previewWidth * scale;
+        scaledHeight = screenHeight;
+        horizontalOffset = (screenWidth - scaledWidth) / 2;
+        verticalOffset = 0;
+    } else {
+        // Preview is taller or equal to screen
+        scale = screenWidth / previewWidth;
+        scaledWidth = screenWidth;
+        scaledHeight = previewHeight * scale;
+        horizontalOffset = 0;
+        verticalOffset = (screenHeight - scaledHeight) / 2;
+    }
 
     const newStyle = {
-      position: 'absolute' as const,
-      width: scaledWidth,
-      height: screenHeight,
-      left: horizontalOffset,
-      top: 0,
+        position: 'absolute' as const,
+        width: scaledWidth,
+        height: scaledHeight,
+        left: horizontalOffset,
+        top: verticalOffset,
     };
     setAspectRatioStyle(newStyle);
   };
@@ -139,7 +159,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
   return (
     <View style={styles.container}>
       <View style={[styles.previewContainer, aspectRatioStyle]}>
-        <LiveOcrPreview style={StyleSheet.absoluteFill} isActive={isActive && !isPaused} />
+        <LiveOcrPreviewWithOverlay style={StyleSheet.absoluteFill} isActive={isActive && !isPaused} />
       </View>
     </View>
   );
