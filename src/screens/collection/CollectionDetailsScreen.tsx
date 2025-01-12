@@ -3,7 +3,7 @@ import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert } fr
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { databaseService } from '../../services/DatabaseService';
-import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardFromCollection, getLorcanaSetMissingCards } from '../../services/LorcanaService';
+import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardFromCollection, getLorcanaSetMissingCards, } from '../../services/LorcanaService';
 import CardList from '../../components/CardList';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import LorcanaGridView from '../../components/LorcanaGridView';
@@ -185,7 +185,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                                     setMtgCards(prev => prev.filter(c => c.uuid !== card.uuid));
                                 }
                             } else if (collection.type === 'Lorcana' && 'Unique_ID' in card) {
-                                await databaseService.removeLorcanaCardFromCollection(card.Unique_ID, collection.id);
+                                await deleteLorcanaCardFromCollection(card.Unique_ID, collection.id);
                                 setLorcanaCards(prev => {
                                     const updatedCards = prev.filter(c => c.Unique_ID !== card.Unique_ID);
                                     

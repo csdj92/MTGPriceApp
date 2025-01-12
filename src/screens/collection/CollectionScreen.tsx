@@ -16,6 +16,13 @@ const CollectionScreen: React.FC<CollectionScreenProps> = ({ navigation }) => {
     return (
         <SafeAreaView style={{ flex: 1 }}>
             <Tab.Navigator>
+            <Tab.Screen 
+                    name="SetCompletion" 
+                    component={SetCompletionScreen}
+                    options={{
+                        tabBarLabel: 'Set Completion'
+                    }}
+                />
                 <Tab.Screen 
                     name="Collections" 
                     component={CollectionsTab}
@@ -23,13 +30,7 @@ const CollectionScreen: React.FC<CollectionScreenProps> = ({ navigation }) => {
                         tabBarLabel: 'Collections'
                     }}
                 />
-                <Tab.Screen 
-                    name="SetCompletion" 
-                    component={SetCompletionScreen}
-                    options={{
-                        tabBarLabel: 'Set Completion'
-                    }}
-                />
+               
             </Tab.Navigator>
         </SafeAreaView>
     );

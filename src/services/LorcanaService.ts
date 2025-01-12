@@ -1108,33 +1108,10 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
 export const deleteLorcanaCardFromCollection = async (cardId: string, collectionId: string): Promise<void> => {
     try {
         const db = await getDB();
-        await db.transaction(async (tx) => {
-            // Remove from collection_cards table
-            await tx.executeSql(
-                'DELETE FROM lorcana_collection_cards WHERE collection_id = ? AND card_id = ?',
-                [collectionId, cardId]
-            );
-
-            // Update collection timestamp
-            await tx.executeSql(
-                'UPDATE lorcana_collections SET updated_at = ? WHERE id = ?',
-                [new Date().toISOString(), collectionId]
-            );
-        });
-
-        // Check if card exists in any other collections
-        const [results] = await db.executeSql(
-            'SELECT COUNT(*) as count FROM lorcana_collection_cards WHERE card_id = ?',
+        await db.executeSql(
+            'UPDATE lorcana_cards SET collected = 0 WHERE Unique_ID = ?',
             [cardId]
         );
-        
-        // If card is not in any other collections, mark as uncollected
-        if (results.rows.item(0).count === 0) {
-            await db.executeSql(
-                'UPDATE lorcana_cards SET collected = 0 WHERE Unique_ID = ?',
-                [cardId]
-            );
-        }
     } catch (error) {
         console.error('[LorcanaService] Error deleting card from collection:', error);
         throw error;

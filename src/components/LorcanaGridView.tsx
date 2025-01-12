@@ -9,7 +9,8 @@ import {
     Modal,
     ScrollView,
     Dimensions,
-    ActivityIndicator
+    ActivityIndicator,
+    Alert
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -62,6 +63,8 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [updatingPrices, setUpdatingPrices] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(true);
+    const [showVersionModal, setShowVersionModal] = useState(false);
+    const [availableVersions, setAvailableVersions] = useState<LorcanaCardWithPrice[]>([]);
     // Add a ref to track cards that failed price lookup
     const failedPriceLookups = React.useRef<Set<string>>(new Set());
 
@@ -229,11 +232,47 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         }
     };
 
+    const handleLongPress = (card: LorcanaCardWithPrice) => {
+        // Fetch available versions for the card
+        fetchAvailableVersions(card);
+        setSelectedCard(card);
+        setShowVersionModal(true);
+    };
+
+    const fetchAvailableVersions = async (card: LorcanaCardWithPrice) => {
+        try {
+            const db = await getDB();
+            const [results] = await db.executeSql(
+                'SELECT * FROM lorcana_cards WHERE Name = ?',
+                [card.Name]
+            );
+            const versions = [];
+            for (let i = 0; i < results.rows.length; i++) {
+                versions.push(results.rows.item(i));
+            }
+            setAvailableVersions(versions);
+        } catch (error) {
+            console.error('Error fetching card versions:', error);
+        }
+    };
+
+    const handleVersionChange = (newVersion: LorcanaCardWithPrice) => {
+        // Update the card version
+        if (onCardsUpdate) {
+            const updatedCards = cards.map(card =>
+                card.Unique_ID === selectedCard?.Unique_ID ? newVersion : card
+            );
+            onCardsUpdate(updatedCards);
+        }
+        setShowVersionModal(false);
+    };
+
     const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => {
         return (
             <TouchableOpacity 
                 style={styles.cardContainer}
                 onPress={() => setSelectedCard(item)}
+                onLongPress={() => handleLongPress(item)}
             >
                 <View style={styles.cardImageContainer}>
                     {item.Image ? (
@@ -283,6 +322,58 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             </TouchableOpacity>
         );
     };
+
+    const renderVersionModal = () => (
+        <Modal
+            visible={showVersionModal}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowVersionModal(false)}
+        >
+            <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                    <Text style={styles.modalTitle}>Select Card Version</Text>
+                    <ScrollView>
+                        {availableVersions.map(version => (
+                            <TouchableOpacity
+                                key={version.Unique_ID}
+                                style={styles.versionOption}
+                                onPress={() => handleVersionChange(version)}
+                            >
+                                <Text style={styles.versionText}>{version.Name}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                    {!selectedCard?.collected && (
+                        <TouchableOpacity
+                            style={styles.addButton}
+                            onPress={() => {
+                                addToCollection(selectedCard!);
+                                setShowVersionModal(false);
+                            }}
+                        >
+                            <Text style={styles.addButtonText}>Add to Collection</Text>
+                        </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                        style={styles.deleteButton}
+                        onPress={() => {
+                            onDeleteCard(selectedCard!);
+                            setShowVersionModal(false);
+                        }}
+                    >
+                        <Text style={styles.deleteButtonText}>Delete Card</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.modalCloseButton}
+                        onPress={() => setShowVersionModal(false)}
+                    >
+                        <Icon name="close" size={24} color="#000" />
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+    );
 
     const renderFilters = () => (
         <View style={[styles.filtersPanel, !showFilters && styles.filtersPanelHidden]}>
@@ -411,60 +502,19 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         </View>
     );
 
-    const renderCardModal = () => (
-        <Modal
-            visible={selectedCard !== null}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={() => setSelectedCard(null)}
-        >
-            <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                    {selectedCard && (
-                        <ScrollView>
-                            <View style={styles.modalImageContainer}>
-                                <FastImage
-                                    source={{ 
-                                        uri: selectedCard.Image,
-                                        priority: FastImage.priority.high,
-                                        cache: FastImage.cacheControl.immutable
-                                    }}
-                                    style={styles.modalImage}
-                                    resizeMode={FastImage.resizeMode.contain}
-                                />
-                                <TouchableOpacity
-                                    style={styles.modalCloseButton}
-                                    onPress={() => setSelectedCard(null)}
-                                >
-                                    <Icon name="close" size={28} color="#666" />
-                                </TouchableOpacity>
-                            </View>
-                            <View style={styles.modalInfo}>
-                                <Text style={styles.modalTitle}>{selectedCard.Name}</Text>
-                                <Text style={styles.modalText}>Set: {selectedCard.Set_Name}</Text>
-                                <Text style={styles.modalText}>Card Number: {selectedCard.Card_Num}</Text>
-                                <Text style={styles.modalText}>Rarity: {selectedCard.Rarity}</Text>
-                                <Text style={styles.modalText}>Color: {selectedCard.Color}</Text>
-                                <Text style={styles.modalText}>Cost: {selectedCard.Cost}</Text>
-                                <Text style={styles.modalText}>Strength/Willpower: {selectedCard.Strength} / {selectedCard.Willpower}</Text>
-                                {selectedCard.Body_Text && (
-                                    <Text style={styles.modalText}>Card Text: {selectedCard.Body_Text}</Text>
-                                )}
-                                {selectedCard.Flavor_Text && (
-                                    <Text style={styles.modalFlavorText}>{selectedCard.Flavor_Text}</Text>
-                                )}
-                                <View style={styles.modalPrices}>
-                                    <Text style={styles.modalPriceTitle}>Prices:</Text>
-                                    <Text style={styles.modalPrice}>Normal: ${selectedCard.prices?.usd || '0.00'}</Text>
-                                    <Text style={styles.modalPrice}>Foil: ${selectedCard.prices?.usd_foil || '0.00'}</Text>
-                                </View>
-                            </View>
-                        </ScrollView>
-                    )}
-                </View>
-            </View>
-        </Modal>
-    );
+    // Function to add a card to the collection
+    const addToCollection = (card: LorcanaCardWithPrice) => {
+        // Implement the logic to add the card to the collection
+        // This might involve updating the database and state
+        console.log('Adding card to collection:', card);
+        // Example: Update the card's collected status
+        if (onCardsUpdate) {
+            const updatedCards = cards.map(c =>
+                c.Unique_ID === card.Unique_ID ? { ...c, collected: true } : c
+            );
+            onCardsUpdate(updatedCards);
+        }
+    };
 
     return (
         <View style={styles.container}>
@@ -557,7 +607,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 ListFooterComponent={isLoadingMore ? <ActivityIndicator size="large" color="#2196F3" /> : null}
             />
 
-            {renderCardModal()}
+            {renderVersionModal()}
         </View>
     );
 };
@@ -740,25 +790,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#666',
     },
-    pagination: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 16,
-        backgroundColor: 'white',
-        borderTopWidth: 1,
-        borderTopColor: '#e0e0e0',
-    },
-    pageButton: {
-        padding: 8,
-    },
-    pageButtonDisabled: {
-        opacity: 0.5,
-    },
-    pageText: {
-        marginHorizontal: 16,
-        color: '#666',
-    },
     modalContainer: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -772,14 +803,18 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         padding: 16,
     },
-    modalImageContainer: {
-        position: 'relative',
-        marginBottom: 16,
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 8,
     },
-    modalImage: {
-        width: '100%',
-        aspectRatio: 0.72,
-        borderRadius: 8,
+    versionOption: {
+        padding: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#e0e0e0',
+    },
+    versionText: {
+        fontSize: 16,
     },
     modalCloseButton: {
         position: 'absolute',
@@ -797,42 +832,34 @@ const styles = StyleSheet.create({
         shadowRadius: 3.84,
         elevation: 5,
     },
-    modalInfo: {
-        padding: 16,
-    },
-    modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginBottom: 8,
-    },
-    modalText: {
-        fontSize: 16,
-        marginBottom: 8,
-    },
-    modalFlavorText: {
-        fontSize: 16,
-        fontStyle: 'italic',
-        color: '#666',
-        marginBottom: 8,
-    },
-    modalPrices: {
-        marginTop: 16,
-    },
-    modalPriceTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        marginBottom: 8,
-    },
-    modalPrice: {
-        fontSize: 16,
-        marginBottom: 4,
-    },
     placeholderImage: {
         backgroundColor: '#f5f5f5',
         justifyContent: 'center',
         alignItems: 'center',
         width: '100%',
         height: '100%'
+    },
+    deleteButton: {
+        marginTop: 16,
+        padding: 12,
+        backgroundColor: '#f44336',
+        borderRadius: 8,
+        alignItems: 'center',
+    },
+    deleteButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
+    },
+    addButton: {
+        marginTop: 16,
+        padding: 12,
+        backgroundColor: '#4CAF50',
+        borderRadius: 8,
+        alignItems: 'center',
+    },
+    addButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
     },
 });
 

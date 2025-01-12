@@ -370,16 +370,6 @@ class DatabaseService {
             await this.db.executeSql('PRAGMA foreign_keys = ON;');
             console.log('Foreign key constraints enabled');
 
-            // Log table structure before creation
-            const [existingTables] = await this.db.executeSql("SELECT name FROM sqlite_master WHERE type='table'");
-            console.log('Existing tables before creation:', existingTables.rows.raw());
-
-            // For each table, log its structure
-            for (const table of existingTables.rows.raw()) {
-                const [tableInfo] = await this.db.executeSql(`PRAGMA table_info('${table.name}')`);
-                console.log(`Table ${table.name} structure:`, tableInfo.rows.raw());
-            }
-
             // Create collections table if it doesn't exist
             await this.db.executeSql(`
                 CREATE TABLE IF NOT EXISTS collections (
@@ -1792,7 +1782,6 @@ class DatabaseService {
                     `, [setCode]);
                     
                     const totalCards = totalResult.rows.item(0).total;
-                    console.log(`[DatabaseService] Total unique cards in set ${setCode}: ${totalCards}`);
 
                     // Get collected cards count and total value
                     const [collectedResult] = await this.db.executeSql(
@@ -1811,11 +1800,6 @@ class DatabaseService {
                     const collectedCards = collectedResult.rows.item(0).collected;
                     const totalValue = collectedResult.rows.item(0).total_value || 0;
 
-                    console.log(`[DatabaseService] Collection stats for ${collection.name}:`, {
-                        collectedCards,
-                        totalValue,
-                        totalCards
-                    });
 
                     // Calculate completion percentage
                     const completionPercentage = totalCards > 0 ? (collectedCards / totalCards) * 100 : 0;

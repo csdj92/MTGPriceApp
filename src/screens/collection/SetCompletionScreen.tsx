@@ -96,7 +96,6 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         // Load MTG collections
         databaseService.getSetCollections()
             .then(collections => {
-                console.log('[SetCompletionScreen] MTG collections loaded:', collections);
                 setMtgCollections(collections);
                 setLoadingMtg(false);
             })
@@ -110,7 +109,6 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         ensureLorcanaInitialized()
             .then(() => getLorcanaSetCollections())
             .then(collections => {
-                console.log('[SetCompletionScreen] Lorcana collections loaded:', collections);
                 const mappedCollections = collections?.map(c => ({
                     ...c,
                     cardCount: c.collectedCards
