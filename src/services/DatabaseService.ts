@@ -46,7 +46,7 @@ interface SetCollectionStats {
 
 let mtgJsonDb: SQLite.SQLiteDatabase | null = null;
 
-class DatabaseService {
+export default class DatabaseService {
     private db: SQLite.SQLiteDatabase | null = null;
     private setListCache: SetInfo[] | null = null;
     private setListLastUpdate = 0;
@@ -64,6 +64,7 @@ class DatabaseService {
     constructor() {
         this.initializeDatabase();
     }
+
 
     private async ensureMTGJsonDatabaseExists(): Promise<void> {
         const mtgJsonPath = '/data/data/com.mtgpriceapp/files/AllPrintings.sqlite';
@@ -371,7 +372,7 @@ class DatabaseService {
             await this.db.executeSql('PRAGMA foreign_keys = ON;');
             console.log('Foreign key constraints enabled');
 
-            // Create collections table if it doesn't exist
+            // Create collections table
             await this.db.executeSql(`
                 CREATE TABLE IF NOT EXISTS collections (
                     id TEXT PRIMARY KEY NOT NULL,
@@ -474,7 +475,25 @@ class DatabaseService {
             `);
             console.log('App settings table created/verified');
 
+            // Create card_hashes table with TEXT for hash
+            await this.db.executeSql(`
+                CREATE TABLE IF NOT EXISTS card_hashes (
+                    uuid TEXT PRIMARY KEY NOT NULL,
+                    hash TEXT NOT NULL
+                );
+            `);
+            console.log('[DatabaseService] card_hashes table (TEXT) created/verified.');
 
+            // Add index for better lookup performance
+            await this.db.executeSql(
+                'CREATE INDEX IF NOT EXISTS idx_card_hashes_hash ON card_hashes(hash)'
+            );
+            console.log('Card hashes index created/verified');
+
+            // After creating tables, preload hashes
+            await this.preloadHashes();
+
+            console.log('[DatabaseService] Database structure verified');
         } catch (error) {
             console.error('Database verification error:', error);
             throw error;
@@ -1472,7 +1491,7 @@ class DatabaseService {
 
             console.log('[DatabaseService] Price tables and indexes created successfully');
         } catch (error) {
-            console.error('[DatabaseService] Error creating price tables:', error);
+            console.error('[DatabaseService] Error creating tables:', error);
             if (error instanceof Error) {
                 console.error('[DatabaseService] Error details:', {
                     message: error.message,
@@ -2319,6 +2338,119 @@ class DatabaseService {
             }
             throw error;
         }
+    }
+
+    public async preloadHashes(): Promise<void> {
+        try {
+            console.log('[DatabaseService] Starting preloadHashes...');
+            
+            if (!this.db) {
+                await this.initDatabase();
+            }
+
+            // Drop existing table
+            await this.db!.executeSql('DROP TABLE IF EXISTS card_hashes');
+            
+            // Recreate the table
+            await this.db!.executeSql(`
+                CREATE TABLE IF NOT EXISTS card_hashes (
+                    uuid TEXT PRIMARY KEY NOT NULL,
+                    hash TEXT NOT NULL
+                );
+            `);
+
+            // Create index for better lookup performance
+            await this.db!.executeSql(
+                'CREATE INDEX IF NOT EXISTS idx_card_hashes_hash ON card_hashes(hash)'
+            );
+
+            const data = require('../../hashesdct.json');
+            const entries = Object.entries(data);
+            
+            const [result] = await this.db!.executeSql(
+                'SELECT COUNT(*) AS count FROM card_hashes'
+            );
+            const currentCount = result.rows.item(0).count;
+
+            if (currentCount === entries.length) {
+                console.log('[DatabaseService] All hashes already loaded');
+                return;
+            }
+
+            const batchSize = 500;
+            
+            for (let i = 0; i < entries.length; i += batchSize) {
+                const batch = entries.slice(i, i + batchSize);
+                const validBatch = batch.filter(([uuid, hash]) => uuid && hash);
+
+                if (validBatch.length > 0) {
+                    const placeholders = validBatch.map(() => '(?, ?)').join(',');
+                    const values = validBatch.flatMap(([uuid, hash]) => [
+                        uuid,
+                        hash // Store hash as string
+                    ]);
+
+                    await this.db!.executeSql(`
+                        INSERT OR REPLACE INTO card_hashes (uuid, hash)
+                        VALUES ${placeholders}
+                    `, values);
+                }
+            }
+
+            const [finalResult] = await this.db!.executeSql(
+                'SELECT COUNT(*) AS count FROM card_hashes'
+            );
+            console.log(`[DatabaseService] Loaded ${finalResult.rows.item(0).count} hashes`);
+
+        } catch (error) {
+            console.error('[DatabaseService] Error preloading hashes:', error);
+            throw error;
+        }
+    }
+
+    async getCardByHash(hash: string): Promise<string | null> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
+        try {
+            const [result] = await this.db!.executeSql(
+                'SELECT uuid FROM card_hashes WHERE hash = ?',
+                [hash]
+            );
+
+            if (result.rows.length > 0) {
+                return result.rows.item(0).uuid;
+            }
+            return null;
+        } catch (error) {
+            console.error('[DatabaseService] Error getting card by hash:', error);
+            return null;
+        }
+    }
+
+    async insertCardHash(uuid: string, hash: string): Promise<void> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
+        try {
+            await this.db!.executeSql(
+                'INSERT OR REPLACE INTO card_hashes (uuid, hash) VALUES (?, ?)',
+                [uuid, hash]
+            );
+        } catch (error) {
+            console.error('[DatabaseService] Error inserting card hash:', error);
+            throw error;
+        }
+    }
+
+    // Add this method to test logging
+    public async testLogging(): Promise<void> {
+        console.log('[DatabaseService] Test log 1');
+        console.warn('[DatabaseService] Test warning');
+        console.error('[DatabaseService] Test error');
+        console.log('[DatabaseService] Test log 2');
     }
 
 }
