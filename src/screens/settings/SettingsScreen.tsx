@@ -166,40 +166,7 @@ const SettingsScreen = () => {
                         <Text style={styles.rebuildingText}>Rebuilding database...</Text>
                     </View>
                 )}
-                <SettingsItem
-                    icon="database-import"
-                    title="Load Card Hashes"
-                    subtitle="Load precomputed card image hashes"
-                    onPress={async () => {
-                        try {
-                            Alert.alert(
-                                'Load Card Hashes',
-                                'Are you sure you want to load the precomputed card image hashes? This will replace any existing hashes.',
-                                [
-                                    {
-                                        text: 'Cancel',
-                                        style: 'cancel',
-                                    },
-                                    {
-                                        text: 'Load',
-                                        onPress: async () => {
-                                            try {
-                                                await databaseService.preloadHashes();
-                                                Alert.alert('Success', 'Card hashes have been loaded successfully.');
-                                            } catch (error) {
-                                                console.error('Error loading hashes:', error);
-                                                Alert.alert('Error', 'Failed to load card hashes. Please try again.');
-                                            }
-                                        },
-                                    },
-                                ]
-                            );
-                        } catch (error) {
-                            console.error('Error loading hashes:', error);
-                            Alert.alert('Error', 'Failed to load card hashes. Please try again.');
-                        }
-                    }}
-                />
+               
             </SettingsSection>
 
             <SettingsSection title="Data Management">

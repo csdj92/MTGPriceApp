@@ -3,7 +3,6 @@ import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-na
 import { scryfallService } from '../services/ScryfallService';
 import type { ExtendedCard } from '../types/card';
 import CardList from '../components/CardList';
-import { databaseService } from '../services/DatabaseService';
 
 const StartScreen = () => {
     const [isLoading, setIsLoading] = useState(false);
@@ -29,18 +28,6 @@ const StartScreen = () => {
         setShowList(false);
         setCards([]);
     };
-
-    useEffect(() => {
-        const init = async () => {
-            try {
-                await databaseService.preloadHashes();
-                await databaseService.testLogging();
-            } catch (error) {
-                console.error('Error preloading hashes:', error);
-            }
-        };
-        init();
-    }, []);
 
     if (showList) {
         return (

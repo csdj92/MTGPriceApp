@@ -490,8 +490,8 @@ export default class DatabaseService {
             );
             console.log('Card hashes index created/verified');
 
-            // After creating tables, preload hashes
-            await this.preloadHashes();
+            // // After creating tables, preload hashes
+            // await this.preloadHashes();
 
             console.log('[DatabaseService] Database structure verified');
         } catch (error) {
@@ -2340,73 +2340,73 @@ export default class DatabaseService {
         }
     }
 
-    public async preloadHashes(): Promise<void> {
-        try {
-            console.log('[DatabaseService] Starting preloadHashes...');
+    // public async preloadHashes(): Promise<void> {
+    //     try {
+    //         console.log('[DatabaseService] Starting preloadHashes...');
             
-            if (!this.db) {
-                await this.initDatabase();
-            }
+    //         if (!this.db) {
+    //             await this.initDatabase();
+    //         }
 
-            // Drop existing table
-            await this.db!.executeSql('DROP TABLE IF EXISTS card_hashes');
+    //         // Drop existing table
+    //         await this.db!.executeSql('DROP TABLE IF EXISTS card_hashes');
             
-            // Recreate the table
-            await this.db!.executeSql(`
-                CREATE TABLE IF NOT EXISTS card_hashes (
-                    uuid TEXT PRIMARY KEY NOT NULL,
-                    hash TEXT NOT NULL
-                );
-            `);
+    //         // Recreate the table
+    //         await this.db!.executeSql(`
+    //             CREATE TABLE IF NOT EXISTS card_hashes (
+    //                 uuid TEXT PRIMARY KEY NOT NULL,
+    //                 hash TEXT NOT NULL
+    //             );
+    //         `);
 
-            // Create index for better lookup performance
-            await this.db!.executeSql(
-                'CREATE INDEX IF NOT EXISTS idx_card_hashes_hash ON card_hashes(hash)'
-            );
+    //         // Create index for better lookup performance
+    //         await this.db!.executeSql(
+    //             'CREATE INDEX IF NOT EXISTS idx_card_hashes_hash ON card_hashes(hash)'
+    //         );
 
-            const data = require('../../hashesdct.json');
-            const entries = Object.entries(data);
+    //         const data = require('../../hashesdct.json');
+    //         const entries = Object.entries(data);
             
-            const [result] = await this.db!.executeSql(
-                'SELECT COUNT(*) AS count FROM card_hashes'
-            );
-            const currentCount = result.rows.item(0).count;
+    //         const [result] = await this.db!.executeSql(
+    //             'SELECT COUNT(*) AS count FROM card_hashes'
+    //         );
+    //         const currentCount = result.rows.item(0).count;
 
-            if (currentCount === entries.length) {
-                console.log('[DatabaseService] All hashes already loaded');
-                return;
-            }
+    //         if (currentCount === entries.length) {
+    //             console.log('[DatabaseService] All hashes already loaded');
+    //             return;
+    //         }
 
-            const batchSize = 500;
+    //         const batchSize = 500;
             
-            for (let i = 0; i < entries.length; i += batchSize) {
-                const batch = entries.slice(i, i + batchSize);
-                const validBatch = batch.filter(([uuid, hash]) => uuid && hash);
+    //         for (let i = 0; i < entries.length; i += batchSize) {
+    //             const batch = entries.slice(i, i + batchSize);
+    //             const validBatch = batch.filter(([uuid, hash]) => uuid && hash);
 
-                if (validBatch.length > 0) {
-                    const placeholders = validBatch.map(() => '(?, ?)').join(',');
-                    const values = validBatch.flatMap(([uuid, hash]) => [
-                        uuid,
-                        hash // Store hash as string
-                    ]);
+    //             if (validBatch.length > 0) {
+    //                 const placeholders = validBatch.map(() => '(?, ?)').join(',');
+    //                 const values = validBatch.flatMap(([uuid, hash]) => [
+    //                     uuid,
+    //                     hash // Store hash as string
+    //                 ]);
 
-                    await this.db!.executeSql(`
-                        INSERT OR REPLACE INTO card_hashes (uuid, hash)
-                        VALUES ${placeholders}
-                    `, values);
-                }
-            }
+    //                 await this.db!.executeSql(`
+    //                     INSERT OR REPLACE INTO card_hashes (uuid, hash)
+    //                     VALUES ${placeholders}
+    //                 `, values);
+    //             }
+    //         }
 
-            const [finalResult] = await this.db!.executeSql(
-                'SELECT COUNT(*) AS count FROM card_hashes'
-            );
-            console.log(`[DatabaseService] Loaded ${finalResult.rows.item(0).count} hashes`);
+    //         const [finalResult] = await this.db!.executeSql(
+    //             'SELECT COUNT(*) AS count FROM card_hashes'
+    //         );
+    //         console.log(`[DatabaseService] Loaded ${finalResult.rows.item(0).count} hashes`);
 
-        } catch (error) {
-            console.error('[DatabaseService] Error preloading hashes:', error);
-            throw error;
-        }
-    }
+    //     } catch (error) {
+    //         console.error('[DatabaseService] Error preloading hashes:', error);
+    //         throw error;
+    //     }
+    // }
 
     async getCardByHash(hash: string): Promise<string | null> {
         if (!this.db) {
