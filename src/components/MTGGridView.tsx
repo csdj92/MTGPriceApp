@@ -169,7 +169,6 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
     const [showFilters, setShowFilters] = useState(false);
     const [sortBy, setSortBy] = useState<SortOption>('number');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-    const [currentPage, setCurrentPage] = useState(1);
     const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
     const [showFoil, setShowFoil] = useState(false);
     const [showVersionModal, setShowVersionModal] = useState(false);
@@ -229,13 +228,6 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
             }
         });
     }, [cards, filters, sortBy, sortDirection]);
-
-    // Pagination
-    const totalPages = Math.ceil(filteredCards().length / ITEMS_PER_PAGE);
-    const paginatedCards = filteredCards().slice(
-        (currentPage - 1) * ITEMS_PER_PAGE,
-        currentPage * ITEMS_PER_PAGE
-    );
 
     const handleLongPress = async (card: ExtendedCard) => {
         try {
@@ -708,46 +700,12 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
             {renderFilters()}
 
             <FlatList
-                data={paginatedCards}
+                data={filteredCards()}
                 renderItem={renderCard}
                 keyExtractor={item => item.id}
                 numColumns={3}
                 contentContainerStyle={styles.grid}
             />
-
-            <View style={styles.pagination}>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === 1 && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(1)}
-                    disabled={currentPage === 1}
-                >
-                    <Icon name="page-first" size={24} color={currentPage === 1 ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === 1 && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                >
-                    <Icon name="chevron-left" size={24} color={currentPage === 1 ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-                <Text style={styles.pageText}>
-                    Page {currentPage} of {totalPages}
-                </Text>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === totalPages && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                >
-                    <Icon name="chevron-right" size={24} color={currentPage === totalPages ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.pageButton, currentPage === totalPages && styles.pageButtonDisabled]}
-                    onPress={() => setCurrentPage(totalPages)}
-                    disabled={currentPage === totalPages}
-                >
-                    <Icon name="page-last" size={24} color={currentPage === totalPages ? '#ccc' : '#2196F3'} />
-                </TouchableOpacity>
-            </View>
 
             {renderCardModal()}
             {renderVersionModal()}
@@ -932,25 +890,6 @@ const styles = StyleSheet.create({
     },
     cardPriceUncollected: {
         color: '#999',
-    },
-    pagination: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 16,
-        backgroundColor: 'white',
-        borderTopWidth: 1,
-        borderTopColor: '#e0e0e0',
-    },
-    pageButton: {
-        padding: 8,
-    },
-    pageButtonDisabled: {
-        opacity: 0.5,
-    },
-    pageText: {
-        marginHorizontal: 16,
-        color: '#666',
     },
     modalContainer: {
         flex: 1,
