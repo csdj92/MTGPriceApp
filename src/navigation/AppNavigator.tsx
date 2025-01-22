@@ -14,6 +14,8 @@ import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScre
 import type { ExtendedCard } from '../types/card';
 import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
 import CardDetailsScreen from '../screens/CardDetailsScreen';
+import LorcanaCardDetailsScreen from '../screens/LorcanaCardDetailsScreen';
+import type { LorcanaCardWithPrice } from '../types/lorcana';
 
 export type RootStackParamList = {
     MainTabs: undefined;
@@ -23,6 +25,10 @@ export type RootStackParamList = {
     SetCompletion: undefined;
     PriceLookup: undefined;
     LorcanaCollection: { collectionId: string; title: string; setCode: string };
+    LorcanaCardDetails: {
+        card: LorcanaCardWithPrice;
+        collectionId: string;
+    };
 };
 
 export type MainTabParamList = {
@@ -100,6 +106,11 @@ const AppNavigator = () => (
                 name="SetCompletion" 
                 component={SetCompletionScreen}
                 options={{ title: 'Set Completion' }}
+            />
+            <Stack.Screen 
+                name="LorcanaCardDetails" 
+                component={LorcanaCardDetailsScreen}
+                options={{ title: 'Lorcana Card Details' }}
             />
         </Stack.Navigator>
     </NavigationContainer>

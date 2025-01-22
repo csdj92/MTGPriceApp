@@ -9,10 +9,12 @@ import {
     Modal,
     ScrollView,
     Dimensions,
+    Alert,
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { ExtendedCard } from '../types/card';
+import { databaseService } from '../services/DatabaseService';
 import { getDB } from '../services/DatabaseService';
 
 interface MTGGridViewProps {
@@ -21,6 +23,7 @@ interface MTGGridViewProps {
     onCardPress: (card: ExtendedCard) => void;
     onDeleteCard: (card: ExtendedCard) => void;
     onCardsUpdate?: (updatedCards: ExtendedCard[]) => void;
+    collectionId: string;
 }
 
 type SortOption = 'name' | 'price' | 'number';
@@ -38,6 +41,22 @@ interface Filters {
 }
 
 const ITEMS_PER_PAGE = 12;
+
+interface CardRow {
+    uuid: string;
+    name: string;
+    setCode: string;
+    number: string;
+    rarity: string;
+    type: string;
+    setName: string;
+    normal_price: number;
+    foil_price: number;
+    tcg_normal_price: number;
+    tcg_foil_price: number;
+    cardmarket_normal_price: number;
+    cardmarket_foil_price: number;
+}
 
 const getBestPrice = (prices: any, isFoil: boolean = false) => {
     if (!prices) return 0;
@@ -136,7 +155,8 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
     isLoading,
     onCardPress,
     onDeleteCard,
-    onCardsUpdate
+    onCardsUpdate,
+    collectionId
 }) => {
     // State
     const [filters, setFilters] = useState<Filters>({
@@ -217,56 +237,58 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
         currentPage * ITEMS_PER_PAGE
     );
 
-    const handleLongPress = (card: ExtendedCard) => {
-        fetchAvailableVersions(card);
-        setSelectedCard(card);
-        setShowVersionModal(true);
-    };
-
-    const fetchAvailableVersions = async (card: ExtendedCard) => {
+    const handleLongPress = async (card: ExtendedCard) => {
         try {
+            // Fetch all variants including foils and alternate arts from the MTGJson database
             const db = await getDB();
-            // Use MTGJson database to fetch all versions of the card
-            const [results] = await db.executeSql(
-                `SELECT 
-                    c.uuid as id,
+            const [results] = await db!.executeSql(`
+                SELECT 
+                    c.uuid,
                     c.name,
                     c.setCode,
-                    s.name as setName,
-                    c.number as collectorNumber,
-                    c.type,
-                    c.manaCost,
-                    c.text,
+                    c.number,
                     c.rarity,
-                    c.hasFoil,
-                    c.hasNonFoil,
-                    p.normal_price,
-                    p.foil_price
+                    c.type,
+                    s.name as setName,
+                    COALESCE(p.normal_price, 0) as normal_price,
+                    COALESCE(p.foil_price, 0) as foil_price,
+                    COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
+                    COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
+                    COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
+                    COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price
                 FROM cards c
-                LEFT JOIN sets s ON c.setCode = s.code
                 LEFT JOIN prices p ON c.uuid = p.uuid
+                LEFT JOIN sets s ON c.setCode = s.code
                 WHERE c.name = ?
                 ORDER BY s.releaseDate DESC`,
                 [card.name]
             );
 
-            const versions = [];
-            for (let i = 0; i < results.rows.length; i++) {
-                const row = results.rows.item(i);
-                versions.push({
-                    ...row,
-                    prices: {
-                        normal: row.normal_price,
-                        foil: row.foil_price
-                    },
-                    imageUris: card.imageUris, // Keep the same image URIs for now
-                    hasNonFoil: Boolean(row.hasNonFoil),
-                    hasFoil: Boolean(row.hasFoil)
-                });
-            }
-            setAvailableVersions(versions);
+            const variants = results.rows.raw().map((row: CardRow) => ({
+                ...card,
+                id: row.uuid,
+                uuid: row.uuid,
+                setCode: row.setCode,
+                setName: row.setName,
+                collectorNumber: row.number,
+                type: row.type,
+                rarity: row.rarity,
+                imageUris: {
+                    small: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=small`,
+                    normal: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=normal`,
+                    large: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=large`,
+                    art_crop: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=art_crop`
+                },
+                hasNonFoil: Boolean(row.normal_price || row.tcg_normal_price || row.cardmarket_normal_price),
+                hasFoil: Boolean(row.foil_price || row.tcg_foil_price || row.cardmarket_foil_price)
+            }));
+            
+            setAvailableVersions(variants);
+            setSelectedCard(card);
+            setShowVersionModal(true);
         } catch (error) {
-            console.error('Error fetching card versions:', error);
+            console.error('Error fetching card variants:', error);
+            Alert.alert('Error', 'Failed to load card variants');
         }
     };
 
@@ -280,12 +302,26 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
         setShowVersionModal(false);
     };
 
-    const addToCollection = (card: ExtendedCard) => {
-        if (onCardsUpdate) {
-            const updatedCards = cards.map(c =>
-                c.id === card.id ? { ...c, quantity: 1 } : c
-            );
-            onCardsUpdate(updatedCards);
+    const addToCollection = async (card: ExtendedCard) => {
+        try {
+            // Add card to collection using DatabaseService
+            await databaseService.addCardToCollection(String(card.id), collectionId);
+            
+            // Update the UI state
+            if (onCardsUpdate) {
+                const updatedCards = cards.map(c =>
+                    c.id === card.id ? { ...c, quantity: 1 } : c
+                );
+                onCardsUpdate(updatedCards);
+            }
+            
+            // Update the selected card's state
+            setSelectedCard(prev => prev ? { ...prev, quantity: 1 } : null);
+            
+            setShowVersionModal(false);
+        } catch (error) {
+            console.error('Error adding card to collection:', error);
+            Alert.alert('Error', 'Failed to add card to collection');
         }
     };
 
@@ -542,7 +578,22 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
                                 style={styles.versionOption}
                                 onPress={() => handleVersionChange(version)}
                             >
-                                <Text style={styles.versionText}>{version.name} ({version.setName})</Text>
+                                <View style={styles.versionRow}>
+                                    <FastImage
+                                        source={{ 
+                                            uri: version.imageUris?.normal || version.imageUrl,
+                                            priority: FastImage.priority.normal,
+                                            cache: FastImage.cacheControl.immutable
+                                        }}
+                                        style={styles.versionImage}
+                                        resizeMode={FastImage.resizeMode.contain}
+                                    />
+                                    <View style={styles.versionInfo}>
+                                        <Text style={styles.versionText}>{version.name}</Text>
+                                        <Text style={styles.versionSetText}>{version.setName}</Text>
+                                        <Text style={styles.versionText}>Set Number: {version.collectorNumber}</Text>
+                                    </View>
+                                </View>
                             </TouchableOpacity>
                         ))}
                     </ScrollView>
@@ -551,7 +602,6 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
                             style={styles.addButton}
                             onPress={() => {
                                 addToCollection(selectedCard!);
-                                setShowVersionModal(false);
                             }}
                         >
                             <Text style={styles.addButtonText}>Add to Collection</Text>
@@ -1011,8 +1061,26 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: '#e0e0e0',
     },
+    versionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    versionImage: {
+        width: 60,
+        height: 84,
+        borderRadius: 4,
+        marginRight: 12,
+    },
+    versionInfo: {
+        flex: 1,
+    },
     versionText: {
         fontSize: 16,
+        marginBottom: 4,
+    },
+    versionSetText: {
+        fontSize: 14,
+        color: '#666',
     },
     addButton: {
         marginTop: 16,

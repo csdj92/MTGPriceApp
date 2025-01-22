@@ -2453,6 +2453,39 @@ export default class DatabaseService {
         console.log('[DatabaseService] Test log 2');
     }
 
+    async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
+        try {
+            const db = await getDB();
+            const variants = await new Promise<ExtendedCard[]>((resolve, reject) => {
+                db.transaction(tx => {
+                    tx.executeSql(
+                        `SELECT * FROM cards WHERE name = ? AND (imageUris IS NOT NULL OR imageUrl IS NOT NULL)`,
+                        [cardName],
+                        (_, results) => {
+                            const cards: ExtendedCard[] = [];
+                            for (let i = 0; i < results.rows.length; i++) {
+                                const card = results.rows.item(i);
+                                // Parse JSON fields
+                                card.imageUris = card.imageUris ? JSON.parse(card.imageUris) : null;
+                                card.prices = card.prices ? JSON.parse(card.prices) : null;
+                                cards.push(card);
+                            }
+                            resolve(cards);
+                        },
+                        (_, error) => {
+                            reject(error);
+                            return false;
+                        }
+                    );
+                });
+            });
+            return variants;
+        } catch (error) {
+            console.error('Error getting card variants:', error);
+            throw error;
+        }
+    }
+
 }
 
 export const getDB = async () => {

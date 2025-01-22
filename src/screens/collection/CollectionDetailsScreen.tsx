@@ -136,14 +136,15 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     };
 
     const handleCardPress = (card: ExtendedCard | LorcanaCardWithPrice) => {
-        if (collection?.type === 'MTG') {
-            setMtgCards(prevCards =>
-                prevCards.map(c => c.id === (card as ExtendedCard).id ? { ...c, isExpanded: !c.isExpanded } : c)
-            );
+        if (!collection) return;
+
+        if (collection.type === 'MTG') {
+            navigation.navigate('CardDetails', { card: card as ExtendedCard });
         } else {
-            setLorcanaCards(prevCards =>
-                prevCards.map(c => c.Unique_ID === (card as LorcanaCardWithPrice).Unique_ID ? { ...c, isExpanded: !c.isExpanded } : c)
-            );
+            navigation.navigate('LorcanaCardDetails', { 
+                card: card as LorcanaCardWithPrice,
+                collectionId: collection.id
+            });
         }
     };
 
@@ -294,11 +295,8 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         cards={mtgCards}
                         isLoading={isLoading}
                         onCardPress={handleCardPress}
-                        onDeleteCard={card => {
-                            if (card.collected) {
-                                handleDeleteCard(card);
-                            }
-                        }}
+                        onDeleteCard={handleDeleteCard}
+                        collectionId={collectionId}
                     />
                 )
             )}

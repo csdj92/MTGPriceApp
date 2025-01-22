@@ -10,7 +10,8 @@ import {
     ScrollView,
     Dimensions,
     ActivityIndicator,
-    Alert
+    Alert,
+    Image
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -222,9 +223,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         setIsLoadingMore(true);
 
         try {
-            // Logic to load more cards goes here
-            // For example, you might fetch more cards from an API or database
-            // and then update the state with the new cards
+            
         } catch (error) {
             console.error('Error loading more cards:', error);
         } finally {
@@ -233,6 +232,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     };
 
     const handleLongPress = (card: LorcanaCardWithPrice) => {
+        setSelectedCard(null); // Close the card details modal first
         // Fetch available versions for the card
         fetchAvailableVersions(card);
         setSelectedCard(card);
@@ -323,6 +323,51 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         );
     };
 
+    const renderCardModal = () => (
+        <Modal
+            visible={selectedCard !== null && !showVersionModal}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={() => setSelectedCard(null)}
+        >
+            <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                    {selectedCard && (
+                        <ScrollView>
+                            <View style={styles.modalImageContainer}>
+                                <FastImage
+                                    source={{ uri: selectedCard.Image }}
+                                    style={styles.modalImage}
+                                    resizeMode={FastImage.resizeMode.contain}
+                                />
+                                <TouchableOpacity
+                                    style={styles.modalCloseButton}
+                                    onPress={() => setSelectedCard(null)}
+                                >
+                                    <Icon name="close" size={28} color="#666" />
+                                </TouchableOpacity>
+                            </View>
+                            <View style={styles.modalInfo}>
+                                <Text style={styles.modalTitle}>{selectedCard.Name}</Text>
+                                <Text style={styles.modalText}>Set: {selectedCard.Set_Name}</Text>
+                                <Text style={styles.modalText}>Number: {selectedCard.Card_Num}</Text>
+                                <Text style={styles.modalText}>Rarity: {selectedCard.Rarity}</Text>
+                                <Text style={styles.modalText}>Color: {selectedCard.Color}</Text>
+                                <Text style={styles.modalText}>Franchise: {selectedCard.Franchise ? selectedCard.Franchise : ''}</Text>
+                                <View style={styles.modalPrices}>
+                                    <Text style={styles.modalPriceTitle}>Price:</Text>
+                                    <Text style={styles.modalPrice}>
+                                        ${selectedCard.prices?.usd ? Number(selectedCard.prices.usd).toFixed(2) : '0.00'}
+                                    </Text>
+                                </View>
+                            </View>
+                        </ScrollView>
+                    )}
+                </View>
+            </View>
+        </Modal>
+    );
+
     const renderVersionModal = () => (
         <Modal
             visible={showVersionModal}
@@ -341,6 +386,25 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                                 onPress={() => handleVersionChange(version)}
                             >
                                 <Text style={styles.versionText}>{version.Name}</Text>
+                                <FastImage
+                                    source={{ 
+                                        uri: version.Image,
+                                        priority: FastImage.priority.normal,
+                                        cache: FastImage.cacheControl.immutable,
+                                        headers: {
+                                            'User-Agent': 'MTGPriceApp/1.0',
+                                            'Accept': 'image/*'
+                                        }
+                                    }}
+                                    style={styles.versionImage}
+                                    resizeMode={FastImage.resizeMode.contain}
+                                    onError={() => {
+                                        console.log('[LorcanaGridView] Failed to load version image:', {
+                                            url: version.Image,
+                                            name: version.Name
+                                        });
+                                    }}
+                                />
                             </TouchableOpacity>
                         ))}
                     </ScrollView>
@@ -504,16 +568,24 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
     // Function to add a card to the collection
     const addToCollection = (card: LorcanaCardWithPrice) => {
-        // Implement the logic to add the card to the collection
-        // This might involve updating the database and state
-        console.log('Adding card to collection:', card);
-        // Example: Update the card's collected status
+        // Update the card's collected status
         if (onCardsUpdate) {
             const updatedCards = cards.map(c =>
                 c.Unique_ID === card.Unique_ID ? { ...c, collected: true } : c
             );
             onCardsUpdate(updatedCards);
         }
+        
+        // Update the database
+        const db = getDB();
+        db.then(database => {
+            database.executeSql(
+                'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
+                [card.Unique_ID]
+            );
+        }).catch(error => {
+            console.error('Error updating card collection status:', error);
+        });
     };
 
     return (
@@ -607,6 +679,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 ListFooterComponent={isLoadingMore ? <ActivityIndicator size="large" color="#2196F3" /> : null}
             />
 
+            {renderCardModal()}
             {renderVersionModal()}
         </View>
     );
@@ -803,15 +876,44 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         padding: 16,
     },
+    modalImageContainer: {
+        position: 'relative',
+        marginBottom: 16,
+    },
+    modalImage: {
+        width: '100%',
+        aspectRatio: 0.72,
+        borderRadius: 8,
+    },
+    modalInfo: {
+        padding: 16,
+    },
     modalTitle: {
         fontSize: 20,
         fontWeight: 'bold',
         marginBottom: 8,
     },
+    modalText: {
+        fontSize: 16,
+        marginBottom: 8,
+    },
+    modalPrices: {
+        marginTop: 16,
+    },
+    modalPriceTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 8,
+    },
+    modalPrice: {
+        fontSize: 16,
+        marginBottom: 4,
+    },
     versionOption: {
         padding: 12,
         borderBottomWidth: 1,
         borderBottomColor: '#e0e0e0',
+        alignItems: 'center',
     },
     versionText: {
         fontSize: 16,
@@ -860,6 +962,13 @@ const styles = StyleSheet.create({
     addButtonText: {
         color: 'white',
         fontWeight: 'bold',
+    },
+    versionImage: {
+        width: '100%',
+        height: 200,
+        resizeMode: 'contain',
+        borderRadius: 8,
+        marginTop: 8,
     },
 });
 
