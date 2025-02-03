@@ -13,8 +13,8 @@ import {
     BackHandler,
     Platform,
     ToastAndroid,
+    Linking,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { scryfallService } from '../../services/ScryfallService';
 import { databaseService } from '../../services/DatabaseService';
 import { searchLorcanaCards, getLorcanaCardWithPrice, markCardAsCollected, initializeLorcanaDatabase, listAllCardNames, clearLorcanaDatabase, reloadLorcanaCards, getOrCreateLorcanaSetCollection, addCardToLorcanaCollection } from '../../services/LorcanaService';
@@ -29,6 +29,12 @@ import type { Collection } from '../../services/DatabaseService';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import { CommonActions } from '@react-navigation/native';
 import LorcanaCardSelectionModal from '../../components/LorcanaCardSelectionModal';
+import CameraTest from '../../components/test';
+import { Camera } from 'react-native-vision-camera';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as any; // Temporary type assertion
+
+
 
 type PriceLookupScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
@@ -59,6 +65,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         timestamp: number;
     } | null>(null);
     const recentScansRef = useRef<Set<string>>(new Set());
+    const [cameraPermission, setCameraPermission] = useState<'not-determined' | 'granted' | 'denied'>('not-determined');
+    const [useClassifier, setUseClassifier] = useState(false);
 
     // Handle back button press
     useEffect(() => {
@@ -240,7 +248,11 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 purchaseUrls: {},
                 legalities: {},
                 scannedAt: timestamp,
-                rarity: cardWithPrice.Rarity || cardWithPrice.rarity
+                rarity: cardWithPrice.Rarity || cardWithPrice.rarity,
+                colorIdentity: [],
+                keywords: [],
+                cmc: 0,
+                frameEffects: [],
             };
 
             addScannedCard(scannedCard);
@@ -425,6 +437,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         }
     };
 
+
+
     const renderScannedCard = ({ item }: { item: ScannedCard }) => (
         <TouchableOpacity
             style={styles.scannedCardItem}
@@ -452,12 +466,18 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const renderCameraContent = () => (
         <View style={styles.cameraContainer}>
             <CardScanner
-                onTextDetected={handleScan}
+                onTextDetected={(result) => handleScan({ 
+                    text: result.text, 
+                    mainName: result.text, 
+                    subtype: '', 
+                    isLorcana: false 
+                })}
                 onError={handleScanError}
                 scannedCards={scannedCards}
                 totalPrice={totalPrice}
                 onCardPress={handleCardPress}
                 isPaused={isScanningPaused}
+                useClassifier={useClassifier}
             />
             
           
@@ -560,7 +580,6 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     useEffect(() => {
         console.log(`[PriceLookupScreen] Scan mode changed: ${isLorcanaScan ? 'Lorcana' : 'MTG'}`);
     }, [isLorcanaScan]);
-
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.searchContainer}>
@@ -615,6 +634,21 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     >
                         <Icon name="database-sync" size={24} color="#fff" />
                         <Text style={styles.actionButtonText}>Reload</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: '#388e3c' }]}
+                        onPress={() => navigation.navigate('CameraTest')}
+                        disabled={isLoading}
+                    >
+                        <Icon name="camera" size={24} color="#fff" />
+                        <Text style={styles.actionButtonText}>React Camera</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: '#FF9800' }]}
+                        onPress={() => { setUseClassifier(true); setIsCameraActive(true); }}
+                    >
+                        <Icon name="robot" size={24} color="#fff" />
+                        <Text style={styles.actionButtonText}>Classifier</Text>
                     </TouchableOpacity>
                 </View>
             </View>

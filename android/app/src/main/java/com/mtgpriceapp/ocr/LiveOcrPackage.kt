@@ -10,15 +10,12 @@ class LiveOcrPackage : ReactPackage {
     private var liveOcrModule: LiveOcr? = null
 
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        synchronized(this) {
-            if (liveOcrModule == null) {
-                liveOcrModule = LiveOcr(reactContext)
-            }
-            return listOf(liveOcrModule!!)
-        }
+        return listOf(LiveOcr(reactContext))
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
-        return listOf(LiveOcrPreviewManager(liveOcrModule))
+        return listOf(LiveOcrPreviewManager().apply { 
+            setPreviewModule(LiveOcr(reactContext))
+        })
     }
 }

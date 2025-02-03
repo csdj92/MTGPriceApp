@@ -31,20 +31,40 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
+import com.mtgpriceapp.ocr.PreviewModule
+
 @ReactModule(name = LiveOcr.NAME)
-class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
+class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext), PreviewModule {
 
     companion object {
         private const val TAG = "LiveOcr"
         const val NAME = "LiveOcr"
-        private const val MAX_IMAGES = 2  // ML Kit recommendation for backpressure
-        private const val COOLDOWN_MS = 2000L  // 2 seconds cooldown
-        private const val AOI_LEFT_PERCENT = 0.1f  // 10% from the left
-        private const val AOI_TOP_PERCENT = 0.3f   // 30% from the top
-        private const val AOI_WIDTH_PERCENT = 0.8f // 80% width
-        private const val AOI_HEIGHT_PERCENT = 0.4f // 40% height
+
+        // Limits and AOI configuration
+        private const val MAX_IMAGES = 2              // ML Kit recommendation for backpressure
+        private const val COOLDOWN_MS = 2000L         // 2 seconds cooldown between scans
+        private const val AOI_LEFT_PERCENT = 0.1f     // Crop 10% from the left
+        private const val AOI_TOP_PERCENT = 0.3f      // Crop 30% from the top
+        private const val AOI_WIDTH_PERCENT = 0.8f    // Crop 80% of width
+        private const val AOI_HEIGHT_PERCENT = 0.4f   // Crop 40% of height
+
+        // Pre-compile regexes to avoid repeated compilation (improves performance)
+        private val KEYWORD_FILTER = Regex(
+            "(?i)(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker|" +
+                    "Choose one|Target opponent|Legendary|Hero|Villian|" +
+                    "Action|Character|Item|Song|Dreamborn|Floodborn|Storyborn|Shift|Exert|Evasive|" +
+                    "Kicker|Flash|Wizards of the Coast|\\u2122|\\u00A9|" +
+                    "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" +
+                    "counter|dies|enters|destroy|exile|return|flying|" +
+                    "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
+                    "Power|Toughness|FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE)"
+        )
+        private val LORCANA_NAME_REGEX = Regex("^[A-Z][A-Z\\s']+\$")
+        private val LORCANA_VERSION_REGEX = Regex("^[A-Za-z][A-Za-z\\s\\-']+\$")
+        private val MTG_NAME_REGEX = Regex("^[A-Z][a-zA-Z\\s,'\\-]+\$")
     }
 
+    // Camera and threading properties
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var imageReader: ImageReader? = null
@@ -54,22 +74,26 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
 
     private var previewSurface: Surface? = null
     private var isSessionActive = false
-    private var processingImage = false
+    @Volatile private var processingImage = false
     private var lastDetectedName: String? = null
 
+    // Use a single-threaded executor for OCR tasks
     private val executor: Executor = Executors.newSingleThreadExecutor()
 
     private val textRecognizer: TextRecognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
+    // To prevent duplicate scans during the COOLDOWN_MS interval.
     private val recentScans = mutableListOf<Pair<String, Long>>()
 
-    // Variables for movement detection
+    // For movement detection
     private var lastBoundingBox: Rect? = null
-    // Higher value (e.g., 100):Less sensitive to movementRequires larger movements to trigger new scansReduces duplicate scans
-    // Lower CPU/battery usage Might miss cards if user moves camera too quickly
-    private val MOVEMENT_THRESHOLD = 50  // Adjust this value as needed
+    // Adjust this threshold to make movement detection more/less sensitive.
+    private val MOVEMENT_THRESHOLD = 50
+
+    // Add to class properties
+    private var previewSize: Size? = null
 
     override fun getName() = NAME
 
@@ -91,10 +115,8 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
             if (!isSessionActive) {
                 isSessionActive = true
                 setupCameraPreview()
-                promise.resolve(null)
-            } else {
-                promise.resolve(null)
             }
+            promise.resolve(null)
         } catch (e: Exception) {
             promise.reject("OCR_ERROR", "Failed to start OCR session", e)
         }
@@ -111,7 +133,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         }
     }
 
-    fun setPreviewSurface(surface: Surface?) {
+    override fun setPreviewSurface(surface: Surface?) {
         previewSurface = surface
         if (surface != null && isSessionActive) {
             setupCameraPreview()
@@ -121,9 +143,10 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     private fun sendPreviewSizeToReact(width: Int, height: Int) {
+        val currentPreviewSize = previewSize ?: return
         val params = Arguments.createMap().apply {
-            putInt("width", width)
-            putInt("height", height)
+            putInt("width", currentPreviewSize.width)
+            putInt("height", currentPreviewSize.height)
         }
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -131,7 +154,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     /**
-     * Set up the camera preview and ImageReader for OCR
+     * Set up the camera preview and the ImageReader.
      */
     @SuppressLint("MissingPermission")
     private fun setupCameraPreview() {
@@ -139,176 +162,93 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         try {
             val cameraId = findBackCamera(manager) ?: throw RuntimeException("Back camera not found")
             if (!cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
-                throw RuntimeException("Time out waiting to lock camera opening.")
+                throw RuntimeException("Timeout waiting to lock camera opening.")
             }
 
             val characteristics = manager.getCameraCharacteristics(cameraId)
-            val streamConfigurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                ?: throw RuntimeException("Cannot get available preview/video sizes")
+            val streamConfigurationMap =
+                characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    ?: throw RuntimeException("Cannot get available preview/video sizes")
 
             val previewSizes = streamConfigurationMap.getOutputSizes(SurfaceHolder::class.java)
-            Log.d(TAG, "Available preview sizes: ${previewSizes.joinToString { "${it.width}x${it.height}" }}")
+            Log.d(TAG, "Available preview sizes: ${
+                previewSizes.joinToString { "${it.width}x${it.height}" }
+            }")
 
             val displayMetrics = reactApplicationContext.resources.displayMetrics
             val screenAspectRatio = displayMetrics.widthPixels.toFloat() / displayMetrics.heightPixels.toFloat()
 
-            // Prefer a larger size around 1920x1080
-            val bestPreviewSize = previewSizes
+            // Prefer a larger size around 1920x1080 if possible
+            previewSize = previewSizes
                 .filter { it.height >= 1080 || it.width >= 1920 }
                 .minByOrNull {
                     val ratio = it.width.toFloat() / it.height.toFloat()
                     abs(ratio - screenAspectRatio)
                 } ?: previewSizes.first()
 
-            Log.d(TAG, "Selected preview size: ${bestPreviewSize.width}x${bestPreviewSize.height}")
-            sendPreviewSizeToReact(bestPreviewSize.width, bestPreviewSize.height)
+            Log.d(TAG, "Selected preview size: ${previewSize?.width}x${previewSize?.height}")
+            sendPreviewSizeToReact(previewSize?.width ?: 0, previewSize?.height ?: 0)
 
+            // Pre-capture the sensor orientation so that we can pass it along to ML Kit.
+            val sensorOrientation =
+                characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+
+            // Initialize the ImageReader using the preview size and format.
+            val currentPreviewSize = previewSize ?: return
             imageReader = ImageReader.newInstance(
-                bestPreviewSize.width,
-                bestPreviewSize.height,
+                currentPreviewSize.width,
+                currentPreviewSize.height,
                 ImageFormat.YUV_420_888,
                 MAX_IMAGES
             ).apply {
                 setOnImageAvailableListener({ reader ->
-                    if (!processingImage && isSessionActive && previewSurface != null) {
-                        processingImage = true
-                        val image = reader.acquireLatestImage()
+                    if (!isSessionActive || previewSurface == null) {
+                        reader.acquireLatestImage()?.close()
+                        return@setOnImageAvailableListener
+                    }
+                    if (processingImage) {
+                        // Drain any extra images so we do not build up a backlog.
+                        drainExtraImages(reader)
+                        return@setOnImageAvailableListener
+                    }
 
-                        // Drain any extra images to prevent backlog
-                        while (reader.acquireLatestImage()?.also { it.close() } != null) { }
+                    processingImage = true
+                    val image = reader.acquireLatestImage()
+                    // Drain extra images (if any)
+                    drainExtraImages(reader)
 
-                        if (image != null) {
-                            try {
-                                val rotation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-                                
-                                // Define AOI based on image dimensions
-                                val width = image.width
-                                val height = image.height
+                    if (image != null) {
+                        try {
+                            // Define the crop area (Area Of Interest = AOI)
+                            val width = image.width
+                            val height = image.height
+                            val left = (width * AOI_LEFT_PERCENT).toInt()
+                            val top = (height * AOI_TOP_PERCENT).toInt()
+                            val cropWidth = (width * AOI_WIDTH_PERCENT).toInt()
+                            val cropHeight = (height * AOI_HEIGHT_PERCENT).toInt()
 
-                                val left = (width * AOI_LEFT_PERCENT).toInt()
-                                val top = (height * AOI_TOP_PERCENT).toInt()
-                                val cropWidth = (width * AOI_WIDTH_PERCENT).toInt()
-                                val cropHeight = (height * AOI_HEIGHT_PERCENT).toInt()
+                            // Instead of converting the full image, compress only the AOI.
+                            val croppedBitmap = cropImage(image, left, top, cropWidth, cropHeight)
+                            val inputImage = InputImage.fromBitmap(croppedBitmap, sensorOrientation)
 
-                                val croppedImage = cropImage(image, left, top, cropWidth, cropHeight)
-
-                                val inputImage = InputImage.fromBitmap(croppedImage, rotation)
-
-                                textRecognizer.process(inputImage)
-                                    .addOnSuccessListener(executor) { text ->
-                                        if (isSessionActive && previewSurface != null) {
-                                            // Debug log all blocks and lines
-                                            text.textBlocks.forEachIndexed { blockIndex, block ->
-                                                Log.d(TAG, "Block $blockIndex: '${block.text}'")
-                                                block.lines.forEachIndexed { lineIndex, line ->
-                                                    Log.d(TAG, "  line $lineIndex: '${line.text}'")
-                                                }
-                                            }
-
-                                            // Common keyword filter for both formats
-                                            val keywordFilter = Regex("(?i)(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker|" + 
-                                                "Choose one|Target opponent|Legendary|Hero|Villian|" + // Lorcana might have "Villain" or "Hero"
-                                                "Action|Character|Item|Song|Dreamborn|Floodborn|Storyborn|Shift|Exert|Evasive|" +
-                                                "Kicker|Flash|Wizards of the Coast|\\u2122|\\u00A9|" + 
-                                                "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" +
-                                                "counter|dies|enters|destroy|exile|return|flying|" +
-                                                "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
-                                                "Power|Toughness|" + // just in case
-                                                "FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE)")
-
-                                            // Flatten all lines from all blocks
-                                            val allLines = text.textBlocks.flatMap { block ->
-                                                block.lines.map { it.text.trim() }
-                                            }.filter { it.isNotEmpty() }
-
-                                            Log.d(TAG, "All flattened lines: ${allLines.joinToString("\n")}")
-
-                                            val candidates = allLines
-                                                .asSequence()
-                                                .windowed(2)
-                                                .flatMap { lines ->
-                                                    val results = mutableListOf<Triple<String, String?, Boolean>>()
-                                                    
-                                                    val nameCandidate = lines[0].trim()
-                                                    val versionCandidate = lines[1].trim()
-                                                    
-                                                    Log.d(TAG, "Checking line pair: name='$nameCandidate' | version='$versionCandidate'")
-                                                    
-                                                    // Try Lorcana format (UPPERCASE - Version)
-                                                    if (nameCandidate.matches(Regex("[A-Z][A-Z\\s']+")) && 
-                                                        !nameCandidate.contains(keywordFilter)) {
-                                                        
-                                                        // Check if next line is a valid version string
-                                                        if (versionCandidate.matches(Regex("[A-Za-z][A-Za-z\\s\\-']+")) &&
-                                                            !versionCandidate.contains(keywordFilter)) {
-                                                            Log.d(TAG, "Found Lorcana card: $nameCandidate with version: $versionCandidate")
-                                                            results.add(Triple(nameCandidate, versionCandidate, true))
-                                                        }
-                                                    }
-                                                    
-                                                    // Only try MTG format if we haven't found a Lorcana card
-                                                    if (results.isEmpty()) {
-                                                        // Main card title (e.g. "Liliana of the Veil")
-                                                        if (nameCandidate.matches(Regex("[A-Z][a-zA-Z\\s,''\\-]+")) &&
-                                                            !nameCandidate.contains(keywordFilter)) {
-                                                            results.add(Triple(nameCandidate, null, false))
-                                                        }
-                                                    }
-                                                    
-                                                    results
-                                                }
-                                                .toList()
-
-                                            Log.d(TAG, "Filtered candidates: $candidates")
-
-                                            // Choose best candidate
-                                            val bestCandidate = candidates.firstOrNull()
-                                            
-                                            if (bestCandidate != null) {
-                                                val (name, subtype, isLorcana) = bestCandidate
-                                                
-                                                val fullName = when {
-                                                    isLorcana && subtype != null -> "$name - $subtype"
-                                                    !isLorcana && subtype != null -> "$name ($subtype)"
-                                                    else -> name
-                                                }
-
-                                                // Get bounding box of the first text block
-                                                val boundingBox = if (text.textBlocks.isNotEmpty()) {
-                                                    text.textBlocks[0].boundingBox
-                                                } else {
-                                                    null
-                                                }
-
-                                                if (fullName != lastDetectedName) {
-                                                    Log.d(TAG, "Selected card name: $fullName")
-                                                    
-                                                    // Emit OCR result with double scan and movement prevention
-                                                    sendOcrResult(fullName, name, subtype, isLorcana, boundingBox)
-                                                    
-                                                    lastDetectedName = fullName
-                                                }
-                                            }
-                                        }
-                                    }
-                                    .addOnFailureListener(executor) { e ->
-                                        Log.e(TAG, "OCR failed", e)
-                                    }
-                                    .addOnCompleteListener(executor) {
-                                        image.close()
-                                        processingImage = false
-                                    }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error processing image", e)
-                                image.close()
-                                processingImage = false
-                            }
-                        } else {
+                            textRecognizer.process(inputImage)
+                                .addOnSuccessListener(executor) { text ->
+                                    processOcrResult(text)
+                                }
+                                .addOnFailureListener(executor) { e ->
+                                    Log.e(TAG, "OCR failed", e)
+                                }
+                                .addOnCompleteListener(executor) {
+                                    image.close()
+                                    processingImage = false
+                                }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error processing image", e)
+                            image.close()
                             processingImage = false
                         }
                     } else {
-                        // Surface or session isn't ready; close the extra image.
-                        reader.acquireLatestImage()?.close()
+                        processingImage = false
                     }
                 }, backgroundHandler)
             }
@@ -341,12 +281,13 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     /**
-     * Create camera preview session
+     * Create and start the camera preview session.
      */
     private fun createCameraPreviewSession() {
         try {
             val surface = previewSurface ?: run {
-                Log.e(TAG, "Preview surface is null")
+                Log.w(TAG, "Preview surface is null - retrying in 100ms")
+                backgroundHandler?.postDelayed({ createCameraPreviewSession() }, 100)
                 return
             }
 
@@ -359,26 +300,19 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
             previewRequestBuilder.apply {
                 addTarget(surface)
                 imageReader?.surface?.let { addTarget(it) }
-
-                // Basic auto modes
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
-
-                // Optical stabilization if available
                 set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
-
-                // Scene mode: barcode can help with text edges
                 set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_BARCODE)
-
-                // Sharpness priority
                 set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_FAST)
                 set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
             }
 
-            val surfaces = mutableListOf(surface)
-            imageReader?.surface?.let { surfaces.add(it) }
+            val surfaces = mutableListOf(surface).apply {
+                imageReader?.surface?.let { add(it) }
+            }
 
             cameraDevice?.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) {
@@ -451,101 +385,144 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     /**
-     * Find the back-facing camera
+     * Find and return the back-facing camera id.
      */
     private fun findBackCamera(manager: CameraManager): String? {
         manager.cameraIdList.forEach { id ->
             val characteristics = manager.getCameraCharacteristics(id)
             val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-            val level = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
-            val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
-            val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-            val focalLengths = characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-
-            Log.d(TAG, """Camera $id:
-                |  Facing: $facing (${if (facing == CameraCharacteristics.LENS_FACING_FRONT) "FRONT" else if (facing == CameraCharacteristics.LENS_FACING_BACK) "BACK" else "OTHER"})
-                |  Hardware Level: $level
-                |  Capabilities: $capabilities
-                |  Sensor Size: $sensorSize
-                |  Focal Lengths: ${focalLengths?.joinToString()}
-            """.trimMargin())
+            Log.d(TAG, "Camera $id facing: $facing")
         }
-
         return manager.cameraIdList.find { id ->
             manager.getCameraCharacteristics(id)
                 .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-        }?.also {
-            Log.d(TAG, "Selected back camera: $it")
-        }
+        }?.also { Log.d(TAG, "Selected back camera: $it") }
     }
 
     /**
-     * Compute a simple score for a candidate name, rewarding typical features
-     * of real card titles (capitalization, multiple words, not all caps, etc.)
+     * Compute a simple score for a candidate name by rewarding typical title features.
      */
     private fun computeNameScore(name: String): Int {
         var score = 0
-
-        // Word-by-word check for title case, e.g. “Seeker’s”, “Dragon”, etc.
         val words = name.split(" ")
         val isProperTitleCase = words.all { word ->
             if (word.isEmpty()) false
             else {
                 val first = word.first()
-                // Accept typical punctuation like apostrophes or hyphens
-                // "Seeker's" -> S, e, e, k, e, r, ', s
-                // "Folly" -> F, o, l, l, y
                 first.isUpperCase() && word.drop(1).all { c ->
                     c.isLowerCase() || c in listOf('-', '\'', '’', '‘')
                 }
             }
         }
-        if (isProperTitleCase) {
-            score += 6
-        }
-
-        // If all uppercase or all lowercase, not as likely to be a proper name
+        if (isProperTitleCase) score += 6
         if (name == name.uppercase()) score += 1
         if (name == name.lowercase()) score += 1
-
-        // Slight reward for multi-word names
         if (words.size >= 2) score += 2
-
-        // Typical MTG / Lorcana name length ~ 3..30
-        if (name.length in 3..30) {
-            score += 2
-        }
-
-        // If it has a possessive apostrophe (like “Seeker’s”), that *might* be a clue it's a real name
+        if (name.length in 3..30) score += 2
         if (name.contains("'")) score += 1
-
         return score
     }
 
-    private fun sendOcrResult(fullName: String, name: String, subtype: String?, isLorcana: Boolean, boundingBox: Rect?) {
+    /**
+     * Process OCR results: filter, score, and select the best candidate.
+     */
+    private fun processOcrResult(text: com.google.mlkit.vision.text.Text) {
+        if (!isSessionActive || previewSurface == null) return
+
+        // Log text blocks for debugging (remove or reduce logging for production)
+        text.textBlocks.forEachIndexed { blockIndex, block ->
+            Log.d(TAG, "Block $blockIndex: '${block.text}'")
+            block.lines.forEachIndexed { lineIndex, line ->
+                Log.d(TAG, "  line $lineIndex: '${line.text}'")
+            }
+        }
+
+        // Flatten all non-empty trimmed lines.
+        val allLines = text.textBlocks.flatMap { block ->
+            block.lines.map { it.text.trim() }
+        }.filter { it.isNotEmpty() }
+        Log.d(TAG, "Flattened lines:\n${allLines.joinToString("\n")}")
+
+        // Find the best candidate using our filtering rules.
+        val candidate = findCandidate(allLines)
+        Log.d(TAG, "Candidate found: $candidate")
+        if (candidate != null) {
+            val (name, subtype, isLorcana) = candidate
+            val fullName = when {
+                isLorcana && subtype != null -> "$name - $subtype"
+                !isLorcana && subtype != null -> "$name ($subtype)"
+                else -> name
+            }
+            // Use the bounding box from the first block, if available.
+            val boundingBox = text.textBlocks.firstOrNull()?.boundingBox
+
+            if (fullName != lastDetectedName) {
+                sendOcrResult(fullName, name, subtype, isLorcana, boundingBox)
+                lastDetectedName = fullName
+            }
+        }
+    }
+
+    /**
+     * Given a list of lines, return a candidate card name.
+     *
+     * This method uses the pre-compiled regexes to first look for a Lorcana candidate (name + version)
+     * and then for an MTG candidate if no Lorcana candidate is found. In case of multiple candidates,
+     * the one with the highest score is returned.
+     */
+    private fun findCandidate(allLines: List<String>): Triple<String, String?, Boolean>? {
+        val candidates = mutableListOf<Triple<String, String?, Boolean>>()
+        for (i in allLines.indices) {
+            val line = allLines[i]
+            // Try Lorcana format (e.g. "CARDNAME" followed by a version line)
+            if (LORCANA_NAME_REGEX.matches(line) && !KEYWORD_FILTER.containsMatchIn(line)) {
+                if (i + 1 < allLines.size) {
+                    val nextLine = allLines[i + 1]
+                    if (LORCANA_VERSION_REGEX.matches(nextLine) && !KEYWORD_FILTER.containsMatchIn(nextLine)) {
+                        candidates.add(Triple(line, nextLine, true))
+                        continue
+                    }
+                }
+            }
+            // Otherwise, check for an MTG-style card name.
+            if (MTG_NAME_REGEX.matches(line) && !KEYWORD_FILTER.containsMatchIn(line)) {
+                candidates.add(Triple(line, null, false))
+            }
+        }
+        // Return the candidate with the highest computed score.
+        return candidates.maxByOrNull { computeNameScore(it.first) }
+    }
+
+    /**
+     * Emit the OCR result to React if it passes duplicate and movement checks.
+     */
+    private fun sendOcrResult(
+        fullName: String,
+        name: String,
+        subtype: String?,
+        isLorcana: Boolean,
+        boundingBox: Rect?
+    ) {
         val currentTime = System.currentTimeMillis()
-        // Remove scans older than cooldown
+        // Purge old scans
         recentScans.removeAll { currentTime - it.second > COOLDOWN_MS }
 
         if (recentScans.any { it.first.equals(fullName, ignoreCase = true) }) {
-            Log.d(TAG, "Duplicate scan detected for: $fullName. Ignoring.")
+            Log.d(TAG, "Duplicate scan for: $fullName; ignoring.")
             return
         }
 
-        // Movement detection: check if the bounding box has moved sufficiently
+        // Check for sufficient movement if a previous bounding box exists.
         if (boundingBox != null && lastBoundingBox != null) {
             val dx = abs(boundingBox.centerX() - lastBoundingBox!!.centerX())
             val dy = abs(boundingBox.centerY() - lastBoundingBox!!.centerY())
             if (dx < MOVEMENT_THRESHOLD && dy < MOVEMENT_THRESHOLD) {
-                Log.d(TAG, "Card position hasn't moved significantly (dx=$dx, dy=$dy). Ignoring scan.")
+                Log.d(TAG, "Insufficient movement detected (dx=$dx, dy=$dy); ignoring scan.")
                 return
             }
         }
 
-        // Add to recent scans
         recentScans.add(Pair(fullName, currentTime))
-
-        // Update the last bounding box
         lastBoundingBox = boundingBox
 
         val params = Arguments.createMap().apply {
@@ -563,10 +540,13 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     /**
-     * Crops the YUV image to the specified rectangle and converts it to a Bitmap.
+     * Convert a YUV_420_888 image to a cropped Bitmap.
+     *
+     * This refactored version uses the YuvImage.compressToJpeg() method with a crop rectangle
+     * so that only the area of interest (AOI) is converted, which can be much faster.
      */
     private fun cropImage(image: Image, left: Int, top: Int, width: Int, height: Int): Bitmap {
-        // Convert YUV_420_888 to Bitmap
+        // Convert YUV_420_888 to NV21 format.
         val yBuffer = image.planes[0].buffer
         val uBuffer = image.planes[1].buffer
         val vBuffer = image.planes[2].buffer
@@ -576,18 +556,40 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         val vSize = vBuffer.remaining()
 
         val nv21 = ByteArray(ySize + uSize + vSize)
-
-        // U and V are swapped
         yBuffer.get(nv21, 0, ySize)
+        // Note: U and V are swapped in NV21.
         vBuffer.get(nv21, ySize, vSize)
         uBuffer.get(nv21, ySize + vSize, uSize)
 
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
         val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, out)
-        val fullBitmap = BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+        // Compress only the AOI directly.
+        val cropRect = Rect(left, top, left + width, top + height)
+        yuvImage.compressToJpeg(cropRect, 100, out)
+        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+    }
 
-        // Crop to AOI
-        return Bitmap.createBitmap(fullBitmap, left, top, width, height)
+    /**
+     * Drain extra images from the ImageReader to prevent a backlog.
+     */
+    private fun drainExtraImages(reader: ImageReader) {
+        while (true) {
+            val extraImage = reader.acquireLatestImage() ?: break
+            extraImage.close()
+        }
+    }
+
+    @ReactMethod
+    fun getPreviewSize(promise: Promise) {
+        val currentPreviewSize = previewSize
+        if (currentPreviewSize == null) {
+            promise.reject("NO_PREVIEW", "Preview not initialized")
+            return
+        }
+        val map = Arguments.createMap().apply {
+            putInt("width", currentPreviewSize.width)
+            putInt("height", currentPreviewSize.height)
+        }
+        promise.resolve(map)
     }
 }
