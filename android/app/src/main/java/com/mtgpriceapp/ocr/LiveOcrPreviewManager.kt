@@ -16,10 +16,14 @@ class LiveOcrPreviewManager : SimpleViewManager<LiveOcrPreviewView>() {
         const val REACT_CLASS = "LiveOcrPreview"
     }
 
-    private var previewModule: PreviewModule? = null
+    private var ocrModule: PreviewModule? = null
+    private var classifierModule: PreviewModule? = null
+    private var currentModule: PreviewModule? = null
 
-    fun setPreviewModule(module: PreviewModule) {
-        previewModule = module
+    fun setPreviewModules(ocr: PreviewModule, classifier: PreviewModule) {
+        ocrModule = ocr
+        classifierModule = classifier
+        currentModule = ocr // Default to OCR
     }
 
     override fun getName(): String {
@@ -27,7 +31,7 @@ class LiveOcrPreviewManager : SimpleViewManager<LiveOcrPreviewView>() {
     }
 
     override fun createViewInstance(reactContext: ThemedReactContext): LiveOcrPreviewView {
-        return LiveOcrPreviewView(reactContext, previewModule)
+        return LiveOcrPreviewView(reactContext, currentModule)
     }
 
     @ReactProp(name = "isActive")
@@ -37,7 +41,11 @@ class LiveOcrPreviewManager : SimpleViewManager<LiveOcrPreviewView>() {
 
     @ReactProp(name = "type")
     fun setType(view: LiveOcrPreviewView, type: String?) {
-        // Handle type prop if needed
+        currentModule = when (type) {
+            "classifier" -> classifierModule
+            else -> ocrModule
+        }
+        view.setPreviewModule(currentModule)
     }
 
     override fun getExportedCustomBubblingEventTypeConstants(): MutableMap<String, Any> {
@@ -52,7 +60,7 @@ class LiveOcrPreviewManager : SimpleViewManager<LiveOcrPreviewView>() {
     override fun onAfterUpdateTransaction(view: LiveOcrPreviewView) {
         super.onAfterUpdateTransaction(view)
         if (view.isSurfaceValid()) {
-            previewModule?.setPreviewSurface(view.getSurface())
+            currentModule?.setPreviewSurface(view.getSurface())
         }
     }
 }

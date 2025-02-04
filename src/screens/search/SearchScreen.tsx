@@ -17,7 +17,8 @@ import CardList from '../../components/CardList';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import CollectionSelectionModal from '../../components/CollectionSelectionModal';
 import { databaseService } from '../../services/DatabaseService';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 type SearchScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 

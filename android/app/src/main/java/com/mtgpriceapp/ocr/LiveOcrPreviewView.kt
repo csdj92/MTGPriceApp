@@ -11,6 +11,10 @@ import android.view.View
 import android.view.Surface
 
 class LiveOcrPreviewView(context: Context, private var previewModule: PreviewModule?) : FrameLayout(context) {
+    companion object {
+        private const val TAG = "LiveOcrPreviewView"
+    }
+
     private var isActive = false
     private var isSurfaceValid = false
     private val isPreviewSetup = AtomicBoolean(false)
@@ -74,92 +78,48 @@ class LiveOcrPreviewView(context: Context, private var previewModule: PreviewMod
         visibility = View.INVISIBLE
     }
 
-    fun setIsActive(active: Boolean) {
-        Log.d(TAG, "Setting active state to: $active (current: $isActive)")
+    fun setPreviewModule(module: PreviewModule?) {
         synchronized(this) {
-            if (isActive == active) {
-                Log.d(TAG, "Active state unchanged, skipping")
-                return
+            if (previewModule != module) {
+                // Release the old preview
+                releasePreview()
+                previewModule = module
+                if (isActive && isSurfaceValid) {
+                    setupPreview()
+                }
             }
-            
-            isActive = active
-            visibility = if (active) View.VISIBLE else View.INVISIBLE
-            if (active) {
-                if (isSurfaceValid) {
-                    Log.d(TAG, "View activated with valid surface, setting up preview")
+        }
+    }
+
+    fun setIsActive(active: Boolean) {
+        synchronized(this) {
+            if (isActive != active) {
+                isActive = active
+                visibility = if (active) View.VISIBLE else View.INVISIBLE
+                if (active && isSurfaceValid) {
                     setupPreview()
                 } else {
-                    Log.d(TAG, "View activated but surface is not valid")
+                    releasePreview()
                 }
-            } else {
-                Log.d(TAG, "View deactivated, releasing preview")
-                releasePreview()
             }
         }
     }
+
+    fun isSurfaceValid(): Boolean = isSurfaceValid
+
+    fun getSurface(): Surface? = if (isSurfaceValid) surfaceView.holder.surface else null
 
     private fun setupPreview() {
-        if (!isSurfaceValid) {
-            Log.e(TAG, "Surface is not valid yet, retrying in 100ms")
-            postDelayed({ setupPreview() }, 100)
-            return
-        }
-        
-        val module = previewModule
-        if (module == null) {
-            Log.e(TAG, "PreviewModule is null")
-            return
-        }
-
-        try {
-            val surface = surfaceView.holder.surface
-            if (surface != null && surface.isValid) {
-                Log.d(TAG, "Setting up preview with surface: $surface")
-                module.setPreviewSurface(surface)
-                isPreviewSetup.set(true)
-                Log.d(TAG, "Preview setup complete")
-            } else {
-                Log.e(TAG, "Surface is null or invalid")
-                isPreviewSetup.set(false)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error setting up preview", e)
-            isPreviewSetup.set(false)
-        }
-    }
-
-    internal fun releasePreview() {
-        try {
-            Log.d(TAG, "Releasing preview")
-            previewModule?.setPreviewSurface(null)
-            Log.d(TAG, "Preview released")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error releasing preview", e)
-        } finally {
-            isPreviewSetup.set(false)
-        }
-    }
-
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        Log.d(TAG, "View detached from window")
-        synchronized(this) {
-            isActive = false
-            releasePreview()
-        }
-    }
-
-    fun setPreviewModule(module: PreviewModule?) {
-        previewModule = module
-        if (isActive && surfaceView.holder != null) {
+        if (isActive && isSurfaceValid && !isPreviewSetup.get()) {
             previewModule?.setPreviewSurface(surfaceView.holder.surface)
+            isPreviewSetup.set(true)
         }
     }
 
-    internal fun isSurfaceValid(): Boolean = surfaceView.holder.surface.isValid
-    internal fun getSurface(): Surface = surfaceView.holder.surface
-
-    companion object {
-        private const val TAG = "LiveOcrPreviewView"
+    fun releasePreview() {
+        if (isPreviewSetup.get()) {
+            previewModule?.setPreviewSurface(null)
+            isPreviewSetup.set(false)
+        }
     }
 } 

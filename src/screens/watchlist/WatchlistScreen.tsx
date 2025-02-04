@@ -12,7 +12,8 @@ import {
     FlatList,
     Image,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as any;
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { databaseService } from '../../services/DatabaseService';
 import { scryfallService } from '../../services/ScryfallService';
@@ -216,6 +217,7 @@ const WatchlistScreen = () => {
             if (details) {
                 setCardDetails([{
                     ...details,
+                    prices: card.prices || details.prices,
                     isExpanded: true
                 }]);
             } else {

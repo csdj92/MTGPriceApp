@@ -5,6 +5,7 @@ const CACHE_EXPIRY = 1000 * 60 * 60; // 1 hour
 const USER_AGENT = 'MTGPriceApp/1.0';
 
 interface ScryfallCard {
+    finishes: any;
     id: string;
     oracle_id: string;
     multiverse_ids?: number[];
@@ -72,6 +73,14 @@ interface ScryfallCard {
         predh: string;
         [key: string]: string;
     };
+    power?: string;
+    toughness?: string;
+    colors?: string[];
+    color_identity?: string[];
+    keywords?: string[];
+    cmc?: number;
+    flavor_text?: string;
+    frame_effects?: string[];
 }
 
 interface PriceData {
@@ -130,13 +139,14 @@ class ScryfallService {
             throw error;
         }
     }
-
     private transformScryfallCard = (scryfallCard: ScryfallCard): ExtendedCard => {
         return {
             id: scryfallCard.id,
             name: scryfallCard.name,
             setCode: scryfallCard.set?.toUpperCase() ?? 'UNK',
             setName: scryfallCard.set_name ?? 'Unknown Set',
+            hasNonFoil: scryfallCard.finishes?.includes('nonfoil') ?? false,
+            hasFoil: scryfallCard.finishes?.includes('foil') ?? false,
             collectorNumber: scryfallCard.collector_number,
             rarity: scryfallCard.rarity,
             manaCost: scryfallCard.mana_cost,
@@ -162,6 +172,14 @@ class ScryfallService {
                 cardhoarder: scryfallCard.purchase_uris?.cardhoarder,
             },
             legalities: scryfallCard.legalities ?? {},
+            power: scryfallCard.power,
+            toughness: scryfallCard.toughness,
+            colors: scryfallCard.colors ?? [],
+            colorIdentity: scryfallCard.color_identity ?? [],
+            keywords: scryfallCard.keywords ?? [],
+            cmc: scryfallCard.cmc ?? 0,
+            flavorText: scryfallCard.flavor_text,
+            frameEffects: scryfallCard.frame_effects ?? [],
         };
     };
 

@@ -92,8 +92,8 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     // Adjust this threshold to make movement detection more/less sensitive.
     private val MOVEMENT_THRESHOLD = 50
 
-    // Add to class properties
-    private var previewSize: Size? = null
+    private var currentPreviewWidth: Int? = null
+    private var currentPreviewHeight: Int? = null
 
     override fun getName() = NAME
 
@@ -143,14 +143,27 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     private fun sendPreviewSizeToReact(width: Int, height: Int) {
-        val currentPreviewSize = previewSize ?: return
+        currentPreviewWidth = width
+        currentPreviewHeight = height
         val params = Arguments.createMap().apply {
-            putInt("width", currentPreviewSize.width)
-            putInt("height", currentPreviewSize.height)
+            putInt("width", width)
+            putInt("height", height)
         }
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit("PreviewSize", params)
+    }
+
+    @ReactMethod
+    fun getPreviewSize(promise: Promise) {
+        if (currentPreviewWidth != null && currentPreviewHeight != null) {
+            val result = Arguments.createMap()
+            result.putInt("width", currentPreviewWidth!!)
+            result.putInt("height", currentPreviewHeight!!)
+            promise.resolve(result)
+        } else {
+            promise.reject("NO_SIZE", "Preview size not available")
+        }
     }
 
     /**
@@ -179,25 +192,24 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
             val screenAspectRatio = displayMetrics.widthPixels.toFloat() / displayMetrics.heightPixels.toFloat()
 
             // Prefer a larger size around 1920x1080 if possible
-            previewSize = previewSizes
+            val bestPreviewSize = previewSizes
                 .filter { it.height >= 1080 || it.width >= 1920 }
                 .minByOrNull {
                     val ratio = it.width.toFloat() / it.height.toFloat()
                     abs(ratio - screenAspectRatio)
                 } ?: previewSizes.first()
 
-            Log.d(TAG, "Selected preview size: ${previewSize?.width}x${previewSize?.height}")
-            sendPreviewSizeToReact(previewSize?.width ?: 0, previewSize?.height ?: 0)
+            Log.d(TAG, "Selected preview size: ${bestPreviewSize.width}x${bestPreviewSize.height}")
+            sendPreviewSizeToReact(bestPreviewSize.width, bestPreviewSize.height)
 
             // Pre-capture the sensor orientation so that we can pass it along to ML Kit.
             val sensorOrientation =
                 characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
 
             // Initialize the ImageReader using the preview size and format.
-            val currentPreviewSize = previewSize ?: return
             imageReader = ImageReader.newInstance(
-                currentPreviewSize.width,
-                currentPreviewSize.height,
+                bestPreviewSize.width,
+                bestPreviewSize.height,
                 ImageFormat.YUV_420_888,
                 MAX_IMAGES
             ).apply {
@@ -286,8 +298,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     private fun createCameraPreviewSession() {
         try {
             val surface = previewSurface ?: run {
-                Log.w(TAG, "Preview surface is null - retrying in 100ms")
-                backgroundHandler?.postDelayed({ createCameraPreviewSession() }, 100)
+                Log.e(TAG, "Preview surface is null")
                 return
             }
 
@@ -577,19 +588,5 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
             val extraImage = reader.acquireLatestImage() ?: break
             extraImage.close()
         }
-    }
-
-    @ReactMethod
-    fun getPreviewSize(promise: Promise) {
-        val currentPreviewSize = previewSize
-        if (currentPreviewSize == null) {
-            promise.reject("NO_PREVIEW", "Preview not initialized")
-            return
-        }
-        val map = Arguments.createMap().apply {
-            putInt("width", currentPreviewSize.width)
-            putInt("height", currentPreviewSize.height)
-        }
-        promise.resolve(map)
     }
 }

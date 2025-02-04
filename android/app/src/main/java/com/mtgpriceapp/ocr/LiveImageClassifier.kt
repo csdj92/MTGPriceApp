@@ -37,6 +37,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.ByteArrayOutputStream
+import android.graphics.Matrix
 
 @ReactModule(name = LiveImageClassifier.NAME)
 class LiveImageClassifier(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext), PreviewModule {
@@ -50,6 +51,9 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
         private const val AOI_WIDTH_PERCENT = 0.8f
         private const val AOI_HEIGHT_PERCENT = 0.4f
         private val NUM_CLASSES = 31609  // Update this if the model truly outputs 31609 classes.
+        private const val MIN_ZOOM = 1.0f
+        private const val MAX_ZOOM = 5.0f
+        private const val DEFAULT_ZOOM = 0.2f
     }
 
     private var cameraDevice: CameraDevice? = null
@@ -64,7 +68,11 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
     private var classifier: ImageClassifier? = null
     private var previewSize: Size? = null
     private var lastClassificationTime: Long = 0
+    private var lastScannedPrediction: String? = null
     private val CLASSIFICATION_COOLDOWN_MS = 1000L // Adjust cooldown (e.g. 1 second) as needed
+    private var currentZoom = DEFAULT_ZOOM
+    private var maxZoom = MAX_ZOOM
+    private var zoomRect: Rect? = null
 
     init {
         try {
@@ -201,9 +209,18 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
                             val cropHeight = cardHeight
 
                             val bitmap = cropImage(image, left, top, cropWidth, cropHeight)
-                            val prediction = classifier?.classify(bitmap) ?: "Unknown"
+                            val cardBitmap = detectCardCorners(bitmap)  // detect card corners (stub: returns bitmap as-is)
+                            val rotatedBitmap = rotateBitmap(cardBitmap, 90f)  // rotate the rectified card image
+                            val prediction = classifier?.classify(rotatedBitmap)?.label ?: "Unknown"
                             Log.d(TAG, "Prediction: $prediction")
 
+                            if (prediction == lastScannedPrediction) {
+                                Log.d(TAG, "Duplicate card scan detected: $prediction, skipping event emission")
+                                image.close()
+                                processingImage = false
+                                return@setOnImageAvailableListener
+                            }
+                            lastScannedPrediction = prediction
                             val params = Arguments.createMap().apply {
                                 putString("label", prediction)
                             }
@@ -274,10 +291,21 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
                 override fun onConfigured(session: CameraCaptureSession) {
                     captureSession = session
                     try {
+                        // Get max zoom level from camera characteristics
+                        val characteristics = (reactContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager)
+                            .getCameraCharacteristics(cameraDevice?.id ?: return)
+                        maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: MAX_ZOOM
+                        
+                        // Initialize with default zoom
+                        currentZoom = DEFAULT_ZOOM
+                        
                         session.setRepeatingRequest(previewRequestBuilder.build(), null, backgroundHandler)
                     } catch (e: CameraAccessException) {
                         Log.e(TAG, "Failed to start camera preview: ${e.message}")
                     }
+                    
+                    // Apply initial zoom after session is configured
+                    updatePreviewWithZoom()
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
@@ -297,22 +325,49 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
     }
 
     private fun cropImage(image: Image, left: Int, top: Int, width: Int, height: Int): Bitmap {
+        // Convert YUV_420_888 to NV21
         val yBuffer = image.planes[0].buffer
         val uBuffer = image.planes[1].buffer
         val vBuffer = image.planes[2].buffer
+
         val ySize = yBuffer.remaining()
         val uSize = uBuffer.remaining()
         val vSize = vBuffer.remaining()
+
         val nv21 = ByteArray(ySize + uSize + vSize)
+
+        // Copy Y plane
         yBuffer.get(nv21, 0, ySize)
-        // Note: U and V are swapped in NV21.
+        // Copy V and U planes
         vBuffer.get(nv21, ySize, vSize)
         uBuffer.get(nv21, ySize + vSize, uSize)
+
+        // Create YuvImage and compress to JPEG
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
         val out = ByteArrayOutputStream()
         val cropRect = Rect(left, top, left + width, top + height)
         yuvImage.compressToJpeg(cropRect, 100, out)
-        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+        val bytes = out.toByteArray()
+        out.close()
+
+        // Convert JPEG bytes to Bitmap
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }
+
+    private fun rotateBitmap(source: Bitmap, angle: Float): Bitmap {
+        val matrix = Matrix()
+        matrix.postRotate(angle)
+        val result = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+        if (result != source) {
+            source.recycle()
+        }
+        return result
+    }
+
+    private fun detectCardCorners(source: Bitmap): Bitmap {
+        // TODO: Implement corner detection
+        Log.d(TAG, "Corner detection not implemented yet")
+        return source
     }
 
     private fun closeCamera() {
@@ -403,7 +458,7 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
             if (!file.canRead()) {
                 throw SecurityException("No read permissions for file: $path")
             }
-
+            
             // Check if file is actually an image
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
@@ -412,14 +467,18 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
             if (options.outWidth == -1 || options.outHeight == -1) {
                 throw IOException("Invalid image file: $path")
             }
-
+            
             // Actual decoding with error handling
             val bitmap = BitmapFactory.decodeFile(path) ?: throw IOException("Failed to decode bitmap")
             
             classifier?.let { 
-                val results = it.classify(bitmap)
-                if (results != null) {
-                    promise.resolve(results)
+                val result = it.classify(bitmap)
+                if (result != null) {
+                    // Convert the ClassificationResult into a WritableMap
+                    val resultMap = Arguments.createMap()
+                    resultMap.putString("label", result.label)
+                    resultMap.putDouble("confidence", result.confidence.toDouble())
+                    promise.resolve(resultMap)
                 } else {
                     promise.reject("CLASSIFICATION_ERROR", "Null results from classifier")
                 }
@@ -427,6 +486,57 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
         } catch (e: Exception) {
             Log.e(TAG, "Classification error: ${e.javaClass.simpleName}", e)
             promise.reject("CLASSIFICATION_ERROR", e)
+        }
+    }
+
+    @ReactMethod
+    fun setZoom(zoomLevel: Float, promise: Promise) {
+        try {
+            val clampedZoom = zoomLevel.coerceIn(MIN_ZOOM, maxZoom)
+            currentZoom = clampedZoom
+            updatePreviewWithZoom()
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("ZOOM_ERROR", "Failed to set zoom level", e)
+        }
+    }
+
+    private fun updatePreviewWithZoom() {
+        val session = captureSession ?: return
+        val device = cameraDevice ?: return
+        
+        try {
+            val characteristics = (reactContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager)
+                .getCameraCharacteristics(device.id)
+            
+            val sensorRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE) ?: return
+            
+            // Calculate zoom rect
+            val centerX = sensorRect.width() / 2
+            val centerY = sensorRect.height() / 2
+            val deltaX = (sensorRect.width() / (2 * currentZoom)).toInt()
+            val deltaY = (sensorRect.height() / (2 * currentZoom)).toInt()
+            
+            zoomRect = Rect(
+                centerX - deltaX,
+                centerY - deltaY,
+                centerX + deltaX,
+                centerY + deltaY
+            )
+            
+            // Update preview
+            val previewRequestBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(previewSurface ?: return)
+                imageReader?.surface?.let { addTarget(it) }
+                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                set(CaptureRequest.SCALER_CROP_REGION, zoomRect)
+            }
+            
+            session.setRepeatingRequest(previewRequestBuilder.build(), null, backgroundHandler)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error updating zoom", e)
         }
     }
 } 

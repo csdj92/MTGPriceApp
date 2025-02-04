@@ -12,6 +12,7 @@
   "dependencies": {
     "@react-native-community/viewpager": "^5.0.11",
     "@react-native-ml-kit/text-recognition": "^1.5.2",
+    "@react-native-picker/picker": "^2.11.0",
     "@react-navigation/bottom-tabs": "^7.2.0",
     "@react-navigation/material-top-tabs": "^7.1.0",
     "@react-navigation/native": "^7.0.14",
@@ -19,9 +20,10 @@
     "@types/react-native-sqlite-storage": "^6.0.5",
     "lodash": "^4.17.21",
     "react": "18.3.1",
-    "react-native": "0.76.5",
+    "react-native": "^0.76.5",
     "react-native-fast-image": "^8.6.3",
     "react-native-fs": "^2.20.0",
+    "react-native-image-crop-picker": "^0.42.0",
     "react-native-pager-view": "^6.7.0",
     "react-native-reanimated": "^3.16.6",
     "react-native-safe-area-context": "^5.0.0",
@@ -30,7 +32,8 @@
     "react-native-tab-view": "^4.0.5",
     "react-native-vector-icons": "^10.2.0",
     "react-native-vision-camera": "^4.6.3",
-    "react-native-zip-archive": "^7.0.1"
+    "react-native-zip-archive": "^7.0.1",
+    "use-debounce": "^10.0.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

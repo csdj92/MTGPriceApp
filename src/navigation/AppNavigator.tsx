@@ -2,7 +2,6 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 // Import screens
 import CollectionScreen from '../screens/collection/CollectionScreen';
@@ -16,12 +15,17 @@ import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
 import CardDetailsScreen from '../screens/CardDetailsScreen';
 import LorcanaCardDetailsScreen from '../screens/LorcanaCardDetailsScreen';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
+import CameraTest from '../components/test';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import DeckBuilder from '../components/DeckBuilder';
+import ManualCaptureScreen from '../screens/ManualCaptureScreen';
+const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 export type RootStackParamList = {
     MainTabs: undefined;
     Collection: { collectionId: string; title: string; setCode: string } | undefined;
     CollectionDetails: { collectionId: string; title: string };
-    CardDetails: { card: ExtendedCard };
+    CardDetails: { card: ExtendedCard; onClose?: () => void };
     SetCompletion: undefined;
     PriceLookup: undefined;
     LorcanaCollection: { collectionId: string; title: string; setCode: string };
@@ -29,6 +33,10 @@ export type RootStackParamList = {
         card: LorcanaCardWithPrice;
         collectionId: string;
     };
+    CameraTest: undefined;
+    DeckDetailScreen: { deckId: number };
+    Watchlist: { deckId?: number };
+    DeckBuilder: undefined;
 };
 
 export type MainTabParamList = {
@@ -37,7 +45,9 @@ export type MainTabParamList = {
     Watchlist: undefined;
     Settings: undefined;
     PriceLookup: undefined;
+    ManualCapture: undefined;
 };
+
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -65,9 +75,14 @@ const MainTabs = () => (
                         break;
                     default:
                         iconName = 'help';
+                        break;
+                    case 'ManualCapture':
+                        iconName = 'robot';
+                        break;
                 }
                 return <Icon name={iconName} size={size} color={color} />;
             },
+
         })}
     >
         <Tab.Screen name="Collection" component={CollectionScreen} />
@@ -75,8 +90,10 @@ const MainTabs = () => (
         <Tab.Screen name="Watchlist" component={WatchlistScreen} />
         <Tab.Screen name="Settings" component={SettingsScreen} />
         <Tab.Screen name="PriceLookup" component={PriceLookupScreen} />
+        <Tab.Screen name="ManualCapture" component={ManualCaptureScreen} />
     </Tab.Navigator>
 );
+
 
 const AppNavigator = () => (
     <NavigationContainer>
@@ -111,6 +128,24 @@ const AppNavigator = () => (
                 name="LorcanaCardDetails" 
                 component={LorcanaCardDetailsScreen}
                 options={{ title: 'Lorcana Card Details' }}
+            />
+            <Stack.Screen 
+                name="CameraTest" 
+                component={CameraTest}
+                options={{
+                    title: 'Camera Test',
+                    headerShown: false
+                }}
+            />
+            <Stack.Screen 
+                name="DeckDetailScreen" 
+                component={require('../screens/decks/DeckDetailScreen').default}
+                options={{ title: 'Deck Details' }}
+            />
+            <Stack.Screen 
+                name="DeckBuilder" 
+                component={DeckBuilder}
+                options={{ title: 'Deck Builder' }}
             />
         </Stack.Navigator>
     </NavigationContainer>

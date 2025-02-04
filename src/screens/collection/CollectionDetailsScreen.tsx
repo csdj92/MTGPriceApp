@@ -10,7 +10,8 @@ import LorcanaGridView from '../../components/LorcanaGridView';
 import MTGGridView from '../../components/MTGGridView';
 import type { ExtendedCard } from '../../types/card';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CollectionDetails'>;
 
@@ -296,6 +297,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         isLoading={isLoading}
                         onCardPress={handleCardPress}
                         onDeleteCard={handleDeleteCard}
+                        onCardsUpdate={setMtgCards}
                         collectionId={collectionId}
                     />
                 )

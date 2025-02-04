@@ -6,18 +6,23 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.uimanager.ViewManager
 
 class OcrPackage : ReactPackage {
-    // Create only one instance and reuse it.
+    private lateinit var ocrModule: LiveOcr
     private lateinit var classifierModule: LiveImageClassifier
+    private var currentPreviewModule: PreviewModule? = null
 
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
+        ocrModule = LiveOcr(reactContext)
         classifierModule = LiveImageClassifier(reactContext)
-        return listOf(LiveOcr(reactContext), classifierModule)
+        // Default to OCR module
+        currentPreviewModule = ocrModule
+        return listOf(ocrModule, classifierModule)
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
-        // Now pass the same classifierModule instance so it receives the preview
         return listOf(
-            LiveOcrPreviewManager().apply { setPreviewModule(classifierModule) }
+            LiveOcrPreviewManager().apply { 
+                setPreviewModules(ocrModule, classifierModule)
+            }
         )
     }
 } 

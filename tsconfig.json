@@ -2,7 +2,10 @@
   "extends": "@react-native/typescript-config/tsconfig.json",
   "compilerOptions": {
     "types": [
-      "node"
+      "node",
+      "react",
+      "react-native",
+      "react-native-vector-icons"
     ]
   }
 }

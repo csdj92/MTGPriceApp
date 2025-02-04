@@ -43,8 +43,9 @@ type PriceLookupScreenProps = {
 type SelectedCard = ExtendedCard | LorcanaCard;
 type ScannedCard = Omit<ExtendedCard, 'type'> & { type: 'MTG' | 'Lorcana' };
 
-const SCAN_COOLDOWN_MS = 1750; // 1 second cooldown between scans
+const SCAN_COOLDOWN_MS = 1750; // 1.75 second cooldown between scans
 const RECENT_SCANS_CLEAR_INTERVAL = 30000; // Clear recent scans every 30 seconds
+const MAX_RECENT_SCANS = 10; // Maximum number of recent scans to track
 
 const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => {
     const [searchQuery, setSearchQuery] = useState('');
@@ -181,6 +182,22 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
         // Check if we've seen this text very recently (within cooldown)
         const now = Date.now();
+        
+        // Check if this card was recently scanned
+        const recentScanKey = `${normalizedText}-${Math.floor(now / SCAN_COOLDOWN_MS)}`;
+        if (recentScansRef.current.has(recentScanKey)) {
+            console.log('[PriceLookupScreen] Scan ignored - card recently scanned');
+            return;
+        }
+
+        // Add to recent scans and maintain max size
+        recentScansRef.current.add(recentScanKey);
+        if (recentScansRef.current.size > MAX_RECENT_SCANS) {
+            const oldestKey = Array.from(recentScansRef.current)[0];
+            recentScansRef.current.delete(oldestKey);
+        }
+
+        // Also check against last scanned card for additional protection
         if (lastScannedRef.current) {
             const timeSinceLastScan = now - lastScannedRef.current.timestamp;
             if (timeSinceLastScan < SCAN_COOLDOWN_MS && lastScannedRef.current.text === normalizedText) {
@@ -645,7 +662,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     </TouchableOpacity>
                     <TouchableOpacity
                         style={[styles.actionButton, { backgroundColor: '#FF9800' }]}
-                        onPress={() => { setUseClassifier(true); setIsCameraActive(true); }}
+                        onPress={() => setUseClassifier(prev => !prev)}
                     >
                         <Icon name="robot" size={24} color="#fff" />
                         <Text style={styles.actionButtonText}>Classifier</Text>
@@ -1233,6 +1250,19 @@ const styles = StyleSheet.create({
     recentScanTime: {
         color: 'rgba(255, 255, 255, 0.6)',
         fontSize: 12,
+    },
+    toggleButton: {
+        position: 'absolute',
+        bottom: 20,
+        right: 20,
+        padding: 10,
+        backgroundColor: 'white',
+        borderRadius: 8,
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
     },
 });
 

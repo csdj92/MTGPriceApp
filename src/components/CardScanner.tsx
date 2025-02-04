@@ -11,16 +11,18 @@ import {
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { ExtendedCard, OcrResult } from '../types/card';
 
-const { LiveOcr } = NativeModules;
+const { LiveOcr, LiveImageClassifier } = NativeModules;
 const liveOcrEmitter = new NativeEventEmitter(LiveOcr);
+const liveImageClassifierEmitter = new NativeEventEmitter(LiveImageClassifier);
 
 interface CardScannerProps {
-  onTextDetected: (result: OcrResult) => void;
+  onTextDetected: (result: { text: string }) => void;
   onError: (error: Error) => void;
   scannedCards: ExtendedCard[];
   totalPrice: number;
   onCardPress?: (card: ExtendedCard) => void;
   isPaused?: boolean;
+  useClassifier?: boolean;
 }
 
 const CardScanner: React.FC<CardScannerProps> = ({
@@ -29,22 +31,34 @@ const CardScanner: React.FC<CardScannerProps> = ({
   scannedCards,
   totalPrice,
   isPaused = false,
+  useClassifier = false,
 }) => {
   const [hasPermission, setHasPermission] = useState(false);
   const [isActive, setIsActive] = useState(false);
   const [aspectRatioStyle, setAspectRatioStyle] = useState({});
   const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
 
+  const emitter = useClassifier ? liveImageClassifierEmitter : liveOcrEmitter;
+  const eventName = useClassifier ? 'LiveImageClassification' : 'LiveOcrResult';
+
   useEffect(() => {
     checkPermission();
 
-    const subscription = liveOcrEmitter.addListener('LiveOcrResult', (event: OcrResult) => {
-      if (event.text && !isPaused) {
-        onTextDetected(event);
+    const subscription = emitter.addListener(eventName, (event) => {
+      if (!isPaused) {
+        if (useClassifier) {
+          if (event.label) {
+            onTextDetected({ text: event.label });
+          }
+        } else {
+          if (event.text) {
+            onTextDetected(event);
+          }
+        }
       }
     });
 
-    const sizeSubscription = liveOcrEmitter.addListener('PreviewSize', (event) => {
+    const sizeSubscription = emitter.addListener('PreviewSize', (event) => {
       const { width, height } = event;
       setPreviewSize({ width, height });
       updateAspectRatio(width, height);
@@ -61,10 +75,16 @@ const CardScanner: React.FC<CardScannerProps> = ({
       sizeSubscription.remove();
       dimensionsListener.remove();
       setIsActive(false);
-      stopOcrSession().catch(() => {});
+      stopSession().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPaused]);
+
+  useEffect(() => {
+    if (previewSize) {
+      updateAspectRatio(previewSize.width, previewSize.height);
+    }
+  }, [previewSize]);
 
   const updateAspectRatio = (previewWidth: number, previewHeight: number) => {
     const screen = Dimensions.get('window');
@@ -121,7 +141,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
       if (granted === PermissionsAndroid.RESULTS.GRANTED) {
         setHasPermission(true);
-        await startOcrSession();
+        await startSession();
         setIsActive(true);
       } else {
         onError(new Error('Camera permission denied'));
@@ -131,20 +151,33 @@ const CardScanner: React.FC<CardScannerProps> = ({
     }
   };
 
-  const startOcrSession = async () => {
+  const startSession = async () => {
     try {
-      await LiveOcr.startOcrSession();
+      if (useClassifier) {
+        await LiveImageClassifier.startClassificationSession();
+        const { width, height } = await LiveImageClassifier.getPreviewSize();
+        updateAspectRatio(width, height);
+      } else {
+        await LiveOcr.startOcrSession();
+        const { width, height } = await LiveOcr.getPreviewSize();
+        updateAspectRatio(width, height);
+      }
+      setIsActive(true);
     } catch (error: any) {
-      onError(error instanceof Error ? error : new Error('Failed to start OCR session'));
+      onError(error instanceof Error ? error : new Error('Failed to start session'));
       throw error;
     }
   };
 
-  const stopOcrSession = async () => {
+  const stopSession = async () => {
     try {
-      await LiveOcr.stopOcrSession();
+      if (useClassifier) {
+        await LiveImageClassifier.stopClassificationSession();
+      } else {
+        await LiveOcr.stopOcrSession();
+      }
     } catch (error) {
-      console.error('Failed to stop OCR session:', error);
+      console.error('Failed to stop session:', error);
     }
   };
 
@@ -159,7 +192,11 @@ const CardScanner: React.FC<CardScannerProps> = ({
   return (
     <View style={styles.container}>
       <View style={[styles.previewContainer, aspectRatioStyle]}>
-        <LiveOcrPreviewWithOverlay style={StyleSheet.absoluteFill} isActive={isActive && !isPaused} />
+        <LiveOcrPreviewWithOverlay 
+          style={StyleSheet.absoluteFill} 
+          isActive={isActive && !isPaused}
+          type={useClassifier ? 'classifier' : 'ocr'}
+        />
       </View>
     </View>
   );

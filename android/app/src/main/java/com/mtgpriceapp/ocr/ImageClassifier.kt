@@ -13,6 +13,8 @@ import java.nio.channels.FileChannel
 import org.tensorflow.lite.Interpreter
 import kotlin.math.exp
 
+data class ClassificationResult(val label: String, val confidence: Float)
+
 class ImageClassifier(private val context: Context) {
 
     // Configuration for the model
@@ -28,6 +30,7 @@ class ImageClassifier(private val context: Context) {
 
     private companion object {
         private const val TEMPERATURE = 0.5f  // Temperature parameter for scaling logits, sharper distribution
+        private const val CONFIDENCE_THRESHOLD = 0.1f  // Minimum confidence threshold for valid predictions
     }
 
     init {
@@ -113,28 +116,29 @@ class ImageClassifier(private val context: Context) {
      * Classify the given bitmap image using the TFLite model.
      * Returns the predicted label as a String.
      */
-    fun classify(bitmap: Bitmap): String {
+    fun classify(bitmap: Bitmap): ClassificationResult {
         val inputBuffer = convertBitmapToByteBuffer(bitmap)
         val outputBuffer = Array(1) { FloatArray(numClasses) }
         interpreter?.run(inputBuffer, outputBuffer)
         val rawOutputs = outputBuffer[0]
         
-        // Optionally compute softmax to view the true probability.
         val probabilities = applyTemperatureSoftmax(rawOutputs, TEMPERATURE)
         val maxIndex = probabilities.indices.maxByOrNull { probabilities[it] } ?: -1
         val confidence = if (maxIndex != -1) probabilities[maxIndex] else 0f
         Log.d("ImageClassifier", "Max index: $maxIndex, Confidence: $confidence")
         
-        if (::labels.isInitialized && maxIndex in labels.indices) {
-            val rawLabel = labels[maxIndex].trim()
-            val processedLabel = if (rawLabel.contains("\t")) {
-                rawLabel.split("\t").getOrElse(1) { rawLabel }
-            } else {
-                rawLabel
-            }
-            return processedLabel
+        if (confidence < CONFIDENCE_THRESHOLD) {
+            Log.d("ImageClassifier", "Confidence below threshold, returning Unknown")
+            return ClassificationResult("", confidence)
         }
-        return "Unknown"
+        
+        val rawLabel = labels.getOrNull(maxIndex)?.trim() ?: "Unknown"
+        val processedLabel = if (rawLabel.contains("\t")) {
+            rawLabel.split("\t").getOrElse(1) { rawLabel }
+        } else {
+            rawLabel
+        }
+        return ClassificationResult(processedLabel, confidence)
     }
 
     /**
@@ -144,4 +148,6 @@ class ImageClassifier(private val context: Context) {
         interpreter?.close()
         interpreter = null
     }
+
+    fun getLabels(): List<String> = labels
 } 

@@ -1,13 +1,16 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
     View,
     Text,
     StyleSheet,
     TouchableOpacity,
     Image,
+    Linking,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as any;
 import type { ExtendedCard } from '../types/card';
+import { getBestPrice } from './MTGGridView';
 
 interface CardItemProps {
     card: ExtendedCard;
@@ -15,82 +18,101 @@ interface CardItemProps {
     onAddToCollection?: () => void;
 }
 
-const CardItem: React.FC<CardItemProps> = ({ card, onPress, onAddToCollection }) => (
-    <TouchableOpacity
-        style={[styles.cardItem, card.isExpanded && styles.cardItemExpanded]}
-        onPress={onPress}
-        activeOpacity={0.9}
-    >
-        <View style={styles.cardMainInfo}>
-            <View style={styles.cardHeader}>
-                <Text style={styles.cardName}>{card.name}</Text>
-            </View>
+const getFormattedPrice = (price: number) => 
+    price > 0 ? `$${price.toFixed(2)}` : 'N/A';
 
-            <View style={styles.cardDetails}>
-                <View style={styles.setInfoContainer}>
-                    <Text style={styles.setInfo}>
-                        {card.setName} ({card.setCode})
-                    </Text>
-                    <Text style={[
-                        styles.rarity,
-                        styles[((card.rarity || 'common').toLowerCase()) as keyof typeof styles]
-                    ]}>
-                        • {card.rarity}
-                    </Text>
-                    {card.collectorNumber && (
-                        <Text style={styles.collectorNumber}>• #{card.collectorNumber}</Text>
-                    )}
+const CardItem: React.FC<CardItemProps> = ({ card, onPress, onAddToCollection }) => {
+    useEffect(() => {
+        console.log('Card prices:', card.prices);
+    }, [card.prices]);
+
+    return (
+        <TouchableOpacity
+            style={[styles.cardItem, card.isExpanded && styles.cardItemExpanded]}
+            onPress={onPress}
+            activeOpacity={0.9}
+        >
+            <View style={styles.cardMainInfo}>
+                <View style={styles.cardHeader}>
+                    <Text style={styles.cardName}>{card.name}</Text>
                 </View>
-            </View>
 
-            {card.isExpanded && (
-                <>
-                    {card.imageUris?.normal && (
-                        <Image
-                            source={{ uri: card.imageUris.normal }}
-                            style={styles.cardImage}
-                            resizeMode="contain"
-                        />
-                    )}
-                    <Text style={styles.cardType}>{card.type}</Text>
-                    {card.text && (
-                        <View style={styles.cardTextContainer}>
-                            <Text style={styles.cardText}>{card.text}</Text>
-                        </View>
-                    )}
-                    <View style={styles.cardFooter}>
-                        <View style={styles.priceSection}>
-                            <Text style={styles.sectionTitle}>Prices</Text>
-                            <View style={styles.priceContainer}>
-                                {card.prices?.usd && (
-                                    <Text style={styles.price}>
-                                        USD: ${Number(card.prices.usd).toFixed(2)}
-                                    </Text>
-                                )}
-                                {card.prices?.usdFoil && (
-                                    <Text style={styles.price}>
-                                        Foil: ${Number(card.prices.usdFoil).toFixed(2)}
-                                    </Text>
-                                )}
-                            </View>
-                        </View>
-
-                        {onAddToCollection && (
-                            <TouchableOpacity
-                                style={styles.addToCollectionButton}
-                                onPress={onAddToCollection}
-                                activeOpacity={0.9}
-                            >
-                                <Icon name="playlist-plus" size={20} color="white" />
-                                <Text style={styles.addToCollectionText}>Add to Collection</Text>
-                            </TouchableOpacity>
+                <View style={styles.cardDetails}>
+                    <View style={styles.setInfoContainer}>
+                        <Text style={styles.setInfo}>
+                            {card.setName} ({card.setCode})
+                        </Text>
+                        <Text style={[
+                            styles.rarity,
+                            styles[((card.rarity || 'common').toLowerCase()) as keyof typeof styles]
+                        ]}>
+                            • {card.rarity}
+                        </Text>
+                        {card.collectorNumber && (
+                            <Text style={styles.collectorNumber}>• #{card.collectorNumber}</Text>
                         )}
                     </View>
-                </>
-            )}
-        </View>
-    </TouchableOpacity>
-);
+                </View>
+
+                {card.isExpanded && (
+                    <>
+                        {card.imageUris?.normal && (
+                            <Image
+                                source={{ uri: card.imageUris.normal }}
+                                style={styles.cardImage}
+                                resizeMode="contain"
+                            />
+                        )}
+                        <Text style={styles.cardType}>{card.type}</Text>
+                        {card.text && (
+                            <View style={styles.cardTextContainer}>
+                                <Text style={styles.cardText}>{card.text}</Text>
+                            </View>
+                        )}
+                        <View style={styles.cardFooter}>
+                            <View style={styles.priceSection}>
+                                <Text style={styles.sectionTitle}>Prices</Text>
+                                <View style={styles.priceContainer}>
+                                    <Text style={styles.price}>
+                                        Normal: {getFormattedPrice(getBestPrice(card.prices, false))}
+                                    </Text>
+                                    <Text style={styles.price}>
+                                        Foil: {getFormattedPrice(getBestPrice(card.prices, true))}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.urlSection}>
+                                <Text style={styles.sectionTitle}>URL</Text>
+                                <TouchableOpacity 
+                                    style={styles.urlButton}
+                                    onPress={() => {
+                                        if (card.purchaseUrls?.tcgplayer) {
+                                            Linking.openURL(card.purchaseUrls.tcgplayer);
+                                        }
+                                    }}
+                                >
+                                    <Text style={styles.urlButtonText}>View on TCGplayer</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            {onAddToCollection && (
+                                <TouchableOpacity
+                                    style={styles.addToCollectionButton}
+                                    onPress={onAddToCollection}
+                                    activeOpacity={0.9}
+                                >
+                                    <Icon name="playlist-plus" size={20} color="white" />
+                                    <Text style={styles.addToCollectionText}>Add to Collection</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </>
+                )}
+            </View>
+        </TouchableOpacity>
+    );
+};
 
 const styles = StyleSheet.create({
     cardItem: {
@@ -223,6 +245,19 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 14,
         fontWeight: '600',
+    },
+    urlButton: {
+        padding: 8,
+        backgroundColor: '#2196F3',
+        borderRadius: 4,
+        alignItems: 'center',
+    },
+    urlButtonText: {
+        color: 'white',
+        fontWeight: '500',
+    },
+    urlSection: {
+        marginBottom: 12,
     },
 });
 

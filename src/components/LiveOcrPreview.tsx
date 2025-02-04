@@ -2,17 +2,24 @@ import React from 'react';
 import { StyleProp, ViewStyle, requireNativeComponent, View, StyleSheet } from 'react-native';
 import type { HostComponent } from 'react-native';
 
-interface LiveOcrPreviewProps {
+interface NativeLiveOcrPreviewProps {
     style?: StyleProp<ViewStyle>;
     isActive: boolean;
+    type?: 'ocr' | 'classifier';  // Add type prop to specify which preview to use
 }
 
-const LiveOcrPreview = requireNativeComponent<LiveOcrPreviewProps>('LiveOcrPreview');
+interface LiveOcrPreviewProps extends NativeLiveOcrPreviewProps {}
+
+const NativeLiveOcrPreview: HostComponent<NativeLiveOcrPreviewProps> = requireNativeComponent('LiveOcrPreview');
 
 const LiveOcrPreviewWithOverlay: React.FC<LiveOcrPreviewProps> = (props) => {
     return (
         <View style={styles.container}>
-            <LiveOcrPreview style={[props.style, styles.preview]} isActive={props.isActive} />
+            <NativeLiveOcrPreview 
+                style={[props.style, styles.preview]} 
+                isActive={props.isActive}
+                type={props.type || 'ocr'}  // Default to 'ocr' if not specified
+            />
             <View style={styles.overlay} />
         </View>
     );

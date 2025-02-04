@@ -44,6 +44,12 @@ interface SetCollectionStats {
     completionPercentage: number;
 }
 
+export interface Deck {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
 let mtgJsonDb: SQLite.SQLiteDatabase | null = null;
 
 export default class DatabaseService {
@@ -2076,7 +2082,7 @@ export default class DatabaseService {
                             name: cardData.name,
                             setCode: cardData.setCode,
                             setName: cardData.setName || '',
-                            collectorNumber: cardData.number || '',
+                            collectorNumber: cardData.number.replace(/[^a-zA-Z0-9]/g, ''), // Clean special characters
                             type: cardData.type || '',
                             rarity: cardData.rarity,
                             hasNonFoil: Boolean(cardData.normal_price || cardData.tcg_normal_price || cardData.cardmarket_normal_price),
@@ -2086,7 +2092,11 @@ export default class DatabaseService {
                                 usdFoil: cardData.foil_price?.toString() || null
                             },
                             purchaseUrls: {},
-                            legalities: {}
+                            legalities: {},
+                            colorIdentity: [],
+                            keywords: [],
+                            cmc: 0,
+                            frameEffects: []
                         };
 
                         await this.addToCache(extendedCard);
@@ -2293,7 +2303,7 @@ export default class DatabaseService {
                     name: card.name,
                     setCode: card.setCode,
                     setName: card.setName,
-                    collectorNumber: card.number,
+                    collectorNumber: card.number.replace(/[^a-zA-Z0-9]/g, ''), // Clean special characters
                     type: card.type,
                     manaCost: card.manaCost,
                     text: card.text,
@@ -2324,6 +2334,10 @@ export default class DatabaseService {
                     quantity: quantity,
                     hasNonFoil: Boolean(card.normal_price || card.tcg_normal_price || card.cardmarket_normal_price),
                     hasFoil: Boolean(card.foil_price || card.tcg_foil_price || card.cardmarket_foil_price),
+                    colorIdentity: [],
+                    keywords: [],
+                    cmc: 0,
+                    frameEffects: []
                 };
             });
 
@@ -2483,6 +2497,227 @@ export default class DatabaseService {
         } catch (error) {
             console.error('Error getting card variants:', error);
             throw error;
+        }
+    }
+
+    async createDecksTable(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            this.db!.transaction(tx => {
+                tx.executeSql(
+                    `CREATE TABLE IF NOT EXISTS decks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    );`,
+                    [],
+                    () => resolve(),
+                    (_, error) => {
+                        reject(error);
+                        return false;
+                    }
+                );
+                
+                tx.executeSql(
+                    `CREATE TABLE IF NOT EXISTS deck_cards (
+                        deck_id INTEGER,
+                        card_uuid TEXT,
+                        quantity INTEGER DEFAULT 1,
+                        PRIMARY KEY (deck_id, card_uuid),
+                        FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE,
+                        FOREIGN KEY (card_uuid) REFERENCES cards(uuid)
+                    );`,
+                    [],
+                    () => resolve(),
+                    (_, error) => {
+                        reject(error);
+                        return false;
+                    }
+                );
+            });
+        });
+    }
+
+    async getDecks(): Promise<Deck[]> {
+        return new Promise((resolve, reject) => {
+            this.db!.transaction(tx => {
+                tx.executeSql(
+                    'SELECT * FROM decks ORDER BY created_at DESC',
+                    [],
+                    (_, result) => resolve(result.rows.raw()),
+                    (_, error) => reject(error)
+                );
+            });
+        });
+    }
+
+    async createDeck(name: string): Promise<number> {
+        return new Promise((resolve, reject) => {
+            this.db!.transaction(tx => {
+                tx.executeSql(
+                    'INSERT INTO decks (name) VALUES (?)',
+                    [name],
+                    (_, result) => resolve(result.insertId),
+                    (_, error) => reject(error)
+                );
+            });
+        });
+    }
+
+    async getDeckCards(deckId: number): Promise<ExtendedCard[]> {
+        return new Promise((resolve, reject) => {
+            this.db!.transaction(tx => {
+                tx.executeSql(
+                    `SELECT dc.*, c.card_data 
+                     FROM deck_cards dc
+                     LEFT JOIN collection_cache c ON dc.card_uuid = c.uuid
+                     WHERE dc.deck_id = ?`,
+                    [deckId],
+                    (_, result) => {
+                        const cards = result.rows.raw().map(row => {
+                            // First try to get from cache
+                            if (row.card_data) {
+                                return JSON.parse(row.card_data);
+                            }
+                            // Fallback to direct database lookup
+                            return this.getCardByUUID(row.card_uuid);
+                        });
+                        Promise.all(cards).then(resolve).catch(reject);
+                    },
+                    (_, error) => reject(error)
+                );
+            });
+        });
+    }
+
+    async addCardToDeck(deckId: number, cardUUID: string): Promise<void> {
+        // First ensure the card exists in cache
+        const card = await this.getCardByUUID(cardUUID);
+        if (card) {
+            await this.addToCache(card);
+        }
+        
+        return new Promise((resolve, reject) => {
+            this.db!.transaction(tx => {
+                tx.executeSql(
+                    `INSERT OR REPLACE INTO deck_cards (deck_id, card_uuid, quantity) 
+                     VALUES (?, ?, COALESCE((SELECT quantity FROM deck_cards 
+                       WHERE deck_id = ? AND card_uuid = ?), 0) + 1)`,
+                    [deckId, cardUUID, deckId, cardUUID],
+                    () => resolve(),
+                    (_, error) => reject(error)
+                );
+            });
+        });
+    }
+
+    async getCardByUUID(uuid: string): Promise<ExtendedCard | null> {
+        return new Promise((resolve, reject) => {
+            mtgJsonDb!.transaction(tx => {
+                tx.executeSql(
+                    'SELECT * FROM cards WHERE uuid = ?', 
+                    [uuid], 
+                    (_, result) => {
+                        const row = result.rows.raw()[0];
+                        if (!row) {
+                            resolve(null);
+                            return;
+                        }
+                        
+                        try {
+                            // Map the row data directly to ExtendedCard format
+                            const extendedCard: ExtendedCard = {
+                                id: row.uuid,
+                                uuid: row.uuid,
+                                name: row.name,
+                                setCode: row.setCode,
+                                setName: row.setName || '',
+                                collectorNumber: row.number,
+                                type: row.type,
+                                manaCost: row.manaCost,
+                                text: row.text,
+                                rarity: row.rarity,
+                                power: row.power || '',
+                                toughness: row.toughness || '',
+                                imageUris: {
+                                    small: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=small`,
+                                    normal: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=normal`,
+                                    large: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=large`,
+                                    art_crop: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=art_crop`
+                                },
+                                prices: {
+                                    usd: null,
+                                    usdFoil: null
+                                },
+                                purchaseUrls: {},
+                                legalities: {},
+                                hasNonFoil: row.hasNonFoil === 1,
+                                hasFoil: row.hasFoil === 1,
+                                colorIdentity: [],
+                                keywords: [],
+                                cmc: 0,
+                                frameEffects: []
+                            };
+                            
+                            console.log('Mapped card:', extendedCard);
+                            resolve(extendedCard);
+                        } catch (e) {
+                            console.error('Error mapping card data:', e);
+                            resolve(null);
+                        }
+                    }, 
+                    (_, error) => reject(error)
+                );
+            });
+        });
+    }
+
+    async getAllCollectedCards(): Promise<{ cards: ExtendedCard[], uuids: string[] }> {
+        return new Promise((resolve, reject) => {
+            this.db!.transaction(tx => {
+                tx.executeSql(
+                    'SELECT card_data, uuid FROM collection_cache', 
+                    [],
+                    async (_, result) => {
+                        const cards = result.rows.raw().map(c => JSON.parse(c.card_data));
+                        const uuids = result.rows.raw().map(c => c.uuid);
+                        
+                        // Get and log first mapped card
+                        if (uuids.length > 0) {
+                            const firstCard = await this.mapCollectionUUID(uuids[0]);
+                            console.log('First mapped card:', firstCard);
+                        }
+                        
+                        resolve({ cards, uuids });
+                    },
+                    (_, error) => reject(error)
+                );
+            });
+        });
+    }
+
+    async mapCollectionUUID(collectionUUID: string[]): Promise<ExtendedCard | null> {
+        try {
+            // Check local cache first
+            const [cached] = await this.db!.executeSql(
+                'SELECT card_uuid FROM collection_cards WHERE card_uuid = ?',
+                [collectionUUID]
+            );
+            
+            if (cached.rows.length > 0) {
+                return JSON.parse(cached.rows.item(0).card_data);
+            }
+            
+            // Fallback to MTGJson database if not in cache
+            for (const uuid of collectionUUID) {
+                const card = await this.getCardByUUID(uuid);
+                if (card) {
+                    return card;
+                }
+            }
+            return null;
+        } catch (error) {
+            console.error('Error mapping collection UUID:', error);
+            return null;
         }
     }
 

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, memo, useEffect } from 'react';
 import {
     View,
     Text,
@@ -10,13 +10,16 @@ import {
     ScrollView,
     Dimensions,
     Alert,
+    ActivityIndicator,
+    Button,
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { ExtendedCard } from '../types/card';
-import { databaseService } from '../services/DatabaseService';
-import { getDB } from '../services/DatabaseService';
-
+import { databaseService, getDB } from '../services/DatabaseService';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useDebouncedCallback } from 'use-debounce';
+import { InteractionManager } from 'react-native';
+const Icon = MaterialCommunityIcons as unknown as React.ComponentType<any>;
 interface MTGGridViewProps {
     cards: ExtendedCard[];
     isLoading: boolean;
@@ -24,6 +27,7 @@ interface MTGGridViewProps {
     onDeleteCard: (card: ExtendedCard) => void;
     onCardsUpdate?: (updatedCards: ExtendedCard[]) => void;
     collectionId: string;
+    error?: Error | null;
 }
 
 type SortOption = 'name' | 'price' | 'number';
@@ -40,7 +44,11 @@ interface Filters {
     };
 }
 
-const ITEMS_PER_PAGE = 12;
+const NUM_COLUMNS = 3;
+const ITEMS_PER_PAGE = 10;
+const CARD_ASPECT_RATIO = 0.68;
+const IMAGE_PRIORITY = FastImage.priority.normal;
+const IMAGE_CACHE = FastImage.cacheControl.immutable;
 
 interface CardRow {
     uuid: string;
@@ -58,566 +66,221 @@ interface CardRow {
     cardmarket_foil_price: number;
 }
 
-const getBestPrice = (prices: any, isFoil: boolean = false) => {
-    if (!prices) return 0;
-    
-    // First try USD price
-    if (isFoil && prices.usdFoil) {
-        return parseFloat(prices.usdFoil);
+export const getBestPrice = (prices: any, isFoil: boolean = false): number => {
+    // First check direct prices
+    if (isFoil) {
+        if (prices?.usdFoil) return parseFloat(prices.usdFoil);
+        if (prices?.foil) return parseFloat(prices.foil);
+    } else {
+        if (prices?.usd) return parseFloat(prices.usd);
+        if (prices?.normal) return parseFloat(prices.normal);
     }
-    if (!isFoil) {
-        if (prices.usd) {
-            return parseFloat(prices.usd);
-        }
-        // If no normal price, try using foil price as fallback
-        if (prices.usdFoil) {
-            return parseFloat(prices.usdFoil);
-        }
-    }
-    
-    // Then try normal/foil direct price
-    if (isFoil && prices.foil) {
-        return parseFloat(prices.foil);
-    }
-    if (!isFoil) {
-        if (prices.normal) {
-            return parseFloat(prices.normal);
-        }
-        // If no normal price, try using foil price as fallback
-        if (prices.foil) {
-            return parseFloat(prices.foil);
+
+    // Then check marketplace prices
+    const marketplaces = ['tcgplayer', 'cardkingdom', 'cardmarket', 'cardsphere'];
+    for (const marketplace of marketplaces) {
+        const marketPrices = prices?.[marketplace];
+        if (!marketPrices) continue;
+
+        if (isFoil) {
+            if (marketPrices.foil) return parseFloat(marketPrices.foil);
+        } else {
+            if (marketPrices.normal) return parseFloat(marketPrices.normal);
         }
     }
-    
-    // Try TCGPlayer
-    if (prices.tcgplayer?.retail) {
-        const tcgPrices = prices.tcgplayer.retail;
-        if (isFoil && tcgPrices.foil) {
-            const dates = Object.keys(tcgPrices.foil);
-            if (dates.length > 0) {
-                const latestDate = dates.sort().pop()!;
-                return tcgPrices.foil[latestDate];
-            }
-        }
-        if (!isFoil) {
-            if (tcgPrices.normal) {
-                const dates = Object.keys(tcgPrices.normal);
-                if (dates.length > 0) {
-                    const latestDate = dates.sort().pop()!;
-                    return tcgPrices.normal[latestDate];
-                }
-            }
-            // If no normal price, try using foil price as fallback
-            if (tcgPrices.foil) {
-                const dates = Object.keys(tcgPrices.foil);
-                if (dates.length > 0) {
-                    const latestDate = dates.sort().pop()!;
-                    return tcgPrices.foil[latestDate];
-                }
-            }
-        }
-    }
-    
-    // Try CardKingdom
-    if (prices.cardkingdom?.retail) {
-        const ckPrices = prices.cardkingdom.retail;
-        if (isFoil && ckPrices.foil) {
-            const dates = Object.keys(ckPrices.foil);
-            if (dates.length > 0) {
-                const latestDate = dates.sort().pop()!;
-                return ckPrices.foil[latestDate];
-            }
-        }
-        if (!isFoil) {
-            if (ckPrices.normal) {
-                const dates = Object.keys(ckPrices.normal);
-                if (dates.length > 0) {
-                    const latestDate = dates.sort().pop()!;
-                    return ckPrices.normal[latestDate];
-                }
-            }
-            // If no normal price, try using foil price as fallback
-            if (ckPrices.foil) {
-                const dates = Object.keys(ckPrices.foil);
-                if (dates.length > 0) {
-                    const latestDate = dates.sort().pop()!;
-                    return ckPrices.foil[latestDate];
-                }
-            }
-        }
-    }
-    
+
+    // Fallback to 0 if no prices found
     return 0;
 };
 
-const MTGGridView: React.FC<MTGGridViewProps> = ({
-    cards,
-    isLoading,
-    onCardPress,
-    onDeleteCard,
-    onCardsUpdate,
-    collectionId
-}) => {
+interface SortState {
+    sortBy: SortOption;
+    direction: SortDirection;
+}
+
+interface ModalState {
+    showFilters: boolean;
+    selectedCard: ExtendedCard | null;
+    showVersionModal: boolean;
+    availableVersions: ExtendedCard[];
+    showFoil: boolean;
+    setShowFoil: (value: boolean) => void;
+}
+
+const DEFAULT_FILTERS: Filters = {
+    search: '',
+    rarities: [],
+    colors: [],
+    collectionStatus: 'all',
+    priceRange: { min: null, max: null }
+};
+
+const INITIAL_MODAL_STATE: ModalState = {
+    showFilters: false,
+    selectedCard: null,
+    showVersionModal: false,
+    availableVersions: [],
+    showFoil: false,
+    setShowFoil: () => {}
+};
+
+const CARD_VARIANTS_QUERY = `
+    SELECT 
+        c.uuid,
+        c.name,
+        c.setCode,
+        c.number,
+        c.rarity,
+        c.type,
+        s.name as setName,
+        COALESCE(p.normal_price, 0) as normal_price,
+        COALESCE(p.foil_price, 0) as foil_price,
+        COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
+        COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
+        COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
+        COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price
+    FROM cards c
+    LEFT JOIN prices p ON c.uuid = p.uuid
+    LEFT JOIN sets s ON c.setCode = s.code
+    WHERE c.name = ?
+    ORDER BY s.releaseDate DESC
+`;
+
+const rarityOptions = ['common', 'uncommon', 'rare', 'mythic'];
+
+const handleFetchError = (error: unknown) => {
+    console.error('Error fetching card variants:', error);
+    Alert.alert('Error', 'Failed to fetch card variants');
+};
+
+const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
+    if (error) {
+        return (
+            <View style={styles.errorContainer}>
+                <Icon name="alert-circle" size={48} color="#ff4444" />
+                <Text style={styles.errorText}>Error loading cards</Text>
+                <Button 
+                    title="Retry" 
+                    onPress={() => {/* Add retry logic */}} 
+                />
+            </View>
+        );
+    }
     // State
-    const [filters, setFilters] = useState<Filters>({
-        search: '',
-        rarities: [],
-        colors: [],
-        collectionStatus: 'all',
-        priceRange: { min: null, max: null }
-    });
+    const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
     const [showFilters, setShowFilters] = useState(false);
-    const [sortBy, setSortBy] = useState<SortOption>('number');
-    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-    const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
-    const [showFoil, setShowFoil] = useState(false);
-    const [showVersionModal, setShowVersionModal] = useState(false);
-    const [availableVersions, setAvailableVersions] = useState<ExtendedCard[]>([]);
+    const [sortState, setSortState] = useState<SortState>({ sortBy: 'number', direction: 'asc' });
+    const [modalState, setModalState] = useState<ModalState>(INITIAL_MODAL_STATE);
 
     // Filter options
-    const rarityOptions = ['common', 'uncommon', 'rare', 'mythic'];
     const colorOptions = ['White', 'Blue', 'Black', 'Red', 'Green', 'Colorless', 'Multicolor'];
 
-    // Filter and sort cards
-    const filteredCards = useCallback(() => {
-        return cards.filter(card => {
-            // Text search
-            if (filters.search && !card.name?.toLowerCase().includes(filters.search.toLowerCase()) &&
-                !card.text?.toLowerCase().includes(filters.search.toLowerCase())) {
-                return false;
-            }
+    // Memoized filtered cards
+    const filteredCards = useMemo(() => {
+        return props.cards.filter(cardFilter(filters)).sort(cardSorter(sortState));
+    }, [props.cards, filters, sortState]);
 
-            // Collection status filter
-            if (filters.collectionStatus === 'collected' && !card.quantity) {
-                return false;
-            }
-            if (filters.collectionStatus === 'missing' && card.quantity) {
-                return false;
-            }
+    // Handler memoization
+    const handleCardPress = useCallback((card: ExtendedCard) => {
+        setModalState(prev => ({ ...prev, selectedCard: card }));
+    }, []);
 
-            // Rarity filter
-            if (filters.rarities.length > 0 && !filters.rarities.includes(card.rarity?.toLowerCase() || '')) {
-                return false;
-            }
-
-            // Price range filter
-            const price = getBestPrice(card.prices);
-            if (filters.priceRange.min !== null && price < filters.priceRange.min) {
-                return false;
-            }
-            if (filters.priceRange.max !== null && price > filters.priceRange.max) {
-                return false;
-            }
-
-            return true;
-        }).sort((a, b) => {
-            switch (sortBy) {
-                case 'name':
-                    return sortDirection === 'asc' 
-                        ? (a.name || '').localeCompare(b.name || '')
-                        : (b.name || '').localeCompare(a.name || '');
-                case 'price':
-                    const priceA = getBestPrice(a.prices);
-                    const priceB = getBestPrice(b.prices);
-                    return sortDirection === 'asc' ? priceA - priceB : priceB - priceA;
-                case 'number':
-                default:
-                    const numA = parseInt(a.collectorNumber || '0');
-                    const numB = parseInt(b.collectorNumber || '0');
-                    return sortDirection === 'asc' ? numA - numB : numB - numA;
-            }
-        });
-    }, [cards, filters, sortBy, sortDirection]);
-
-    const handleLongPress = async (card: ExtendedCard) => {
+    const handleLongPress = useCallback(async (card: ExtendedCard) => {
         try {
-            // Fetch all variants including foils and alternate arts from the MTGJson database
-            const db = await getDB();
-            const [results] = await db!.executeSql(`
-                SELECT 
-                    c.uuid,
-                    c.name,
-                    c.setCode,
-                    c.number,
-                    c.rarity,
-                    c.type,
-                    s.name as setName,
-                    COALESCE(p.normal_price, 0) as normal_price,
-                    COALESCE(p.foil_price, 0) as foil_price,
-                    COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
-                    COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
-                    COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
-                    COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price
-                FROM cards c
-                LEFT JOIN prices p ON c.uuid = p.uuid
-                LEFT JOIN sets s ON c.setCode = s.code
-                WHERE c.name = ?
-                ORDER BY s.releaseDate DESC`,
-                [card.name]
-            );
-
-            const variants = results.rows.raw().map((row: CardRow) => ({
-                ...card,
-                id: row.uuid,
-                uuid: row.uuid,
-                setCode: row.setCode,
-                setName: row.setName,
-                collectorNumber: row.number,
-                type: row.type,
-                rarity: row.rarity,
-                imageUris: {
-                    small: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=small`,
-                    normal: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=normal`,
-                    large: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=large`,
-                    art_crop: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=art_crop`
-                },
-                hasNonFoil: Boolean(row.normal_price || row.tcg_normal_price || row.cardmarket_normal_price),
-                hasFoil: Boolean(row.foil_price || row.tcg_foil_price || row.cardmarket_foil_price)
-            }));
-            
-            setAvailableVersions(variants);
-            setSelectedCard(card);
-            setShowVersionModal(true);
+            const variants = await fetchCardVariants(card.name);
+            setModalState(prev => ({ ...prev, availableVersions: variants, showVersionModal: true }));
         } catch (error) {
-            console.error('Error fetching card variants:', error);
-            Alert.alert('Error', 'Failed to load card variants');
+            handleFetchError(error);
         }
-    };
+    }, []);
+
+    // Calculate item dimensions for getItemLayout
+    const { width } = Dimensions.get('window');
+    const CARD_WIDTH = width / NUM_COLUMNS - 8;
+    const IMAGE_HEIGHT = CARD_WIDTH / CARD_ASPECT_RATIO;
+    const INFO_HEIGHT_ESTIMATE = 40; // Adjust based on actual CardInfo height
+    const CARD_HEIGHT = IMAGE_HEIGHT + INFO_HEIGHT_ESTIMATE + 8; // image + info + padding
+
+    // Then define renderItem after CARD_WIDTH is declared
+    const renderItem = useCallback(
+        ({ item }: { item: ExtendedCard }) => (
+            <CardItem
+                item={item}
+                cardWidth={CARD_WIDTH}
+                onPress={() => handleCardPress(item)}
+                onLongPress={() => handleLongPress(item)}
+            />
+        ),
+        [handleCardPress, handleLongPress, CARD_WIDTH]
+    );
 
     const handleVersionChange = (newVersion: ExtendedCard) => {
-        if (onCardsUpdate) {
-            const updatedCards = cards.map(card =>
-                card.id === selectedCard?.id ? newVersion : card
+        if (props.onCardsUpdate) {
+            const updatedCards = props.cards.map(card =>
+                card.id === modalState.selectedCard?.id ? newVersion : card
             );
-            onCardsUpdate(updatedCards);
+            props.onCardsUpdate(updatedCards);
         }
-        setShowVersionModal(false);
+        setModalState(prev => ({ ...prev, showVersionModal: false }));
     };
 
     const addToCollection = async (card: ExtendedCard) => {
         try {
-            // Add card to collection using DatabaseService
-            await databaseService.addCardToCollection(String(card.id), collectionId);
+            await databaseService.addCardToCollection(String(card.id), props.collectionId);
             
-            // Update the UI state
-            if (onCardsUpdate) {
-                const updatedCards = cards.map(c =>
-                    c.id === card.id ? { ...c, quantity: 1 } : c
-                );
-                onCardsUpdate(updatedCards);
+            // Create new array with updated card
+            const updatedCards = props.cards.map(c => 
+                c.id === card.id ? { ...c, quantity: 1 } : c
+            );
+
+            // Update parent component's state
+            if (props.onCardsUpdate) {
+                props.onCardsUpdate(updatedCards);
             }
-            
-            // Update the selected card's state
-            setSelectedCard(prev => prev ? { ...prev, quantity: 1 } : null);
-            
-            setShowVersionModal(false);
+
+            // Update local state references
+            setModalState(prev => ({
+                ...prev,
+                selectedCard: prev.selectedCard ? { ...prev.selectedCard, quantity: 1 } : null,
+                availableVersions: prev.availableVersions.map(v => v.id === card.id ? { ...v, quantity: 1 } : v)
+            }));
+
+            // Force immediate UI update by resetting filtered cards
+            setFilters(prev => ({ ...prev })); // Trigger filter recalculation
+
+            setModalState(prev => ({ ...prev, showVersionModal: false }));
         } catch (error) {
             console.error('Error adding card to collection:', error);
             Alert.alert('Error', 'Failed to add card to collection');
         }
     };
 
-    const renderCard = ({ item }: { item: ExtendedCard }) => {
-        const imageUrl = item.imageUris?.normal || item.imageUrl;
-        return (
-            <TouchableOpacity 
-                style={styles.cardContainer}
-                onPress={() => setSelectedCard(item)}
-                onLongPress={() => handleLongPress(item)}
-            >
-                <View style={styles.cardImageContainer}>
-                    <FastImage
-                        source={{ 
-                            uri: imageUrl,
-                            priority: FastImage.priority.normal,
-                            cache: FastImage.cacheControl.immutable
-                        }}
-                        style={[
-                            styles.cardImage,
-                            !item.quantity && styles.cardImageUncollected
-                        ]}
-                        resizeMode={FastImage.resizeMode.contain}
-                    />
-                    {!item.quantity && (
-                        <View style={styles.missingOverlay}>
-                            <Icon name="plus-circle" size={24} color="white" />
-                            <Text style={styles.missingText}>Missing</Text>
-                        </View>
-                    )}
-                    {item.hasFoil && (
-                        <View style={styles.foilIndicator}>
-                            <Icon name="star" size={16} color="#FFD700" />
-                        </View>
-                    )}
-                </View>
-                <View style={[styles.cardInfo, !item.quantity && styles.cardInfoUncollected]}>
-                    <Text style={styles.cardNumber}>#{item.collectorNumber || '0'}</Text>
-                    <Text style={[styles.cardName, !item.quantity && styles.cardNameUncollected]} numberOfLines={1}>
-                        {item.name}
-                    </Text>
-                    <View style={styles.priceContainer}>
-                        {item.hasNonFoil && (
-                            <Text style={[styles.cardPrice, !item.quantity && styles.cardPriceUncollected]}>
-                                ${getBestPrice(item.prices, false).toFixed(2)}
-                            </Text>
-                        )}
-                        {item.hasFoil && (
-                            <Text style={[styles.foilPrice, !item.quantity && styles.cardPriceUncollected]}>
-                                ${getBestPrice(item.prices, true).toFixed(2)} ✨
-                            </Text>
-                        )}
-                    </View>
-                </View>
-            </TouchableOpacity>
-        );
-    };
+    // Optimize list configuration
+    const getItemLayout = undefined;
 
-    const renderFilters = () => (
-        <View style={[styles.filtersPanel, !showFilters && styles.filtersPanelHidden]}>
-            <TextInput
-                style={styles.searchInput}
-                placeholder="Search cards..."
-                value={filters.search}
-                onChangeText={text => setFilters(prev => ({ ...prev, search: text }))}
-            />
-            
-            <View style={styles.filterSection}>
-                <Text style={styles.filterTitle}>Collection Status</Text>
-                <View style={styles.filterOptions}>
-                    <TouchableOpacity
-                        style={[
-                            styles.filterChip,
-                            filters.collectionStatus === 'all' && styles.filterChipSelected
-                        ]}
-                        onPress={() => setFilters(prev => ({
-                            ...prev,
-                            collectionStatus: 'all'
-                        }))}
-                    >
-                        <Text style={[
-                            styles.filterChipText,
-                            filters.collectionStatus === 'all' && styles.filterChipTextSelected
-                        ]}>All Cards</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[
-                            styles.filterChip,
-                            filters.collectionStatus === 'collected' && styles.filterChipSelected
-                        ]}
-                        onPress={() => setFilters(prev => ({
-                            ...prev,
-                            collectionStatus: 'collected'
-                        }))}
-                    >
-                        <Text style={[
-                            styles.filterChipText,
-                            filters.collectionStatus === 'collected' && styles.filterChipTextSelected
-                        ]}>Collected</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[
-                            styles.filterChip,
-                            filters.collectionStatus === 'missing' && styles.filterChipSelected
-                        ]}
-                        onPress={() => setFilters(prev => ({
-                            ...prev,
-                            collectionStatus: 'missing'
-                        }))}
-                    >
-                        <Text style={[
-                            styles.filterChipText,
-                            filters.collectionStatus === 'missing' && styles.filterChipTextSelected
-                        ]}>Missing</Text>
-                    </TouchableOpacity>
-                </View>
-            </View>
+    const keyExtractor = useCallback((item: ExtendedCard) => item.id, []);
 
-            <View style={styles.filterSection}>
-                <Text style={styles.filterTitle}>Rarity</Text>
-                <View style={styles.filterOptions}>
-                    {rarityOptions.map(rarity => (
-                        <TouchableOpacity
-                            key={rarity}
-                            style={[
-                                styles.filterChip,
-                                filters.rarities.includes(rarity) && styles.filterChipSelected
-                            ]}
-                            onPress={() => setFilters(prev => ({
-                                ...prev,
-                                rarities: prev.rarities.includes(rarity)
-                                    ? prev.rarities.filter(r => r !== rarity)
-                                    : [...prev.rarities, rarity]
-                            }))}
-                        >
-                            <Text style={[
-                                styles.filterChipText,
-                                filters.rarities.includes(rarity) && styles.filterChipTextSelected
-                            ]}>{rarity}</Text>
-                        </TouchableOpacity>
-                    ))}
-                </View>
-            </View>
+    // Add performance markers
+    useEffect(() => {
+        const sub = InteractionManager.runAfterInteractions(() => {
+            console.log('Grid rendering complete');
+            // Add any post-render logic here
+        });
+        return () => sub.cancel();
+    }, [filteredCards]);
 
-            <TouchableOpacity
-                style={styles.resetButton}
-                onPress={() => setFilters({
-                    search: '',
-                    rarities: [],
-                    colors: [],
-                    collectionStatus: 'all',
-                    priceRange: { min: null, max: null }
-                })}
-            >
-                <Text style={styles.resetButtonText}>Reset Filters</Text>
-            </TouchableOpacity>
-        </View>
-    );
-
-    const renderCardModal = () => (
-        <Modal
-            visible={selectedCard !== null}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={() => {
-                setSelectedCard(null);
-                setShowFoil(false);
-            }}
-        >
-            <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                    {selectedCard && (
-                        <ScrollView>
-                            <View style={styles.modalImageContainer}>
-                                <FastImage
-                                    source={{ 
-                                        uri: `${selectedCard.imageUris?.normal || selectedCard.imageUrl}${showFoil ? '&version=foil' : ''}`,
-                                        priority: FastImage.priority.high,
-                                        cache: FastImage.cacheControl.immutable
-                                    }}
-                                    style={styles.modalImage}
-                                    resizeMode={FastImage.resizeMode.contain}
-                                />
-                                <TouchableOpacity
-                                    style={styles.modalCloseButton}
-                                    onPress={() => {
-                                        setSelectedCard(null);
-                                        setShowFoil(false);
-                                    }}
-                                >
-                                    <Icon name="close" size={28} color="#666" />
-                                </TouchableOpacity>
-                            </View>
-                            <View style={styles.modalInfo}>
-                                <View style={styles.modalHeader}>
-                                    <Text style={styles.modalTitle}>{selectedCard.name}</Text>
-                                    {selectedCard.hasFoil && (
-                                        <TouchableOpacity 
-                                            style={[styles.foilToggle, showFoil && styles.foilToggleActive]}
-                                            onPress={() => setShowFoil(!showFoil)}
-                                        >
-                                            <Icon 
-                                                name={showFoil ? "checkbox-marked" : "checkbox-blank-outline"} 
-                                                size={24} 
-                                                color={showFoil ? "#FFD700" : "#666"} 
-                                            />
-                                            <Text style={[styles.foilToggleText, showFoil && styles.foilToggleTextActive]}>
-                                                Foil
-                                            </Text>
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-                                <Text style={styles.modalText}>Set: {selectedCard.setName}</Text>
-                                <Text style={styles.modalText}>Card Number: {selectedCard.collectorNumber}</Text>
-                                <Text style={styles.modalText}>Rarity: {selectedCard.rarity}</Text>
-                                <Text style={styles.modalText}>Type: {selectedCard.type}</Text>
-                                {selectedCard.manaCost && (
-                                    <Text style={styles.modalText}>Mana Cost: {selectedCard.manaCost}</Text>
-                                )}
-                                {selectedCard.text && (
-                                    <Text style={styles.modalText}>Card Text: {selectedCard.text}</Text>
-                                )}
-                                <View style={styles.modalPrices}>
-                                    <Text style={styles.modalPriceTitle}>Prices:</Text>
-                                    {selectedCard.hasNonFoil && (
-                                        <Text style={styles.modalPrice}>Normal: ${getBestPrice(selectedCard.prices, false).toFixed(2)}</Text>
-                                    )}
-                                    {selectedCard.hasFoil && (
-                                        <Text style={styles.modalPrice}>Foil: ${getBestPrice(selectedCard.prices, true).toFixed(2)}</Text>
-                                    )}
-                                </View>
-                            </View>
-                        </ScrollView>
-                    )}
-                </View>
-            </View>
-        </Modal>
-    );
-
-    const renderVersionModal = () => (
-        <Modal
-            visible={showVersionModal}
-            transparent={true}
-            animationType="slide"
-            onRequestClose={() => setShowVersionModal(false)}
-        >
-            <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                    <Text style={styles.modalTitle}>Select Card Version</Text>
-                    <ScrollView>
-                        {availableVersions.map(version => (
-                            <TouchableOpacity
-                                key={version.id}
-                                style={styles.versionOption}
-                                onPress={() => handleVersionChange(version)}
-                            >
-                                <View style={styles.versionRow}>
-                                    <FastImage
-                                        source={{ 
-                                            uri: version.imageUris?.normal || version.imageUrl,
-                                            priority: FastImage.priority.normal,
-                                            cache: FastImage.cacheControl.immutable
-                                        }}
-                                        style={styles.versionImage}
-                                        resizeMode={FastImage.resizeMode.contain}
-                                    />
-                                    <View style={styles.versionInfo}>
-                                        <Text style={styles.versionText}>{version.name}</Text>
-                                        <Text style={styles.versionSetText}>{version.setName}</Text>
-                                        <Text style={styles.versionText}>Set Number: {version.collectorNumber}</Text>
-                                    </View>
-                                </View>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                    {!selectedCard?.quantity && (
-                        <TouchableOpacity
-                            style={styles.addButton}
-                            onPress={() => {
-                                addToCollection(selectedCard!);
-                            }}
-                        >
-                            <Text style={styles.addButtonText}>Add to Collection</Text>
-                        </TouchableOpacity>
-                    )}
-                    <TouchableOpacity
-                        style={styles.deleteButton}
-                        onPress={() => {
-                            onDeleteCard(selectedCard!);
-                            setShowVersionModal(false);
-                        }}
-                    >
-                        <Text style={styles.deleteButtonText}>Delete Card</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={styles.modalCloseButton}
-                        onPress={() => setShowVersionModal(false)}
-                    >
-                        <Icon name="close" size={24} color="#000" />
-                    </TouchableOpacity>
-                </View>
-            </View>
-        </Modal>
-    );
+    // Add this useEffect to preload images
+    useEffect(() => {
+        const preloadImages = async () => {
+            await Promise.all(props.cards.map(card => 
+                FastImage.preload([{ 
+                    uri: card.imageUris?.normal || card.imageUrl,
+                    cache: FastImage.cacheControl.immutable
+                }])
+            ));
+        };
+        preloadImages();
+    }, [props.cards]);
 
     return (
         <View style={styles.container}>
@@ -626,6 +289,9 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
                     <TouchableOpacity
                         style={styles.filterButton}
                         onPress={() => setShowFilters(!showFilters)}
+                        accessibilityRole="button"
+                        accessibilityLabel={showFilters ? "Hide filters" : "Show filters"}
+                        accessibilityState={{ expanded: showFilters }}
                     >
                         <Icon name="filter-variant" size={24} color="#2196F3" />
                         <Text style={styles.buttonText}>
@@ -636,45 +302,46 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
                 <View style={styles.sortContainer}>
                     <View style={styles.sortButtonContainer}>
                         <TouchableOpacity
-                            style={[styles.sortButton, sortBy === 'name' && styles.sortButtonActive]}
-                            onPress={() => setSortBy('name')}
+                            style={[styles.sortButton, sortState.sortBy === 'name' && styles.sortButtonActive]}
+                            onPress={() => setSortState(prev => ({ ...prev, sortBy: 'name' }))}
                         >
                             <Icon
                                 name="order-alphabetical-ascending"
                                 size={24}
-                                color={sortBy === 'name' ? '#2196F3' : '#666'}
+                                color={sortState.sortBy === 'name' ? '#2196F3' : '#666'}
                             />
-                            <Text style={[styles.sortButtonText, sortBy === 'name' && styles.sortButtonTextActive]}>
+                            <Text style={[styles.sortButtonText, sortState.sortBy === 'name' && styles.sortButtonTextActive]}>
                                 Name
                             </Text>
                         </TouchableOpacity>
                     </View>
                     <View style={styles.sortButtonContainer}>
                         <TouchableOpacity
-                            style={[styles.sortButton, sortBy === 'price' && styles.sortButtonActive]}
-                            onPress={() => setSortBy('price')}
+                            style={[styles.sortButton, sortState.sortBy === 'price' && styles.sortButtonActive]}
+                            onPress={() => setSortState(prev => ({ ...prev, sortBy: 'price' }))}
                         >
                             <Icon
                                 name="currency-usd"
                                 size={24}
-                                color={sortBy === 'price' ? '#2196F3' : '#666'}
+                                color={sortState.sortBy === 'price' ? '#2196F3' : '#666'}
                             />
-                            <Text style={[styles.sortButtonText, sortBy === 'price' && styles.sortButtonTextActive]}>
+                            <Text style={[styles.sortButtonText, sortState.sortBy === 'price' && styles.sortButtonTextActive]}>
                                 Price
                             </Text>
                         </TouchableOpacity>
                     </View>
                     <View style={styles.sortButtonContainer}>
                         <TouchableOpacity
-                            style={[styles.sortButton, sortBy === 'number' && styles.sortButtonActive]}
-                            onPress={() => setSortBy('number')}
+                            style={[styles.sortButton, sortState.sortBy === 'number' && styles.sortButtonActive]}
+                            onPress={() => setSortState(prev => ({ ...prev, sortBy: 'number' }))}
                         >
                             <Icon
                                 name="order-numeric-ascending"
                                 size={24}
-                                color={sortBy === 'number' ? '#2196F3' : '#666'}
-                            />
-                            <Text style={[styles.sortButtonText, sortBy === 'number' && styles.sortButtonTextActive]}>
+                                color={sortState.sortBy === 'number' ? '#2196F3' : '#666'}
+                            >
+                            </Icon>
+                            <Text style={[styles.sortButtonText, sortState.sortBy === 'number' && styles.sortButtonTextActive]}>
                                 Number
                             </Text>
                         </TouchableOpacity>
@@ -682,36 +349,463 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({
                     <View style={styles.sortButtonContainer}>
                         <TouchableOpacity
                             style={styles.sortButton}
-                            onPress={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
+                            onPress={() => setSortState(prev => ({ ...prev, direction: prev.direction === 'asc' ? 'desc' : 'asc' }))}
                         >
                             <Icon
-                                name={sortDirection === 'asc' ? 'sort-ascending' : 'sort-descending'}
+                                name={sortState.direction === 'asc' ? 'sort-ascending' : 'sort-descending'}
                                 size={24}
                                 color="#2196F3"
                             />
                             <Text style={styles.sortButtonText}>
-                                {sortDirection === 'asc' ? 'Asc' : 'Desc'}
+                                {sortState.direction === 'asc' ? 'Asc' : 'Desc'}
                             </Text>
                         </TouchableOpacity>
                     </View>
                 </View>
             </View>
 
-            {renderFilters()}
-
-            <FlatList
-                data={filteredCards()}
-                renderItem={renderCard}
-                keyExtractor={item => item.id}
-                numColumns={3}
-                contentContainerStyle={styles.grid}
+            <FilterPanel
+                visible={showFilters}
+                filters={filters}
+                onFilterChange={setFilters}
             />
 
-            {renderCardModal()}
-            {renderVersionModal()}
+            <FlatList
+                data={filteredCards}
+                renderItem={renderItem}
+                keyExtractor={keyExtractor}
+                numColumns={NUM_COLUMNS}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                removeClippedSubviews
+                updateCellsBatchingPeriod={100}
+                contentContainerStyle={styles.grid}
+                onEndReachedThreshold={0.5}
+                ListEmptyComponent={props.isLoading ? (
+                    <FlatList
+                        data={Array(10).fill(0)}
+                        renderItem={() => <SkeletonCard />}
+                        numColumns={NUM_COLUMNS}
+                    />
+                ) : <EmptyState />}
+            />
+
+            <CardDetailModal
+                state={modalState}
+                onClose={() => setModalState(INITIAL_MODAL_STATE)}
+                onVersionChange={handleVersionChange}
+                onAddToCollection={addToCollection}
+                onDeleteCard={props.onDeleteCard}
+            />
         </View>
     );
 };
+
+interface CardItemProps {
+    item: ExtendedCard;
+    cardWidth: number;
+    onPress: () => void;
+    onLongPress: () => void;
+}
+
+const CardItem = memo(({ item, cardWidth, onPress, onLongPress }: CardItemProps) => {
+    const [isLoading, setIsLoading] = useState(true);
+    const imageUri = item.imageUris?.normal || item.imageUrl;
+    const hasCollectionStatus = !!item.quantity;
+    
+    const imageStyle = useMemo(() => [
+        styles.cardImage, 
+        { width: cardWidth, height: cardWidth / CARD_ASPECT_RATIO },
+        !hasCollectionStatus && styles.cardImageUncollected
+    ], [cardWidth, hasCollectionStatus]);
+
+    return (
+        <TouchableOpacity 
+            style={styles.cardContainer}
+            onPress={onPress}
+            onLongPress={onLongPress}
+            accessibilityRole="button"
+            accessibilityLabel={`Card: ${item.name}. ${hasCollectionStatus ? 'Collected' : 'Missing'}. ${item.hasFoil ? 'Has foil version' : ''}`}
+        >
+            <View style={styles.cardImageContainer}>
+                <FastImage
+                    source={{ 
+                        uri: imageUri,
+                        priority: FastImage.priority.high,
+                        cache: FastImage.cacheControl.immutable
+                    }}
+                    style={imageStyle}
+                    resizeMode={FastImage.resizeMode.cover}
+                    onLoad={() => setIsLoading(false)}
+                >
+                    {isLoading && (
+                        <View style={styles.imageLoadingOverlay}>
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                        </View>
+                    )}
+                </FastImage>
+                {!hasCollectionStatus && (
+                    <View style={styles.missingOverlay}>
+                        <Icon name="plus-circle" size={24} color="white" />
+                        <Text style={styles.missingText}>Missing</Text>
+                    </View>
+                )}
+                {item.hasFoil && (
+                    <View style={styles.foilIndicator}>
+                        <Icon name="star" size={16} color="#FFD700" />
+                    </View>
+                )}
+            </View>
+            <CardInfo item={item} hasCollectionStatus={hasCollectionStatus} />
+        </TouchableOpacity>
+    );
+});
+
+const getFormattedPrice = (price: number) => 
+    new Intl.NumberFormat('en-US', { 
+        style: 'currency', 
+        currency: 'USD', 
+        minimumFractionDigits: 2 
+    }).format(price);
+
+const CardInfo = memo(({ item, hasCollectionStatus }: { item: ExtendedCard; hasCollectionStatus: boolean }) => {
+    const normalPrice = useMemo(() => getBestPrice(item.prices, false).toFixed(2), [item.prices]);
+    const foilPrice = useMemo(() => getBestPrice(item.prices, true).toFixed(2), [item.prices]);
+
+    return (
+        <View style={[styles.cardInfo, !hasCollectionStatus && styles.cardInfoUncollected]}>
+            <Text style={styles.cardNumber}>#{item.collectorNumber || '0'}</Text>
+            <Text style={[styles.cardName, !hasCollectionStatus && styles.cardNameUncollected]} numberOfLines={1}>
+                {item.name}
+            </Text>
+            <View style={styles.priceContainer}>
+                {item.hasNonFoil && (
+                    <Text style={[styles.cardPrice, !hasCollectionStatus && styles.cardPriceUncollected]}>
+                        {getFormattedPrice(parseFloat(normalPrice))}
+                    </Text>
+                )}
+                {item.hasFoil && (
+                    <Text style={[styles.foilPrice, !hasCollectionStatus && styles.cardPriceUncollected]}>
+                        {getFormattedPrice(parseFloat(foilPrice))} ✨
+                    </Text>
+                )}
+            </View>
+        </View>
+    );
+});
+
+const FilterPanel = memo(({ visible, filters, onFilterChange }: { 
+    visible: boolean; 
+    filters: Filters; 
+    onFilterChange: React.Dispatch<React.SetStateAction<Filters>> 
+}) => {
+    const [searchQuery, setSearchQuery] = useState(filters.search);
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    
+    const debouncedSearch = useDebouncedCallback((text: string) => {
+        onFilterChange(prev => ({ ...prev, search: text }));
+    }, 300);
+
+    const handleRarityChange = (rarity: string) => {
+        const newRarities = filters.rarities.includes(rarity)
+            ? filters.rarities.filter(r => r !== rarity)
+            : [...filters.rarities, rarity];
+        onFilterChange(prev => ({ ...prev, rarities: newRarities }));
+    };
+
+    const handlePriceRangeChange = (type: 'min' | 'max', value: string) => {
+        const numValue = value ? parseFloat(value) : null;
+        onFilterChange(prev => ({
+            ...prev,
+            priceRange: {
+                ...prev.priceRange,
+                [type]: numValue
+            }
+        }));
+    };
+
+    if (!visible) return null;
+
+    return (
+        <View style={styles.filtersPanel}>
+            <TextInput
+                style={styles.searchInput}
+                placeholder="Search cards..."
+                value={searchQuery}
+                onChangeText={(text) => {
+                    setSearchQuery(text);
+                    debouncedSearch(text);
+                }}
+                autoCorrect={false}
+                autoCapitalize="none"
+            />
+
+            <TouchableOpacity
+                style={styles.advancedFilterButton}
+                onPress={() => setShowAdvanced(!showAdvanced)}
+            >
+                <Text style={styles.advancedFilterText}>
+                    {showAdvanced ? 'Hide Advanced Filters' : 'Show Advanced Filters'}
+                </Text>
+            </TouchableOpacity>
+
+            {showAdvanced && (
+                <View style={styles.advancedFilters}>
+                    <View style={styles.filterSection}>
+                        <Text style={styles.filterTitle}>Rarity</Text>
+                        <View style={styles.filterOptions}>
+                            {rarityOptions.map(rarity => (
+                                <TouchableOpacity
+                                    key={rarity}
+                                    style={[
+                                        styles.filterChip,
+                                        filters.rarities.includes(rarity) && styles.filterChipSelected
+                                    ]}
+                                    onPress={() => handleRarityChange(rarity)}
+                                >
+                                    <Text style={[
+                                        styles.filterChipText,
+                                        filters.rarities.includes(rarity) && styles.filterChipTextSelected
+                                    ]}>
+                                        {rarity}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                        <Text style={styles.filterTitle}>Price Range</Text>
+                        <View style={styles.priceRangeContainer}>
+                            <TextInput
+                                style={styles.priceInput}
+                                placeholder="Min"
+                                keyboardType="numeric"
+                                value={filters.priceRange.min?.toString() || ''}
+                                onChangeText={(text) => handlePriceRangeChange('min', text)}
+                            />
+                            <Text style={styles.priceRangeSeparator}>-</Text>
+                            <TextInput
+                                style={styles.priceInput}
+                                placeholder="Max"
+                                keyboardType="numeric"
+                                value={filters.priceRange.max?.toString() || ''}
+                                onChangeText={(text) => handlePriceRangeChange('max', text)}
+                            />
+                        </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                        <Text style={styles.filterTitle}>Collection Status</Text>
+                        <View style={styles.filterOptions}>
+                            {['all', 'collected', 'missing'].map(status => (
+                                <TouchableOpacity
+                                    key={status}
+                                    style={[
+                                        styles.filterChip,
+                                        filters.collectionStatus === status && styles.filterChipSelected
+                                    ]}
+                                    onPress={() => onFilterChange(prev => ({
+                                        ...prev,
+                                        collectionStatus: status as 'all' | 'collected' | 'missing'
+                                    }))}
+                                >
+                                    <Text style={[
+                                        styles.filterChipText,
+                                        filters.collectionStatus === status && styles.filterChipTextSelected
+                                    ]}>
+                                        {status}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            <TouchableOpacity
+                style={styles.resetButton}
+                onPress={() => {
+                    setSearchQuery('');
+                    onFilterChange(DEFAULT_FILTERS);
+                }}
+            >
+                <Text style={styles.resetButtonText}>Reset Filters</Text>
+            </TouchableOpacity>
+        </View>
+    );
+});
+
+const CardDetailModal = ({ state, onClose, onVersionChange, onAddToCollection, onDeleteCard }: { state: ModalState; onClose: () => void; onVersionChange: (newVersion: ExtendedCard) => void; onAddToCollection: (card: ExtendedCard) => void; onDeleteCard: (card: ExtendedCard) => void }) => {
+    const normalPrice = useMemo(() => getBestPrice(state.selectedCard?.prices, false).toFixed(2), [state.selectedCard?.prices]);
+    const foilPrice = useMemo(() => getBestPrice(state.selectedCard?.prices, true).toFixed(2), [state.selectedCard?.prices]);
+
+    return (
+        <Modal
+            visible={state.selectedCard !== null}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={onClose}
+        >
+            <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                    {state.selectedCard && (
+                        <ScrollView>
+                            <View style={styles.modalImageContainer}>
+                                <FastImage
+                                    source={{ 
+                                        uri: `${state.selectedCard.imageUris?.normal || state.selectedCard.imageUrl}${state.showFoil ? '&version=foil' : ''}`,
+                                        priority: FastImage.priority.high,
+                                        cache: FastImage.cacheControl.immutable
+                                    }}
+                                    style={styles.modalImage}
+                                    resizeMode={FastImage.resizeMode.contain}
+                                />
+                                <TouchableOpacity
+                                    style={styles.modalCloseButton}
+                                    onPress={onClose}
+                                >
+                                    <Icon name="close" size={28} color="#666" />
+                                </TouchableOpacity>
+                            </View>
+                            <View style={styles.modalInfo}>
+                                <View style={styles.modalHeader}>
+                                    <Text style={styles.modalTitle}>{state.selectedCard.name}</Text>
+                                    {state.selectedCard.hasFoil && (
+                                        <TouchableOpacity 
+                                            style={[styles.foilToggle, state.showFoil && styles.foilToggleActive]}
+                                            onPress={() => state.setShowFoil(!state.showFoil)}
+                                        >
+                                            <Icon 
+                                                name={state.showFoil ? "checkbox-marked" : "checkbox-blank-outline"} 
+                                                size={24} 
+                                                color={state.showFoil ? "#FFD700" : "#666"} 
+                                            />
+                                            <Text style={[styles.foilToggleText, state.showFoil && styles.foilToggleTextActive]}>
+                                                Foil
+                                            </Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                                <Text style={styles.modalText}>Set: {state.selectedCard.setName}</Text>
+                                <Text style={styles.modalText}>Card Number: {state.selectedCard.collectorNumber}</Text>
+                                <Text style={styles.modalText}>Rarity: {state.selectedCard.rarity}</Text>
+                                <Text style={styles.modalText}>Type: {state.selectedCard.type}</Text>
+                                {state.selectedCard.manaCost && (
+                                    <Text style={styles.modalText}>Mana Cost: {state.selectedCard.manaCost}</Text>
+                                )}
+                                {state.selectedCard.text && (
+                                    <Text style={styles.modalText}>Card Text: {state.selectedCard.text}</Text>
+                                )}
+                                <View style={styles.modalPrices}>
+                                    <Text style={styles.modalPriceTitle}>Prices:</Text>
+                                    {state.selectedCard.hasNonFoil && (
+                                        <Text style={styles.modalPrice}>Normal: {getFormattedPrice(parseFloat(normalPrice))}</Text>
+                                    )}
+                                    {state.selectedCard.hasFoil && (
+                                        <Text style={styles.modalPrice}>Foil: {getFormattedPrice(parseFloat(foilPrice))}</Text>
+                                    )}
+                                </View>
+                            </View>
+                        </ScrollView>
+                    )}
+                </View>
+            </View>
+        </Modal>
+    );
+};
+
+const fetchCardVariants = async (cardName: string) => {
+    const db = await getDB();
+    const results = await db!.executeSql(CARD_VARIANTS_QUERY, [cardName]);
+    const rows: CardRow[] = [];
+    for (let i = 0; i < results[0].rows.length; i++) {
+        rows.push(results[0].rows.item(i));
+    }
+    return rows.map(transformCardRow);
+};
+
+const cardFilter = (filters: Filters) => (card: ExtendedCard) => {
+    const matchesSearch = !filters.search || 
+        card.name?.toLowerCase().includes(filters.search.toLowerCase()) ||
+        card.text?.toLowerCase().includes(filters.search.toLowerCase());
+        
+    const matchesCollectionStatus = filters.collectionStatus === 'all' ||
+        (filters.collectionStatus === 'collected' && card.quantity) ||
+        (filters.collectionStatus === 'missing' && !card.quantity);
+
+    const matchesRarity = filters.rarities.length === 0 || 
+        filters.rarities.includes(card.rarity?.toLowerCase() || '');
+
+    const price = getBestPrice(card.prices);
+    const matchesPrice = (!filters.priceRange.min || (price && price >= filters.priceRange.min)) &&
+        (!filters.priceRange.max || (price && price <= filters.priceRange.max));
+
+    return matchesSearch && matchesCollectionStatus && matchesRarity && matchesPrice;
+};
+
+const cardSorter = ({ sortBy, direction }: SortState) => (a: ExtendedCard, b: ExtendedCard) => {
+    switch (sortBy) {
+        case 'name':
+            return direction === 'asc' 
+                ? a.name.localeCompare(b.name) 
+                : b.name.localeCompare(a.name);
+        case 'price': {
+            const priceA = getBestPrice(a.prices);
+            const priceB = getBestPrice(b.prices);
+            return direction === 'asc' ? priceA - priceB : priceB - priceA;
+        }
+        default: {
+            const numA = parseInt(a.collectorNumber, 10);
+            const numB = parseInt(b.collectorNumber, 10);
+            return direction === 'asc' ? numA - numB : numB - numA;
+        }
+    }
+};
+
+const transformCardRow = (row: CardRow): ExtendedCard => ({
+    ...row,
+    id: row.uuid,
+    uuid: row.uuid,
+    setCode: row.setCode,
+    setName: row.setName,
+    collectorNumber: row.number,
+    type: row.type,
+    rarity: row.rarity,
+    imageUris: {
+        small: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image`,
+        normal: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image`,
+        large: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image`,
+        art_crop: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image`
+    },
+    hasNonFoil: Boolean(row.normal_price || row.tcg_normal_price || row.cardmarket_normal_price),
+    hasFoil: Boolean(row.foil_price || row.tcg_foil_price || row.cardmarket_foil_price),
+    prices: {},
+    purchaseUrls: {},
+    legalities: {},
+    colorIdentity: [],
+    keywords: [],
+    cmc: 0,
+    frameEffects: [],
+});
+
+// Memoized Empty State Component
+const EmptyState = memo(() => (
+    <View style={styles.emptyContainer}>
+        <Icon name="cards-outline" size={64} color="#e0e0e0" />
+        <Text style={styles.emptyText}>No cards found</Text>
+    </View>
+));
+
+// Add skeleton loading component
+const SkeletonCard = () => (
+    <View style={[styles.cardContainer, styles.skeletonCard]}>
+        <View style={[styles.cardImage, styles.skeletonImage]} />
+        <View style={styles.skeletonText} />
+        <View style={styles.skeletonText} />
+    </View>
+);
 
 const styles = StyleSheet.create({
     container: {
@@ -830,15 +924,17 @@ const styles = StyleSheet.create({
     },
     grid: {
         padding: 4,
+        rowGap: 8,
     },
     cardContainer: {
-        flex: 1/3,
+        flex: 1/NUM_COLUMNS,
         padding: 4,
+        height: '100%',
     },
     cardImageContainer: {
         position: 'relative',
         width: '100%',
-        aspectRatio: 0.72,
+        aspectRatio: CARD_ASPECT_RATIO,
     },
     cardImage: {
         width: '100%',
@@ -910,7 +1006,7 @@ const styles = StyleSheet.create({
     },
     modalImage: {
         width: '100%',
-        aspectRatio: 0.72,
+        aspectRatio: CARD_ASPECT_RATIO,
         borderRadius: 8,
     },
     modalCloseButton: {
@@ -1042,6 +1138,83 @@ const styles = StyleSheet.create({
     deleteButtonText: {
         color: 'white',
         fontWeight: 'bold',
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+        minHeight: 300,
+    },
+    emptyText: {
+        fontSize: 18,
+        color: '#9e9e9e',
+        marginTop: 16,
+    },
+    imageLoadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.1)',
+    },
+    errorContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    errorText: {
+        fontSize: 18,
+        color: '#ff4444',
+        marginVertical: 16,
+    },
+    skeletonCard: {
+        flex: 1,
+        padding: 4,
+        backgroundColor: 'white',
+        borderRadius: 8,
+    },
+    skeletonImage: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 8,
+    },
+    skeletonText: {
+        height: 12,
+        backgroundColor: '#e0e0e0',
+        borderRadius: 4,
+        marginBottom: 4,
+    },
+    advancedFilterButton: {
+        padding: 10,
+        backgroundColor: '#e3f2fd',
+        borderRadius: 4,
+        marginVertical: 8,
+        alignItems: 'center',
+    },
+    advancedFilterText: {
+        color: '#2196F3',
+        fontWeight: '500',
+    },
+    advancedFilters: {
+        marginTop: 8,
+    },
+    priceRangeContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    priceInput: {
+        flex: 1,
+        height: 40,
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        borderRadius: 4,
+        paddingHorizontal: 8,
+    },
+    priceRangeSeparator: {
+        fontSize: 16,
+        color: '#666',
     },
 });
 

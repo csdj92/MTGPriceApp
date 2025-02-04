@@ -21,6 +21,8 @@ export interface ExtendedCard {
     text?: string;
     rarity?: string;
     booster?: string;
+    toughness?: string;
+    power?: string;
     rulings_uri?: string;
     edhrec_rank?: number;
     related_uris?: {
@@ -68,6 +70,12 @@ export interface ExtendedCard {
     collected?: boolean;
     hasNonFoil: boolean;
     hasFoil: boolean;
+    colors?: string[];
+    colorIdentity: string[];
+    keywords: string[];
+    cmc: number;
+    flavorText?: string;
+    frameEffects: string[];
 }
 
 export interface OcrResult {
@@ -85,4 +93,20 @@ export interface LorcanaCard extends Card {
 export interface MtgCard extends Card {
     subtype: string | null;  // The subtype after the em dash in type line
     isLorcana: false;
-} 
+}
+
+export interface Filters {
+    search: string;
+    rarities: string[];
+    colors: string[];
+    colorIdentity: string[];
+    keywords: string[];
+    collectionStatus: 'all' | 'collected' | 'missing';
+    priceRange: { min: number | null; max: number | null };
+    power?: string;
+    toughness?: string;
+    edhrecRank?: number;
+}
+
+export type SortOption = 'name' | 'number' | 'price' | 'set' | 'quantity';
+export type SortDirection = 'asc' | 'desc'; 

@@ -7,22 +7,28 @@ import {
     ScrollView,
     Image,
 } from 'react-native';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { scryfallService } from '../services/ScryfallService';
 import type { ExtendedCard } from '../types/card';
+import { RootStackParamList } from '../navigation/AppNavigator';
 
-const CardDetailsScreen = () => {
-    const [card, setCard] = useState<ExtendedCard | null>(null);
+interface CardDetailScreenProps {
+    route: RouteProp<RootStackParamList, 'CardDetails'>;
+    navigation: any;
+}
+
+const CardDetailsScreen: React.FC<CardDetailScreenProps> = ({ route }) => {
+    const { card, onClose } = route.params;
+    const [cardData, setCardData] = useState<ExtendedCard | null>(card);
     const [isLoading, setIsLoading] = useState(true);
-    const route = useRoute();
     const navigation = useNavigation();
-    const cardId = (route.params as { cardId: string })?.cardId;
+    const cardId = route.params.card.id;
 
     useEffect(() => {
         const loadCard = async () => {
             try {
                 const cardData = await scryfallService.getCardById(cardId);
-                setCard(cardData);
+                setCardData(cardData);
                 navigation.setOptions({ title: cardData.name });
             } catch (error) {
                 console.error('Error loading card:', error);
@@ -43,7 +49,7 @@ const CardDetailsScreen = () => {
         );
     }
 
-    if (!card) {
+    if (!cardData) {
         return (
             <View style={styles.errorContainer}>
                 <Text style={styles.errorText}>Failed to load card details</Text>
@@ -53,27 +59,27 @@ const CardDetailsScreen = () => {
 
     return (
         <ScrollView style={styles.container}>
-            {card.imageUrl && (
+            {cardData.imageUrl && (
                 <Image
-                    source={{ uri: card.imageUrl }}
+                    source={{ uri: cardData.imageUrl }}
                     style={styles.cardImage}
                     resizeMode="contain"
                 />
             )}
             <View style={styles.detailsContainer}>
-                <Text style={styles.name}>{card.name}</Text>
-                <Text style={styles.type}>{card.type}</Text>
-                {card.manaCost && (
-                    <Text style={styles.manaCost}>Mana Cost: {card.manaCost}</Text>
+                <Text style={styles.name}>{cardData.name}</Text>
+                <Text style={styles.type}>{cardData.type}</Text>
+                {cardData.manaCost && (
+                    <Text style={styles.manaCost}>Mana Cost: {cardData.manaCost}</Text>
                 )}
-                {card.text && <Text style={styles.text}>{card.text}</Text>}
+                {cardData.text && <Text style={styles.text}>{cardData.text}</Text>}
                 <View style={styles.infoRow}>
-                    <Text style={styles.setCode}>Set: {card.setCode}</Text>
-                    <Text style={styles.rarity}>{card.rarity}</Text>
+                    <Text style={styles.setCode}>Set: {cardData.setCode}</Text>
+                    <Text style={styles.rarity}>{cardData.rarity}</Text>
                 </View>
-                {card.prices?.usd !== undefined && (
+                {cardData.prices?.usd !== undefined && (
                     <Text style={styles.price}>
-                        Price: ${Number(card.prices.usd).toFixed(2)}
+                        Price: ${Number(cardData.prices.usd).toFixed(2)}
                     </Text>
                 )}
             </View>

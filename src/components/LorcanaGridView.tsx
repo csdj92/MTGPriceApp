@@ -14,8 +14,9 @@ import {
     Image
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 import { getLorcanaCardPrice, getDB } from '../services/LorcanaService';
 
 interface LorcanaGridViewProps {
