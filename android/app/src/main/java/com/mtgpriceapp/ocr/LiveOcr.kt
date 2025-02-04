@@ -134,11 +134,18 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     override fun setPreviewSurface(surface: Surface?) {
-        previewSurface = surface
-        if (surface != null && isSessionActive) {
-            setupCameraPreview()
-        } else {
-            closeCamera()
+        synchronized(this) {
+            if (previewSurface == surface) {
+                return  // No change needed
+            }
+            
+            previewSurface = surface
+            if (surface != null && isSessionActive) {
+                closeCamera()  // Ensure clean state
+                setupCameraPreview()
+            } else {
+                closeCamera()
+            }
         }
     }
 
@@ -351,27 +358,51 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
 
     private fun closePreviewSession() {
         try {
-            captureSession?.stopRepeating()
-            captureSession?.abortCaptures()
-        } catch (e: CameraAccessException) {
-            Log.e(TAG, "Error stopping preview session", e)
-        } finally {
-            captureSession?.close()
-            captureSession = null
+            synchronized(this) {
+                if (captureSession != null) {
+                    try {
+                        captureSession?.stopRepeating()
+                        captureSession?.abortCaptures()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error stopping capture session", e)
+                    } finally {
+                        try {
+                            captureSession?.close()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error closing capture session", e)
+                        }
+                        captureSession = null
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in closePreviewSession", e)
         }
     }
 
     private fun closeCamera() {
         try {
             cameraOpenCloseLock.acquire()
-            processingImage = false
-            closePreviewSession()
-            cameraDevice?.close()
-            cameraDevice = null
-            imageReader?.close()
-            imageReader = null
-        } catch (e: InterruptedException) {
-            Log.e(TAG, "Error closing camera", e)
+            synchronized(this) {
+                processingImage = false
+                closePreviewSession()
+                
+                try {
+                    cameraDevice?.close()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error closing camera device", e)
+                }
+                cameraDevice = null
+                
+                try {
+                    imageReader?.close()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error closing image reader", e)
+                }
+                imageReader = null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in closeCamera", e)
         } finally {
             cameraOpenCloseLock.release()
         }

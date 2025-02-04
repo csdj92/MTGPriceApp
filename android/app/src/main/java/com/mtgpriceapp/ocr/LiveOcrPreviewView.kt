@@ -85,7 +85,7 @@ class LiveOcrPreviewView(context: Context, private var previewModule: PreviewMod
                 releasePreview()
                 previewModule = module
                 if (isActive && isSurfaceValid) {
-                    setupPreview()
+                    post { setupPreview() }  // Post to main thread
                 }
             }
         }
@@ -96,10 +96,15 @@ class LiveOcrPreviewView(context: Context, private var previewModule: PreviewMod
             if (isActive != active) {
                 isActive = active
                 visibility = if (active) View.VISIBLE else View.INVISIBLE
-                if (active && isSurfaceValid) {
-                    setupPreview()
-                } else {
+                
+                // First release the old preview if needed
+                if (!active) {
                     releasePreview()
+                }
+                
+                // Then setup the new preview if needed
+                if (active && isSurfaceValid) {
+                    post { setupPreview() }  // Post to main thread
                 }
             }
         }
@@ -110,16 +115,30 @@ class LiveOcrPreviewView(context: Context, private var previewModule: PreviewMod
     fun getSurface(): Surface? = if (isSurfaceValid) surfaceView.holder.surface else null
 
     private fun setupPreview() {
-        if (isActive && isSurfaceValid && !isPreviewSetup.get()) {
-            previewModule?.setPreviewSurface(surfaceView.holder.surface)
-            isPreviewSetup.set(true)
+        synchronized(this) {
+            if (isActive && isSurfaceValid && !isPreviewSetup.get()) {
+                try {
+                    previewModule?.setPreviewSurface(surfaceView.holder.surface)
+                    isPreviewSetup.set(true)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error setting up preview", e)
+                    isPreviewSetup.set(false)
+                }
+            }
         }
     }
 
     fun releasePreview() {
-        if (isPreviewSetup.get()) {
-            previewModule?.setPreviewSurface(null)
-            isPreviewSetup.set(false)
+        synchronized(this) {
+            if (isPreviewSetup.get()) {
+                try {
+                    previewModule?.setPreviewSurface(null)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error releasing preview", e)
+                } finally {
+                    isPreviewSetup.set(false)
+                }
+            }
         }
     }
 } 
