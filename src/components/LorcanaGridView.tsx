@@ -16,8 +16,13 @@ import {
 import FastImage from 'react-native-fast-image';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-const Icon = MaterialCommunityIcons as any; // Temporary type assertion
-import { getLorcanaCardPrice, getDB } from '../services/LorcanaService';
+// Fix the Icon type with a proper type assertion to avoid type errors
+const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
+    name: string;
+    size: number;
+    color: string;
+}>;
+import { getLorcanaCardPrice, getDB, addCardToLorcanaCollection } from '../services/LorcanaService';
 
 interface LorcanaGridViewProps {
     cards: LorcanaCardWithPrice[];
@@ -219,6 +224,68 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         updatePrices();
     }, [updatePrices]);  // Add dependencies to trigger on card changes
 
+    // Add a useEffect to refresh the card data when cards state changes
+    useEffect(() => {
+        // Check if any cards have been changed but not properly reflected in the UI
+        const refreshCollectionStatus = async () => {
+            if (cards.length === 0) return;
+            
+            try {
+                const db = await getDB();
+                // Get the unique IDs of all cards
+                const cardIds = cards.map(card => card.Unique_ID).filter(Boolean);
+                
+                if (cardIds.length === 0) return;
+                
+                // Use a more comprehensive query that checks both the lorcana_cards.collected flag
+                // and also checks if the card exists in any collection
+                const [results] = await db.executeSql(
+                    `SELECT lc.Unique_ID, 
+                            lc.collected, 
+                            CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection
+                     FROM lorcana_cards lc
+                     LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
+                     WHERE lc.Unique_ID IN (${cardIds.map(() => '?').join(',')})`,
+                    cardIds
+                );
+                
+                // Create a map of card ID to collection status
+                const collectionStatusMap = new Map();
+                for (let i = 0; i < results.rows.length; i++) {
+                    const row = results.rows.item(i);
+                    // A card is collected if either the collected flag is set OR it exists in a collection
+                    const isCollected = Boolean(row.collected) || Boolean(row.in_collection);
+                    collectionStatusMap.set(row.Unique_ID, isCollected);
+                }
+                
+                // Check if any cards have inconsistent collection status
+                let hasInconsistencies = false;
+                const updatedCards = cards.map(card => {
+                    if (!card.Unique_ID) return card;
+                    
+                    const databaseCollected = collectionStatusMap.get(card.Unique_ID);
+                    if (databaseCollected !== undefined && databaseCollected !== !!card.collected) {
+                        hasInconsistencies = true;
+                        console.log(`[LorcanaGridView] Fixing inconsistency for card: ${card.Name}, UI: ${!!card.collected}, DB: ${databaseCollected}`);
+                        return { ...card, collected: databaseCollected };
+                    }
+                    return card;
+                });
+                
+                // If inconsistencies found, update the UI
+                if (hasInconsistencies && onCardsUpdate) {
+                    console.log('[LorcanaGridView] Fixing collection status inconsistencies');
+                    onCardsUpdate(updatedCards);
+                }
+            } catch (error) {
+                console.error('[LorcanaGridView] Error refreshing collection status:', error);
+            }
+        };
+        
+        // Run the refresh
+        refreshCollectionStatus();
+    }, [cards]);
+
     const loadMoreCards = async () => {
         if (isLoadingMore || !hasMore) return;
         setIsLoadingMore(true);
@@ -257,18 +324,42 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         }
     };
 
-    const handleVersionChange = (newVersion: LorcanaCardWithPrice) => {
-        // Update the card version
-        if (onCardsUpdate) {
-            const updatedCards = cards.map(card =>
-                card.Unique_ID === selectedCard?.Unique_ID ? newVersion : card
+    const handleVersionChange = async (newVersion: LorcanaCardWithPrice) => {
+        try {
+            // Close the modal first
+            setShowVersionModal(false);
+            
+            // If the original card was collected, transfer that status to the new version
+            const wasCollected = selectedCard?.collected || false;
+            
+            // Always ensure we're working with the newest data
+            const latestCardData = {
+                ...newVersion,
+                collected: wasCollected
+            };
+            
+            // Update the card version in the state
+            if (onCardsUpdate) {
+                const updatedCards = cards.map(card =>
+                    card.Unique_ID === selectedCard?.Unique_ID ? latestCardData : card
+                );
+                onCardsUpdate(updatedCards);
+                console.log('[LorcanaGridView] Updated card version:', latestCardData.Name);
+            }
+        } catch (error) {
+            console.error('[LorcanaGridView] Error changing card version:', error);
+            Alert.alert(
+                'Error',
+                'Failed to change card version. Please try again.',
+                [{ text: 'OK' }]
             );
-            onCardsUpdate(updatedCards);
         }
-        setShowVersionModal(false);
     };
 
     const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => {
+        // Force boolean evaluation to ensure consistent behavior
+        const isCollected = !!item.collected;
+        
         return (
             <TouchableOpacity 
                 style={styles.cardContainer}
@@ -289,7 +380,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                             }}
                             style={[
                                 styles.cardImage,
-                                !item.collected && styles.cardImageUncollected
+                                !isCollected && styles.cardImageUncollected
                             ]}
                             resizeMode={FastImage.resizeMode.contain}
                             onError={() => {
@@ -304,19 +395,19 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                             <Icon name="image-off" size={24} color="#666" />
                         </View>
                     )}
-                    {!item.collected && (
+                    {!isCollected && (
                         <View style={styles.missingOverlay}>
                             <Icon name="plus-circle" size={24} color="white" />
                             <Text style={styles.missingText}>Missing</Text>
                         </View>
                     )}
                 </View>
-                <View style={[styles.cardInfo, !item.collected && styles.cardInfoUncollected]}>
+                <View style={[styles.cardInfo, !isCollected && styles.cardInfoUncollected]}>
                     <Text style={styles.cardNumber}>#{item.Card_Num || '0'}</Text>
-                    <Text style={[styles.cardName, !item.collected && styles.cardNameUncollected]} numberOfLines={1}>
+                    <Text style={[styles.cardName, !isCollected && styles.cardNameUncollected]} numberOfLines={1}>
                         {item.Name}
                     </Text>
-                    <Text style={[styles.cardPrice, !item.collected && styles.cardPriceUncollected]}>
+                    <Text style={[styles.cardPrice, !isCollected && styles.cardPriceUncollected]}>
                         ${item.prices?.usd ? Number(item.prices.usd).toFixed(2) : '0.00'}
                     </Text>
                 </View>
@@ -409,15 +500,60 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                             </TouchableOpacity>
                         ))}
                     </ScrollView>
-                    {!selectedCard?.collected && (
+                    {/* Only show the Add to Collection button if the card is not collected */}
+                    {selectedCard && !selectedCard.collected && (
                         <TouchableOpacity
                             style={styles.addButton}
-                            onPress={() => {
-                                addToCollection(selectedCard!);
-                                setShowVersionModal(false);
+                            onPress={async () => {
+                                try {
+                                    // Keep a reference to the card we're adding
+                                    const cardToAdd = selectedCard!;
+                                    
+                                    // Close the modal first
+                                    setShowVersionModal(false);
+                                    
+                                    // Add to collection - this will update the database
+                                    await addToCollection(cardToAdd);
+                                    
+                                    // Update selectedCard to reflect that it's now collected
+                                    setSelectedCard(prev => prev ? {...prev, collected: true} : null);
+                                    
+                                    // Force a refresh of all cards to ensure consistent UI state
+                                    if (onCardsUpdate) {
+                                        const updatedCards = cards.map(c =>
+                                            c.Unique_ID === cardToAdd.Unique_ID ? { ...c, collected: true } : c
+                                        );
+                                        onCardsUpdate(updatedCards);
+                                    }
+                                } catch (error) {
+                                    // Error is handled in the addToCollection function
+                                    console.error('[LorcanaGridView] Failed to add to collection:', error);
+                                }
                             }}
                         >
                             <Text style={styles.addButtonText}>Add to Collection</Text>
+                        </TouchableOpacity>
+                    )}
+                    {/* Show a Remove from Collection button if the card is already collected */}
+                    {selectedCard && selectedCard.collected && (
+                        <TouchableOpacity
+                            style={styles.removeButton}
+                            onPress={async () => {
+                                try {
+                                    // Keep a reference to the card
+                                    const cardToRemove = selectedCard!;
+                                    
+                                    // Close the modal first
+                                    setShowVersionModal(false);
+                                    
+                                    // Remove from collection by calling the onDeleteCard prop
+                                    onDeleteCard(cardToRemove);
+                                } catch (error) {
+                                    console.error('[LorcanaGridView] Failed to remove from collection:', error);
+                                }
+                            }}
+                        >
+                            <Text style={styles.removeButtonText}>Remove from Collection</Text>
                         </TouchableOpacity>
                     )}
                     <TouchableOpacity
@@ -568,26 +704,211 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     );
 
     // Function to add a card to the collection
-    const addToCollection = (card: LorcanaCardWithPrice) => {
-        // Update the card's collected status
-        if (onCardsUpdate) {
-            const updatedCards = cards.map(c =>
-                c.Unique_ID === card.Unique_ID ? { ...c, collected: true } : c
+    const addToCollection = async (card: LorcanaCardWithPrice) => {
+        try {
+            // First, check if the card has a Set_ID to find the appropriate collection
+            if (!card.Set_ID) {
+                console.error('[LorcanaGridView] Card has no Set_ID, cannot find collection', card);
+                throw new Error('Card has no Set_ID');
+            }
+            
+            // Immediately update the UI state for better UX, then verify in database
+            if (onCardsUpdate) {
+                console.log('[LorcanaGridView] Updating UI immediately for card:', card.Name);
+                const updatedCards = cards.map(c =>
+                    c.Unique_ID === card.Unique_ID ? { ...c, collected: true } : c
+                );
+                onCardsUpdate(updatedCards);
+            }
+            
+            // Get database connection
+            const database = await getDB();
+            
+            // Find the collection for this set
+            const [collections] = await database.executeSql(
+                `SELECT id FROM lorcana_collections 
+                 WHERE description LIKE '%(' || ? || ')%'`,
+                [card.Set_ID]
             );
-            onCardsUpdate(updatedCards);
-        }
-        
-        // Update the database
-        const db = getDB();
-        db.then(database => {
-            database.executeSql(
-                'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
+            
+            let collectionId = null;
+            
+            if (collections.rows.length > 0) {
+                // Use existing collection
+                collectionId = collections.rows.item(0).id;
+                console.log(`[LorcanaGridView] Found collection ${collectionId} for set ${card.Set_ID}`);
+            } else {
+                // If no collection exists, create one
+                const setName = card.Set_Name || `Set ${card.Set_ID}`;
+                console.log(`[LorcanaGridView] No collection found for set ${card.Set_ID}, creating one`);
+                
+                // Generate a unique ID for the collection
+                collectionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+                const now = new Date().toISOString();
+                const collectionName = `Set: ${setName}`;
+                const description = `Collection for ${setName} (${card.Set_ID})`;
+                
+                // Create the collection
+                await database.executeSql(
+                    `INSERT INTO lorcana_collections (id, name, description, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [collectionId, collectionName, description, now, now]
+                );
+            }
+            
+            if (!collectionId) {
+                throw new Error('Failed to find or create collection');
+            }
+            
+            // Use a transaction to ensure all database updates happen atomically
+            await database.transaction(async (tx) => {
+                // 1. Use the addCardToLorcanaCollection function which handles most updates
+                await addCardToLorcanaCollection(card.Unique_ID, collectionId);
+                
+                // 2. Explicitly ensure the collected flag is set to 1 in the database
+                await tx.executeSql(
+                    'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
+                    [card.Unique_ID]
+                );
+                
+                // 3. Ensure the card exists in the lorcana_collection_cards table
+                const now = new Date().toISOString();
+                await tx.executeSql(
+                    'INSERT OR REPLACE INTO lorcana_collection_cards (collection_id, card_id, added_at) VALUES (?, ?, ?)',
+                    [collectionId, card.Unique_ID, now]
+                );
+            });
+            
+            // Verify the card is now marked as collected in the database
+            const [verification] = await database.executeSql(
+                `SELECT 
+                    lc.collected,
+                    CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection
+                 FROM lorcana_cards lc
+                 LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
+                 WHERE lc.Unique_ID = ?`,
                 [card.Unique_ID]
             );
-        }).catch(error => {
-            console.error('Error updating card collection status:', error);
-        });
+            
+            if (verification.rows.length > 0) {
+                const verifiedCard = verification.rows.item(0);
+                const isCollected = Boolean(verifiedCard.collected) || Boolean(verifiedCard.in_collection);
+                console.log(`[LorcanaGridView] Verified card collection status: ${isCollected}`);
+                
+                // Double-check - if somehow the database didn't update correctly, try to fix it
+                if (!isCollected) {
+                    console.warn('[LorcanaGridView] Card not properly marked as collected, fixing...');
+                    await database.executeSql(
+                        'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
+                        [card.Unique_ID]
+                    );
+                    
+                    // Also ensure it's in the collection_cards table
+                    await database.executeSql(
+                        'INSERT OR REPLACE INTO lorcana_collection_cards (collection_id, card_id, added_at) VALUES (?, ?, ?)',
+                        [collectionId, card.Unique_ID, new Date().toISOString()]
+                    );
+                    
+                    // Force another refresh of the UI after verification
+                    if (onCardsUpdate) {
+                        const finalUpdatedCards = cards.map(c =>
+                            c.Unique_ID === card.Unique_ID ? { ...c, collected: true } : c
+                        );
+                        onCardsUpdate(finalUpdatedCards);
+                    }
+                }
+            }
+            
+            // Trigger the collection status refresh to ensure consistency across all components
+            refreshCollectionStatus();
+            
+            // Success feedback
+            console.log('[LorcanaGridView] Card added to collection:', card.Name);
+            
+            // Show feedback toast to the user
+            Alert.alert(
+                'Success',
+                `Added ${card.Name} to your collection`,
+                [{ text: 'OK' }]
+            );
+        } catch (error) {
+            console.error('[LorcanaGridView] Error updating card collection status:', error);
+            
+            // Try to recover UI state if there was an error
+            if (onCardsUpdate) {
+                // Force a refresh to get the current status from database
+                refreshCollectionStatus();
+            }
+            
+            // Show an error alert to the user
+            Alert.alert(
+                'Error',
+                'Failed to add card to collection. Please try again.',
+                [{ text: 'OK' }]
+            );
+        }
     };
+    
+    // Extract refreshCollectionStatus as a standalone function to be called when needed
+    const refreshCollectionStatus = async () => {
+        if (cards.length === 0) return;
+        
+        try {
+            const db = await getDB();
+            // Get the unique IDs of all cards
+            const cardIds = cards.map(card => card.Unique_ID).filter(Boolean);
+            
+            if (cardIds.length === 0) return;
+            
+            // Use a more comprehensive query that checks both the lorcana_cards.collected flag
+            // and also checks if the card exists in any collection
+            const [results] = await db.executeSql(
+                `SELECT lc.Unique_ID, 
+                        lc.collected, 
+                        CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection
+                 FROM lorcana_cards lc
+                 LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
+                 WHERE lc.Unique_ID IN (${cardIds.map(() => '?').join(',')})`,
+                cardIds
+            );
+            
+            // Create a map of card ID to collection status
+            const collectionStatusMap = new Map();
+            for (let i = 0; i < results.rows.length; i++) {
+                const row = results.rows.item(i);
+                // A card is collected if either the collected flag is set OR it exists in a collection
+                const isCollected = Boolean(row.collected) || Boolean(row.in_collection);
+                collectionStatusMap.set(row.Unique_ID, isCollected);
+            }
+            
+            // Check if any cards have inconsistent collection status
+            let hasInconsistencies = false;
+            const updatedCards = cards.map(card => {
+                if (!card.Unique_ID) return card;
+                
+                const databaseCollected = collectionStatusMap.get(card.Unique_ID);
+                if (databaseCollected !== undefined && databaseCollected !== !!card.collected) {
+                    hasInconsistencies = true;
+                    console.log(`[LorcanaGridView] Fixing inconsistency for card: ${card.Name}, UI: ${!!card.collected}, DB: ${databaseCollected}`);
+                    return { ...card, collected: databaseCollected };
+                }
+                return card;
+            });
+            
+            // If inconsistencies found, update the UI
+            if (hasInconsistencies && onCardsUpdate) {
+                console.log('[LorcanaGridView] Fixing collection status inconsistencies');
+                onCardsUpdate(updatedCards);
+            }
+        } catch (error) {
+            console.error('[LorcanaGridView] Error refreshing collection status:', error);
+        }
+    };
+
+    // Add the useEffect that calls refreshCollectionStatus when cards change
+    useEffect(() => {
+        refreshCollectionStatus();
+    }, [cards]);
 
     return (
         <View style={styles.container}>
@@ -821,6 +1142,11 @@ const styles = StyleSheet.create({
     cardImageUncollected: {
         opacity: 0.5,
     },
+    placeholderImage: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#f5f5f5',
+    },
     missingOverlay: {
         position: 'absolute',
         top: 0,
@@ -935,13 +1261,6 @@ const styles = StyleSheet.create({
         shadowRadius: 3.84,
         elevation: 5,
     },
-    placeholderImage: {
-        backgroundColor: '#f5f5f5',
-        justifyContent: 'center',
-        alignItems: 'center',
-        width: '100%',
-        height: '100%'
-    },
     deleteButton: {
         marginTop: 16,
         padding: 12,
@@ -970,6 +1289,17 @@ const styles = StyleSheet.create({
         resizeMode: 'contain',
         borderRadius: 8,
         marginTop: 8,
+    },
+    removeButton: {
+        marginTop: 16,
+        padding: 12,
+        backgroundColor: '#f44336',
+        borderRadius: 8,
+        alignItems: 'center',
+    },
+    removeButtonText: {
+        color: 'white',
+        fontWeight: 'bold',
     },
 });
 

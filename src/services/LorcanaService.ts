@@ -866,7 +866,7 @@ export const addCardToLorcanaCollection = async (cardId: string, collectionId: s
     }
 };
 
-export const getLorcanaSetCollections = async (): Promise<Array<{
+export const getLorcanaSetCollections = async (forceRefresh: boolean = false): Promise<Array<{
     id: string;
     name: string;
     description: string | null;
@@ -879,7 +879,10 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
 }>> => {
     try {
         const db = await getDB();
-        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        // Use a shorter period when forceRefresh is true to ensure we're updating
+        const cacheTime = forceRefresh ? 
+            new Date(Date.now() - 1 * 60 * 1000).toISOString() : // 1 minute for force refresh
+            new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours normally
 
         // First, get all collections that need updating
         const [collectionsToUpdate] = await db.executeSql(`
@@ -892,8 +895,12 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
                 lc.last_updated IS NULL 
                 OR lc.last_updated < ?
                 OR lc.price_usd IS NULL
+                OR (? = 1) -- Force refresh
             )
-        `, [twentyFourHoursAgo]);
+        `, [cacheTime, forceRefresh ? 1 : 0]);
+        
+        // Log collection update activity
+        console.log(`[LorcanaService] Collections to update: ${collectionsToUpdate.rows.length}, force refresh: ${forceRefresh}`);
 
         // Update prices for collections that need it
         for (let i = 0; i < collectionsToUpdate.rows.length; i++) {
@@ -908,7 +915,7 @@ export const getLorcanaSetCollections = async (): Promise<Array<{
                     OR lc.last_updated < ?
                     OR lc.price_usd IS NULL
                 )
-            `, [collection.id, twentyFourHoursAgo]);
+            `, [collection.id, cacheTime]);
 
             // Update all cards in this collection
             for (let j = 0; j < cardsToUpdate.rows.length; j++) {
@@ -1018,7 +1025,7 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
         const db = await getDB();
         const offset = (page - 1) * pageSize;
         const now = new Date().toISOString();
-        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const cacheTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
         // Get cards with collection data and cached prices in a single query
         // Only mark cards for update if they're older than 24 hours
@@ -1035,7 +1042,7 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
             WHERE cc.collection_id = ?
             ORDER BY lc.Card_Num ASC
             LIMIT ? OFFSET ?;
-        `, [twentyFourHoursAgo, collectionId, pageSize, offset]);
+        `, [cacheTime, collectionId, pageSize, offset]);
 
         // Convert results to cards array and identify cards needing updates
         const cards: LorcanaCardWithPrice[] = [];

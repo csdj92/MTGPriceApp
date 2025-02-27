@@ -8,7 +8,13 @@ import {
     TouchableOpacity,
     Alert,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+// Fix Icon type similar to LorcanaGridView
+const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
+    name: string;
+    size: number;
+    color: string;
+}>;
 import { databaseService } from '../../services/DatabaseService';
 import { 
     getLorcanaSetCollections, 
@@ -87,8 +93,8 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     const [loadingLorcana, setLoadingLorcana] = useState(true);
 
     // Memoized callbacks
-    const loadSetCollections = useCallback(async () => {
-        console.log('[SetCompletionScreen] Starting to load collections...');
+    const loadSetCollections = useCallback(async (forceRefresh: boolean = false) => {
+        console.log('[SetCompletionScreen] Starting to load collections, forceRefresh:', forceRefresh);
         setIsLoading(true);
         setLoadingMtg(true);
         setLoadingLorcana(true);
@@ -105,9 +111,9 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                 setLoadingMtg(false);
             });
 
-        // Load Lorcana collections
+        // Load Lorcana collections with force refresh option
         ensureLorcanaInitialized()
-            .then(() => getLorcanaSetCollections())
+            .then(() => getLorcanaSetCollections(forceRefresh))
             .then(collections => {
                 const mappedCollections = collections?.map(c => ({
                     ...c,
@@ -219,11 +225,15 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     useEffect(() => {
         const unsubscribe = navigation.addListener('focus', () => {
             console.log('[SetCompletionScreen] Screen focused, reloading collections...');
-            loadSetCollections();
+            // Force a complete reload from the database when screen is focused
+            setMtgCollections([]);
+            setLorcanaCollections([]);
+            setIsLoading(true);
+            loadSetCollections(true); // Use forceRefresh = true
         });
 
         return unsubscribe;
-    }, [navigation]);
+    }, [navigation, loadSetCollections]);
 
     useEffect(() => {
         console.log('[SetCompletionScreen] Loading states:', { loadingMtg, loadingLorcana });
@@ -252,7 +262,12 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                         try {
                             setIsLoading(true);
                             await reloadLorcanaCards(); // Force reload all cards
-                            await loadSetCollections();
+                            await loadSetCollections(true); // Use forceRefresh = true
+                            Alert.alert(
+                                'Success',
+                                'Collection data refreshed successfully!',
+                                [{ text: 'OK' }]
+                            );
                         } catch (error) {
                             console.error('Error initializing Lorcana:', error);
                             Alert.alert('Error', 'Failed to initialize Lorcana database');
