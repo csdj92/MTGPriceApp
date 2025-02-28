@@ -9,9 +9,16 @@ import {
     Linking,
 } from 'react-native';
 import FastImage from 'react-native-fast-image';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+// Fix the Icon type with a proper type assertion to avoid type errors
+const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
+    name: string;
+    size: number;
+    color: string;
+}>;
 import { getLorcanaCardPrice } from '../services/LorcanaService';
 import type { LorcanaCard } from '../types/lorcana';
+import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../utils/imageUtils';
 
 interface LorcanaCardListProps {
     cards: LorcanaCard[];
@@ -92,6 +99,7 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
         tcgplayer_id?: number;
     }>({ usd: null, usd_foil: null });
     const [isLoadingPrices, setIsLoadingPrices] = useState(false);
+    const [imageError, setImageError] = useState(false);
 
     const openTCGPlayer = () => {
         if (prices.tcgplayer_id) {
@@ -201,16 +209,45 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
 
             {isExpanded && (
                 <View style={styles.expandedContent}>
-                    {card.Image && (
-                        <FastImage
-                            source={{ 
-                                uri: card.Image,
-                                priority: FastImage.priority.normal,
-                                cache: FastImage.cacheControl.immutable
-                            }}
-                            style={styles.cardImage}
-                            resizeMode={FastImage.resizeMode.contain}
-                        />
+                    {card.Image ? (
+                        <View style={styles.imageContainer}>
+                            {!imageError ? (
+                                <FastImage
+                                    source={getImageSource(card.Image) || { 
+                                        uri: card.Image,
+                                        priority: FastImage.priority.normal,
+                                        cache: FastImage.cacheControl.immutable
+                                    }}
+                                    style={styles.cardImage}
+                                    resizeMode={FastImage.resizeMode.contain}
+                                    onError={() => {
+                                        console.log(`[LorcanaCardList] Image load error for ${card.Name}: ${card.Image}`);
+                                        handleImageLoadError(card.Image, card.Name);
+                                        setImageError(true);
+                                    }}
+                                    onLoad={() => {
+                                        handleImageLoadSuccess(card.Image, { name: card.Name, id: card.Unique_ID });
+                                        setImageError(false);
+                                    }}
+                                />
+                            ) : (
+                                <View style={[styles.cardImage, styles.placeholderImage]}>
+                                    <Icon name="image-broken" size={48} color="#666" />
+                                    <Text style={styles.placeholderText}>Image failed to load</Text>
+                                    <TouchableOpacity 
+                                        style={styles.retryButton}
+                                        onPress={() => setImageError(false)}
+                                    >
+                                        <Text style={styles.retryText}>Retry</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                        </View>
+                    ) : (
+                        <View style={[styles.imageContainer, styles.placeholderImage]}>
+                            <Icon name="image-off" size={48} color="#666" />
+                            <Text style={styles.placeholderText}>No image available</Text>
+                        </View>
                     )}
                     {card.Body_Text && (
                         <Text style={styles.bodyText}>{card.Body_Text}</Text>
@@ -343,11 +380,16 @@ const styles = StyleSheet.create({
         borderTopColor: '#eee',
         paddingTop: 12,
     },
-    cardImage: {
+    imageContainer: {
         width: '100%',
         height: 300,
         marginBottom: 12,
         borderRadius: 8,
+        overflow: 'hidden',
+    },
+    cardImage: {
+        width: '100%',
+        height: '100%',
     },
     bodyText: {
         fontSize: 14,
@@ -397,6 +439,26 @@ const styles = StyleSheet.create({
     },
     actionButton: {
         padding: 4,
+    },
+    placeholderImage: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 12,
+    },
+    placeholderText: {
+        color: '#666',
+        fontSize: 14,
+        marginTop: 8,
+    },
+    retryButton: {
+        padding: 8,
+        backgroundColor: '#2196F3',
+        borderRadius: 4,
+    },
+    retryText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: 'bold',
     },
 });
 

@@ -15,13 +15,21 @@ import type { ExtendedCard } from '../types/card';
 
 export interface CardItemProps {
     card: ExtendedCard;
-    viewMode: 'grid' | 'list';
-    isSelected: boolean;
-    onSelect: (card: ExtendedCard) => void;
-    onLongPress: (card: ExtendedCard) => void;
+    viewMode?: 'grid' | 'list';
+    isSelected?: boolean;
+    onPress?: (card: ExtendedCard) => void;
+    onLongPress?: (card: ExtendedCard) => void;
+    onAddToCollection?: (card: ExtendedCard) => void;
 }
 
-const CardItem: React.FC<CardItemProps> = ({ card, viewMode, isSelected, onSelect, onLongPress }) => {
+const CardItem: React.FC<CardItemProps> = ({ 
+    card, 
+    viewMode = 'list', 
+    isSelected = false, 
+    onPress, 
+    onLongPress,
+    onAddToCollection
+}) => {
     // Creating an animated value for card press effect
     const scaleAnim = React.useRef(new Animated.Value(1)).current;
     
@@ -46,6 +54,23 @@ const CardItem: React.FC<CardItemProps> = ({ card, viewMode, isSelected, onSelec
     const showCardMana = (card.colors && card.colors.length > 0) || card.colorIdentity;
     const colors = (card.colors || card.colorIdentity || []).slice(0, 3);
 
+    // Safely handle onPress
+    const handlePress = () => {
+        if (onPress) {
+            onPress(card);
+        }
+    };
+
+    // Safely handle onLongPress
+    const handleLongPress = () => {
+        if (onLongPress) {
+            onLongPress(card);
+        } else if (onAddToCollection) {
+            // Fallback to onAddToCollection if onLongPress isn't provided
+            onAddToCollection(card);
+        }
+    };
+
     return (
         <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
             <TouchableOpacity
@@ -54,8 +79,8 @@ const CardItem: React.FC<CardItemProps> = ({ card, viewMode, isSelected, onSelec
                     isSelected && styles.selectedCard,
                     styles.cardShadow,
                 ]}
-                onPress={() => onSelect(card)}
-                onLongPress={() => onLongPress(card)}
+                onPress={handlePress}
+                onLongPress={handleLongPress}
                 onPressIn={onPressIn}
                 onPressOut={onPressOut}
                 activeOpacity={0.9}
@@ -68,9 +93,9 @@ const CardItem: React.FC<CardItemProps> = ({ card, viewMode, isSelected, onSelec
                 )}
                 
                 <View style={viewMode === 'grid' ? styles.gridContent : styles.listContent}>
-                    {card.imageUrl ? (
+                    {(card.imageUris?.normal || card.imageUris?.small || card.imageUrl) ? (
                         <Image 
-                            source={{ uri: card.imageUrl }} 
+                            source={{ uri: card.imageUris?.normal || card.imageUris?.small || card.imageUrl }} 
                             style={viewMode === 'grid' ? styles.gridImage : styles.listImage}
                             resizeMode="cover"
                         />

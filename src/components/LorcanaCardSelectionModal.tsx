@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     Modal,
     View,
@@ -6,10 +6,85 @@ import {
     StyleSheet,
     TouchableOpacity,
     FlatList,
-    Image,
     Dimensions,
 } from 'react-native';
+import FastImage from 'react-native-fast-image';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+// Fix the Icon type with a proper type assertion to avoid type errors
+const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
+    name: string;
+    size: number;
+    color: string;
+}>;
 import type { LorcanaCard } from '../types/lorcana';
+import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../utils/imageUtils';
+
+// Separate component for the card item - this can use hooks properly
+const CardItem = React.memo(({ 
+    item, 
+    onSelect, 
+    onClose 
+}: { 
+    item: LorcanaCard; 
+    onSelect?: (card: LorcanaCard) => void; 
+    onClose?: () => void;
+}) => {
+    const [imageError, setImageError] = useState(false);
+    
+    const handlePress = () => {
+        if (onSelect) {
+            onSelect(item);
+        } else {
+            console.warn('onSelect is undefined');
+            // Fallback to onClose if onSelect is missing
+            if (onClose) onClose();
+        }
+    };
+    
+    return (
+        <TouchableOpacity
+            style={styles.cardItem}
+            onPress={handlePress}
+        >
+            {item.Image && !imageError ? (
+                <FastImage
+                    source={getImageSource(item.Image) || { 
+                        uri: item.Image,
+                        priority: FastImage.priority.high,
+                        cache: FastImage.cacheControl.immutable
+                    }}
+                    style={styles.cardImage}
+                    resizeMode={FastImage.resizeMode.contain}
+                    onError={() => {
+                        console.log(`[LorcanaCardSelection] Image load error for ${item.Name}: ${item.Image}`);
+                        handleImageLoadError(item.Image, item.Name);
+                        setImageError(true);
+                    }}
+                    onLoad={() => {
+                        console.log(`[LorcanaCardSelection] Image loaded successfully: ${item.Name}`);
+                        handleImageLoadSuccess(item.Image, { name: item.Name, id: item.Unique_ID });
+                        setImageError(false);
+                    }}
+                />
+            ) : (
+                <View style={[styles.cardImage, styles.placeholderImage]}>
+                    <Icon name={imageError ? "image-broken" : "image-off"} size={24} color="#666" />
+                </View>
+            )}
+            <View style={styles.cardInfo}>
+                <Text style={styles.cardName}>{item.Name}</Text>
+                <Text style={styles.cardDetails}>
+                    {item.Set_Name} • {item.Rarity}
+                </Text>
+                {item.Classifications && (
+                    <Text style={styles.cardDetails}>
+                        {item.Classifications}
+                    </Text>
+                )}
+            </View>
+        </TouchableOpacity>
+    );
+});
 
 interface LorcanaCardSelectionModalProps {
     visible: boolean;
@@ -24,30 +99,6 @@ const LorcanaCardSelectionModal: React.FC<LorcanaCardSelectionModalProps> = ({
     onSelect,
     onClose,
 }) => {
-    const renderCard = ({ item }: { item: LorcanaCard }) => (
-        <TouchableOpacity
-            style={styles.cardItem}
-            onPress={() => onSelect(item)}
-        >
-            <Image
-                source={{ uri: item.Image }}
-                style={styles.cardImage}
-                resizeMode="contain"
-            />
-            <View style={styles.cardInfo}>
-                <Text style={styles.cardName}>{item.Name}</Text>
-                <Text style={styles.cardDetails}>
-                    {item.Set_Name} • {item.Rarity}
-                </Text>
-                {item.Classifications && (
-                    <Text style={styles.cardDetails}>
-                        {item.Classifications}
-                    </Text>
-                )}
-            </View>
-        </TouchableOpacity>
-    );
-
     return (
         <Modal
             visible={visible}
@@ -62,7 +113,13 @@ const LorcanaCardSelectionModal: React.FC<LorcanaCardSelectionModalProps> = ({
                     
                     <FlatList
                         data={cards}
-                        renderItem={renderCard}
+                        renderItem={({ item }) => (
+                            <CardItem 
+                                item={item}
+                                onSelect={onSelect}
+                                onClose={onClose}
+                            />
+                        )}
                         keyExtractor={item => item.Unique_ID}
                         contentContainerStyle={styles.listContainer}
                     />
@@ -122,6 +179,11 @@ const styles = StyleSheet.create({
         height: 84,
         borderRadius: 4,
         marginRight: 12,
+    },
+    placeholderImage: {
+        backgroundColor: '#f0f0f0',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     cardInfo: {
         flex: 1,

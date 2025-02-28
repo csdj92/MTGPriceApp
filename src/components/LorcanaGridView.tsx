@@ -72,13 +72,21 @@ const CardItem = React.memo(({
             <View style={styles.cardImageContainer}>
                 {item.Image && !imageError ? (
                     <FastImage
-                        source={getImageSource(item.Image) || { uri: item.Image }}
+                        source={getImageSource(item.Image) || { 
+                            uri: item.Image,
+                            priority: FastImage.priority.high,
+                            cache: FastImage.cacheControl.immutable,
+                            headers: {
+                                'Cache-Control': 'max-age=31536000, immutable'
+                            }
+                        }}
                         style={[
                             styles.cardImage,
                             !isCollected && styles.cardImageUncollected
                         ]}
                         resizeMode={FastImage.resizeMode.contain}
                         onError={() => {
+                            console.log(`[LorcanaGridView] Image load error for ${item.Name}: ${item.Image}`);
                             handleImageLoadError(item.Image, item.Name);
                             setImageError(true);
                         }}
@@ -601,19 +609,33 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                                 onPress={() => handleVersionChange(version)}
                             >
                                 <Text style={styles.versionText}>{version.Name}</Text>
-                                <FastImage
-                                    source={version.Image ? 
-                                        (getImageSource(version.Image) || { uri: version.Image }) : 
-                                        undefined}
-                                    style={styles.versionImage}
-                                    resizeMode={FastImage.resizeMode.contain}
-                                    onError={() => handleImageLoadError(version.Image, version.Name)}
-                                    onLoad={() => handleImageLoadSuccess(version.Image, { 
-                                        name: version.Name, 
-                                        id: version.Unique_ID, 
-                                        context: 'version_modal'
-                                    })}
-                                />
+                                {version.Image ? (
+                                    <FastImage
+                                        source={getImageSource(version.Image) || { 
+                                            uri: version.Image,
+                                            priority: FastImage.priority.high,
+                                            cache: FastImage.cacheControl.immutable
+                                        }}
+                                        style={styles.versionImage}
+                                        resizeMode={FastImage.resizeMode.contain}
+                                        onError={() => {
+                                            console.log(`[LorcanaGridView] Version image load error for ${version.Name}: ${version.Image}`);
+                                            handleImageLoadError(version.Image, version.Name);
+                                        }}
+                                        onLoad={() => {
+                                            console.log(`[LorcanaGridView] Version image loaded successfully: ${version.Name}`);
+                                            handleImageLoadSuccess(version.Image, { 
+                                                name: version.Name, 
+                                                id: version.Unique_ID, 
+                                                context: 'version_modal'
+                                            });
+                                        }}
+                                    />
+                                ) : (
+                                    <View style={[styles.versionImage, {backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center'}]}>
+                                        <Icon name="image-off" size={24} color="#666" />
+                                    </View>
+                                )}
                             </TouchableOpacity>
                         ))}
                     </ScrollView>
@@ -853,279 +875,45 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             if (collections.rows.length > 0) {
                 // Use existing collection
                 collectionId = collections.rows.item(0).id;
-                console.log(`[LorcanaGridView] Found collection ${collectionId} for set ${card.Set_ID}`);
+                console.log(`[LorcanaGridView] Using existing collection for card: ${card.Name}`);
             } else {
-                // If no collection exists, create one
-                const setName = card.Set_Name || `Set ${card.Set_ID}`;
-                console.log(`[LorcanaGridView] No collection found for set ${card.Set_ID}, creating one`);
-                
-                // Generate a unique ID for the collection
-                collectionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
-                const now = new Date().toISOString();
-                const collectionName = `Set: ${setName}`;
-                const description = `Collection for ${setName} (${card.Set_ID})`;
-                
-                // Create the collection
+                console.log(`[LorcanaGridView] No existing collection found for card: ${card.Name}, creating new collection`);
+                // Create new collection
                 await database.executeSql(
-                    `INSERT INTO lorcana_collections (id, name, description, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?)`,
-                    [collectionId, collectionName, description, now, now]
+                    `INSERT INTO lorcana_collections (description) VALUES (?)`,
+                    [card.Set_Name]
                 );
+                const [newCollection] = await database.executeSql(
+                    `SELECT id FROM lorcana_collections WHERE description = ?`,
+                    [card.Set_Name]
+                );
+                collectionId = newCollection.rows.item(0).id;
             }
             
-            if (!collectionId) {
-                throw new Error('Failed to find or create collection');
-            }
-            
-            // Use a transaction to ensure all database updates happen atomically
-            await database.transaction(async (tx) => {
-                // 1. Use the addCardToLorcanaCollection function which handles most updates
-                await addCardToLorcanaCollection(card.Unique_ID, collectionId);
-                
-                // 2. Explicitly ensure the collected flag is set to 1 in the database
-                await tx.executeSql(
-                    'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
-                    [card.Unique_ID]
-                );
-                
-                // 3. Ensure the card exists in the lorcana_collection_cards table
-                const now = new Date().toISOString();
-                await tx.executeSql(
-                    'INSERT OR REPLACE INTO lorcana_collection_cards (collection_id, card_id, added_at) VALUES (?, ?, ?)',
-                    [collectionId, card.Unique_ID, now]
-                );
-            });
-            
-            // Verify the card is now marked as collected in the database
-            const [verification] = await database.executeSql(
-                `SELECT 
-                    lc.collected,
-                    CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection
-                 FROM lorcana_cards lc
-                 LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
-                 WHERE lc.Unique_ID = ?`,
-                [card.Unique_ID]
+            // Add card to collection
+            await database.executeSql(
+                `INSERT INTO lorcana_collection_cards (card_id, collection_id) VALUES (?, ?)`,
+                [card.Unique_ID, collectionId]
             );
             
-            if (verification.rows.length > 0) {
-                const verifiedCard = verification.rows.item(0);
-                const isCollected = Boolean(verifiedCard.collected) || Boolean(verifiedCard.in_collection);
-                console.log(`[LorcanaGridView] Verified card collection status: ${isCollected}`);
-                
-                // Double-check - if somehow the database didn't update correctly, try to fix it
-                if (!isCollected) {
-                    console.warn('[LorcanaGridView] Card not properly marked as collected, fixing...');
-                    await database.executeSql(
-                        'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
-                        [card.Unique_ID]
-                    );
-                    
-                    // Also ensure it's in the collection_cards table
-                    await database.executeSql(
-                        'INSERT OR REPLACE INTO lorcana_collection_cards (collection_id, card_id, added_at) VALUES (?, ?, ?)',
-                        [collectionId, card.Unique_ID, new Date().toISOString()]
-                    );
-                    
-                    // Force another refresh of the UI after verification
-                    if (onCardsUpdate) {
-                        const finalUpdatedCards = cards.map(c =>
-                            c.Unique_ID === card.Unique_ID ? { ...c, collected: true } : c
-                        );
-                        onCardsUpdate(finalUpdatedCards);
-                    }
-                }
-            }
-            
-            // Trigger the collection status refresh to ensure consistency across all components
-            refreshCollectionStatus();
-            
-            // Success feedback
-            console.log('[LorcanaGridView] Card added to collection:', card.Name);
-            
-            // Show feedback toast to the user
-            Alert.alert(
-                'Success',
-                `Added ${card.Name} to your collection`,
-                [{ text: 'OK' }]
-            );
+            console.log(`[LorcanaGridView] Card ${card.Name} added to collection`);
         } catch (error) {
-            console.error('[LorcanaGridView] Error updating card collection status:', error);
-            
-            // Try to recover UI state if there was an error
-            if (onCardsUpdate) {
-                // Force a refresh to get the current status from database
-                refreshCollectionStatus();
-            }
-            
-            // Show an error alert to the user
-            Alert.alert(
-                'Error',
-                'Failed to add card to collection. Please try again.',
-                [{ text: 'OK' }]
-            );
+            console.error('[LorcanaGridView] Error adding card to collection:', error);
         }
     };
-    
-    // Extract refreshCollectionStatus as a standalone function to be called when needed
-    const refreshCollectionStatus = async () => {
-        if (cards.length === 0) return;
-        
-        try {
-            const db = await getDB();
-            // Get the unique IDs of all cards
-            const cardIds = cards.map(card => card.Unique_ID).filter(Boolean);
-            
-            if (cardIds.length === 0) return;
-            
-            // Use a more comprehensive query that checks both the lorcana_cards.collected flag
-            // and also checks if the card exists in any collection
-            const [results] = await db.executeSql(
-                `SELECT lc.Unique_ID, 
-                        lc.collected, 
-                        CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection
-                 FROM lorcana_cards lc
-                 LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
-                 WHERE lc.Unique_ID IN (${cardIds.map(() => '?').join(',')})`,
-                cardIds
-            );
-            
-            // Create a map of card ID to collection status
-            const collectionStatusMap = new Map();
-            for (let i = 0; i < results.rows.length; i++) {
-                const row = results.rows.item(i);
-                // A card is collected if either the collected flag is set OR it exists in a collection
-                const isCollected = Boolean(row.collected) || Boolean(row.in_collection);
-                collectionStatusMap.set(row.Unique_ID, isCollected);
-            }
-            
-            // Check if any cards have inconsistent collection status
-            let hasInconsistencies = false;
-            const updatedCards = cards.map(card => {
-                if (!card.Unique_ID) return card;
-                
-                const databaseCollected = collectionStatusMap.get(card.Unique_ID);
-                if (databaseCollected !== undefined && databaseCollected !== !!card.collected) {
-                    hasInconsistencies = true;
-                    console.log(`[LorcanaGridView] Fixing inconsistency for card: ${card.Name}, UI: ${!!card.collected}, DB: ${databaseCollected}`);
-                    return { ...card, collected: databaseCollected };
-                }
-                return card;
-            });
-            
-            // If inconsistencies found, update the UI
-            if (hasInconsistencies && onCardsUpdate) {
-                console.log('[LorcanaGridView] Fixing collection status inconsistencies');
-                onCardsUpdate(updatedCards);
-            }
-        } catch (error) {
-            console.error('[LorcanaGridView] Error refreshing collection status:', error);
-        }
-    };
-
-    // Add the useEffect that calls refreshCollectionStatus when cards change
-    useEffect(() => {
-        refreshCollectionStatus();
-    }, [cards]);
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
-                <View style={styles.filterButtonContainer}>
-                    <TouchableOpacity
-                        style={styles.filterButton}
-                        onPress={() => setShowFilters(!showFilters)}
-                    >
-                        <Icon name="filter-variant" size={24} color="#2196F3" />
-                        <Text style={styles.buttonText}>
-                            Filter
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-                <View style={styles.sortContainer}>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={[styles.sortButton, sortBy === 'name' && styles.sortButtonActive]}
-                            onPress={() => setSortBy('name')}
-                        >
-                            <Icon
-                                name="order-alphabetical-ascending"
-                                size={24}
-                                color={sortBy === 'name' ? '#2196F3' : '#666'}
-                            />
-                            <Text style={[styles.sortButtonText, sortBy === 'name' && styles.sortButtonTextActive]}>
-                                Name
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={[styles.sortButton, sortBy === 'price' && styles.sortButtonActive]}
-                            onPress={() => setSortBy('price')}
-                        >
-                            <Icon
-                                name="currency-usd"
-                                size={24}
-                                color={sortBy === 'price' ? '#2196F3' : '#666'}
-                            />
-                            <Text style={[styles.sortButtonText, sortBy === 'price' && styles.sortButtonTextActive]}>
-                                Price
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={[styles.sortButton, sortBy === 'number' && styles.sortButtonActive]}
-                            onPress={() => setSortBy('number')}
-                        >
-                            <Icon
-                                name="order-numeric-ascending"
-                                size={24}
-                                color={sortBy === 'number' ? '#2196F3' : '#666'}
-                            />
-                            <Text style={[styles.sortButtonText, sortBy === 'number' && styles.sortButtonTextActive]}>
-                                Number
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={styles.sortButton}
-                            onPress={() => setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')}
-                        >
-                            <Icon
-                                name={sortDirection === 'asc' ? 'sort-ascending' : 'sort-descending'}
-                                size={24}
-                                color="#2196F3"
-                            />
-                            <Text style={styles.sortButtonText}>
-                                {sortDirection === 'asc' ? 'Asc' : 'Desc'}
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-               
-            </View>
-
             {renderFilters()}
-
             <FlatList
                 data={filteredCards()}
                 renderItem={renderCard}
-                keyExtractor={item => item.Unique_ID || ''}
+                keyExtractor={(item) => item.Unique_ID.toString()}
                 numColumns={3}
-                contentContainerStyle={styles.grid}
+                contentContainerStyle={styles.flatListContent}
                 onEndReached={loadMoreCards}
                 onEndReachedThreshold={0.5}
-                ListFooterComponent={isLoadingMore ? <ActivityIndicator size="large" color="#2196F3" /> : null}
             />
-
-            {/* Replace renderCardModal with component */}
-            <CardDetailModal 
-                selectedCard={selectedCard}
-                visible={selectedCard !== null && !showVersionModal}
-                onClose={() => setSelectedCard(null)}
-            />
-            
             {renderVersionModal()}
         </View>
     );
@@ -1134,142 +922,108 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: 8,
-        backgroundColor: 'white',
-        borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
-    },
-    filterButtonContainer: {
-        alignItems: 'center',
-    },
-    filterButton: {
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: 8,
-        borderRadius: 4,
-        gap: 2,
-    },
-    buttonText: {
-        fontSize: 10,
-        color: '#2196F3',
-        marginTop: 2,
-    },
-    sortContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    sortButtonContainer: {
-        alignItems: 'center',
-    },
-    sortButton: {
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: 8,
-        borderRadius: 4,
-        gap: 2,
-    },
-    sortButtonActive: {
-        backgroundColor: '#e3f2fd',
-    },
-    sortButtonText: {
-        fontSize: 10,
-        color: '#666',
-        marginTop: 2,
-    },
-    sortButtonTextActive: {
-        color: '#2196F3',
-        fontWeight: '500',
+        backgroundColor: '#fff',
     },
     filtersPanel: {
-        backgroundColor: 'white',
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        padding: 10,
     },
     filtersPanelHidden: {
         display: 'none',
     },
     searchInput: {
         height: 40,
+        borderColor: 'gray',
         borderWidth: 1,
-        borderColor: '#e0e0e0',
-        borderRadius: 4,
-        paddingHorizontal: 8,
-        marginBottom: 16,
+        marginBottom: 10,
+        padding: 10,
     },
     filterSection: {
-        marginBottom: 16,
+        marginBottom: 10,
     },
     filterTitle: {
         fontSize: 16,
-        fontWeight: '500',
-        marginBottom: 8,
+        fontWeight: 'bold',
+        marginBottom: 5,
     },
     filterOptions: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 8,
     },
     filterChip: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
+        padding: 5,
         borderWidth: 1,
-        borderColor: '#e0e0e0',
-        backgroundColor: 'white',
+        borderColor: '#ccc',
+        borderRadius: 5,
+        marginRight: 5,
+        marginBottom: 5,
     },
     filterChipSelected: {
-        backgroundColor: '#2196F3',
-        borderColor: '#2196F3',
+        backgroundColor: '#007bff',
+        borderColor: '#0056b3',
     },
     filterChipText: {
-        color: '#666',
+        fontSize: 14,
     },
     filterChipTextSelected: {
-        color: 'white',
+        fontWeight: 'bold',
+        color: '#fff',
     },
     resetButton: {
-        alignSelf: 'center',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 4,
-        backgroundColor: '#f44336',
+        backgroundColor: '#dc3545',
+        padding: 10,
+        borderRadius: 5,
+        alignItems: 'center',
     },
     resetButtonText: {
-        color: 'white',
-        fontWeight: '500',
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#fff',
     },
-    grid: {
-        padding: 4,
+    flatListContent: {
+        padding: 10,
     },
     cardContainer: {
-        flex: 1/3,
-        padding: 4,
+        flex: 1,
+        margin: 5,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 5,
+        overflow: 'hidden',
     },
     cardImageContainer: {
-        position: 'relative',
-        width: '100%',
-        aspectRatio: 0.72,
+        height: 150,
+        overflow: 'hidden',
     },
     cardImage: {
+        flex: 1,
         width: '100%',
         height: '100%',
-        borderRadius: 8,
     },
     cardImageUncollected: {
-        opacity: 0.7,
+        opacity: 0.5,
     },
-    placeholderImage: {
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#f0f0f0',
+    cardInfo: {
+        padding: 10,
+    },
+    cardInfoUncollected: {
+        opacity: 0.5,
+    },
+    cardNumber: {
+        fontSize: 12,
+        fontWeight: 'bold',
+    },
+    cardName: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    cardNameUncollected: {
+        opacity: 0.5,
+    },
+    cardPrice: {
+        fontSize: 14,
+    },
+    cardPriceUncollected: {
+        opacity: 0.5,
     },
     missingOverlay: {
         position: 'absolute',
@@ -1279,58 +1033,12 @@ const styles = StyleSheet.create({
         bottom: 0,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(0, 0, 0, 0.4)',
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
     },
     missingText: {
-        color: 'white',
+        fontSize: 16,
         fontWeight: 'bold',
-        marginTop: 4,
-    },
-    imageErrorText: {
-        marginTop: 8,
-        fontSize: 10,
-        color: '#666',
-        textAlign: 'center',
-    },
-    refreshImageButton: {
-        marginTop: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255, 255, 255, 0.7)',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
-    },
-    refreshImageText: {
-        marginLeft: 4,
-        color: '#2196F3',
-        fontWeight: 'bold',
-    },
-    cardInfoUncollected: {
-        opacity: 0.7,
-    },
-    cardNameUncollected: {
-        color: '#999',
-    },
-    cardPriceUncollected: {
-        color: '#999',
-    },
-    cardInfo: {
-        padding: 4,
-    },
-    cardNumber: {
-        fontSize: 10,
-        color: '#666',
-        marginBottom: 2,
-    },
-    cardName: {
-        fontSize: 12,
-        fontWeight: '500',
-        marginBottom: 2,
-    },
-    cardPrice: {
-        fontSize: 12,
-        color: '#666',
+        color: '#fff',
     },
     modalContainer: {
         flex: 1,
@@ -1339,117 +1047,121 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     modalContent: {
-        width: '90%',
-        maxHeight: '90%',
-        backgroundColor: 'white',
-        borderRadius: 8,
-        padding: 16,
+        backgroundColor: '#fff',
+        padding: 20,
+        borderRadius: 10,
+        width: '80%',
+        maxHeight: '80%',
     },
     modalImageContainer: {
-        position: 'relative',
-        marginBottom: 16,
+        height: 200,
+        overflow: 'hidden',
+        marginBottom: 10,
     },
     modalImage: {
+        flex: 1,
         width: '100%',
-        aspectRatio: 0.72,
-        borderRadius: 8,
+        height: '100%',
     },
     modalInfo: {
-        padding: 16,
+        marginBottom: 10,
     },
     modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginBottom: 8,
-    },
-    modalText: {
-        fontSize: 16,
-        marginBottom: 8,
-    },
-    modalPrices: {
-        marginTop: 16,
-    },
-    modalPriceTitle: {
         fontSize: 18,
         fontWeight: 'bold',
-        marginBottom: 8,
+        marginBottom: 10,
+    },
+    modalText: {
+        fontSize: 14,
+    },
+    modalPrices: {
+        marginTop: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    modalPriceTitle: {
+        fontWeight: 'bold',
+        marginRight: 10,
     },
     modalPrice: {
+        fontSize: 14,
+    },
+    refreshImageButton: {
+        padding: 10,
+        backgroundColor: '#007bff',
+        borderRadius: 5,
+        alignItems: 'center',
+    },
+    refreshImageText: {
         fontSize: 16,
-        marginBottom: 4,
+        fontWeight: 'bold',
+        color: '#fff',
+    },
+    modalCloseButton: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
     },
     versionOption: {
-        padding: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        padding: 10,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 5,
+        margin: 5,
         alignItems: 'center',
     },
     versionText: {
         fontSize: 16,
-    },
-    modalCloseButton: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        padding: 8,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: 2,
-        },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
-        elevation: 5,
-    },
-    deleteButton: {
-        marginTop: 16,
-        padding: 12,
-        backgroundColor: '#f44336',
-        borderRadius: 8,
-        alignItems: 'center',
-    },
-    deleteButtonText: {
-        color: 'white',
         fontWeight: 'bold',
+        marginBottom: 10,
+    },
+    versionImage: {
+        width: 100,
+        height: 100,
     },
     addButton: {
-        marginTop: 16,
-        padding: 12,
-        backgroundColor: '#4CAF50',
-        borderRadius: 8,
+        backgroundColor: '#28a745',
+        padding: 10,
+        borderRadius: 5,
         alignItems: 'center',
     },
     addButtonText: {
-        color: 'white',
+        fontSize: 16,
         fontWeight: 'bold',
-    },
-    versionImage: {
-        width: '100%',
-        height: 200,
-        resizeMode: 'contain',
-        borderRadius: 8,
-        marginTop: 8,
+        color: '#fff',
     },
     removeButton: {
-        marginTop: 16,
-        padding: 12,
-        backgroundColor: '#f44336',
-        borderRadius: 8,
+        backgroundColor: '#dc3545',
+        padding: 10,
+        borderRadius: 5,
         alignItems: 'center',
     },
     removeButtonText: {
-        color: 'white',
+        fontSize: 16,
         fontWeight: 'bold',
+        color: '#fff',
     },
-    debugButtonsContainer: {
-        flexDirection: 'row',
-        marginLeft: 'auto',
+    deleteButton: {
+        backgroundColor: '#dc3545',
+        padding: 10,
+        borderRadius: 5,
+        alignItems: 'center',
     },
-    debugButton: {
-        padding: 8,
+    deleteButtonText: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#fff',
+    },
+    placeholderImage: {
+        backgroundColor: '#f0f0f0',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    imageErrorText: {
+        color: 'red',
+        fontSize: 12,
+        marginTop: 5,
     },
 });
 
-export default LorcanaGridView; 
+export default LorcanaGridView;

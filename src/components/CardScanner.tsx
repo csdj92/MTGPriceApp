@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   StyleSheet,
@@ -7,11 +7,17 @@ import {
   NativeEventEmitter,
   PermissionsAndroid,
   Dimensions,
+  AppState,
+  Platform,
+  ToastAndroid,
 } from 'react-native';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { ExtendedCard, OcrResult } from '../types/card';
 import { LiveOcrModule } from '../types/NativeModules';
+import { CameraService } from '../services/CameraService';
+import { Logger } from '../utils/logger';
 
+// Only import LiveImageClassifier directly for now until we create a service for it
 const { LiveImageClassifier } = NativeModules;
 const liveOcrEmitter = LiveOcrModule ? new NativeEventEmitter(NativeModules.LiveOcr) : null;
 const liveImageClassifierEmitter = LiveImageClassifier ? new NativeEventEmitter(LiveImageClassifier) : null;
@@ -120,6 +126,41 @@ const CardScanner: React.FC<CardScannerProps> = ({
     handlePauseStateChange();
   }, [isPaused, isActive, useClassifier]);
 
+  // Add useEffect to handle pause state changes
+  useEffect(() => {
+    const handlePauseStateChange = async () => {
+      if (isPaused) {
+        // If we're paused and active, temporarily stop processing
+        if (isActive) {
+          try {
+            if (useClassifier) {
+              await LiveImageClassifier.pauseProcessing();
+            } else {
+              await CameraService.pauseProcessing();
+            }
+          } catch (error) {
+            Logger.error('Failed to pause processing:', error);
+            showErrorToast('Failed to pause camera');
+          }
+        }
+      } else if (isActive) {
+        // If we're no longer paused and still active, resume processing
+        try {
+          if (useClassifier) {
+            await LiveImageClassifier.resumeProcessing();
+          } else {
+            await CameraService.resumeProcessing();
+          }
+        } catch (error) {
+          Logger.error('Failed to resume processing:', error);
+          showErrorToast('Failed to resume camera');
+        }
+      }
+    };
+
+    handlePauseStateChange();
+  }, [isPaused, isActive, useClassifier]);
+
   const updateAspectRatio = (previewWidth: number, previewHeight: number) => {
     const screen = Dimensions.get('window');
     const screenWidth = screen.width;
@@ -187,17 +228,20 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
   const startSession = async () => {
     try {
+      Logger.debug('CardScanner: Starting camera session');
       if (useClassifier) {
         await LiveImageClassifier.startClassificationSession();
         const { width, height } = await LiveImageClassifier.getPreviewSize();
         updateAspectRatio(width, height);
       } else {
-        await LiveOcrModule.startOcrSession();
-        const { width, height } = await LiveOcrModule.getPreviewSize();
+        await CameraService.startOcrSession();
+        const { width, height } = await CameraService.getPreviewSize();
         updateAspectRatio(width, height);
       }
       setIsActive(true);
     } catch (error: any) {
+      Logger.error('Failed to start camera session:', error);
+      showErrorToast('Failed to start camera');
       onError(error instanceof Error ? error : new Error('Failed to start session'));
       throw error;
     }
@@ -205,15 +249,24 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
   const stopSession = async () => {
     try {
+      Logger.debug('CardScanner: Stopping camera session');
       if (useClassifier) {
         await LiveImageClassifier.stopClassificationSession();
       } else {
-        await LiveOcrModule.stopOcrSession();
+        await CameraService.stopOcrSession();
       }
     } catch (error) {
-      console.error('Failed to stop session:', error);
+      Logger.error('Failed to stop camera session:', error);
+      // Don't show toast here as this is often called during unmount
     }
   };
+
+  // Helper function for showing error toast on Android
+  const showErrorToast = useCallback((message: string) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+    }
+  }, []);
 
   if (!hasPermission) {
     return (

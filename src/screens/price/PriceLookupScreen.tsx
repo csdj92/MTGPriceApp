@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     View,
     Text,
@@ -34,9 +34,13 @@ import CameraTest from '../../components/test';
 import { Camera } from 'react-native-vision-camera';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LiveOcrModule } from '../../types/NativeModules';
+import { CameraService } from '../../services/CameraService';
+import { Logger } from '../../utils/logger';
+import ZoomControls from '../../components/price-lookup/ZoomControls';
+import CameraControls from '../../components/price-lookup/CameraControls';
+import ScanHeaderInfo from '../../components/price-lookup/ScanHeaderInfo';
+import ScannedCardsList from '../../components/price-lookup/ScannedCardsList';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
-
-
 
 type PriceLookupScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
@@ -160,14 +164,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleScanPress = () => {
-        console.log('[PriceLookupScreen] Switching to MTG scan mode');
+        Logger.debug('Switching to MTG scan mode');
         setIsLorcanaScan(false);
         setIsCameraActive(true);
         
         // Set the native module to MTG scan mode
-        if (LiveOcrModule) {
-            LiveOcrModule.setLorcanaScanMode(false);
-        }
+        CameraService.setLorcanaScanMode(false);
     };
 
     // Clear recent scans periodically
@@ -180,8 +182,17 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     }, []);
 
     const handleScan = async (result: OcrResult) => {
-        console.log('[PriceLookupScreen] -------------Handling scan----------------:', result);
-        if (!result?.text?.trim() || result.text.length < 3) return;
+        // Check if scan should be ignored
+        if (isScanningPaused) {
+            return;
+        }
+        
+        if (!result?.text?.trim()) {
+            Logger.debug('Skipping empty OCR result');
+            return;
+        }
+        
+        Logger.debug(`Scan result: ${result.text} (isLorcana: ${result.isLorcana})`);
 
         const normalizedText = result.text.toLowerCase().trim();
         console.log(`[PriceLookupScreen] Scan detected: ${result.text} (normalized: ${normalizedText})`);
@@ -300,12 +311,22 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 throw new Error('Failed to generate UUID for card');
             }
 
+            // Ensure imageUris is properly set
+            const imageUris = cardWithUuid.imageUris || {};
+            if (cardWithUuid.imageUrl && !imageUris.normal) {
+                // If we have imageUrl but not imageUris.normal, set it
+                imageUris.normal = cardWithUuid.imageUrl;
+            }
+
             const scannedCard: ScannedCard = {
                 ...cardWithUuid,
                 type: 'MTG',
-                scannedAt: timestamp
+                scannedAt: timestamp,
+                imageUris: imageUris
             };
 
+            console.log(`[processMTGCard] Created scanned card with name: ${scannedCard.name}, imageUrl: ${scannedCard.imageUrl}, imageUris:`, scannedCard.imageUris);
+            
             addScannedCard(scannedCard);
             await handleMTGCollection(scannedCard);
         }
@@ -362,15 +383,28 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleScanError = (error: Error) => {
-        Alert.alert('Scan Error', error.message);
-        setIsCameraActive(false);
+        Logger.error('Camera scan error:', error);
+        
+        // Show feedback to user
+        if (Platform.OS === 'android') {
+            ToastAndroid.show(`Scanner error: ${error.message}`, ToastAndroid.LONG);
+        } else {
+            Alert.alert('Scanner Error', error.message);
+        }
+        
+        // Create a delay before allowing scanning again
+        setIsScanningPaused(true);
+        setTimeout(() => {
+            setIsScanningPaused(false);
+        }, 2000);
     };
 
-    const handleCardPress = (card: SelectedCard) => {
-        setIsScanningPaused(true);
+    const handleCardPress = useCallback((card: SelectedCard) => {
+        const cardName = 'name' in card ? card.name : 'Unknown Card';
+        Logger.debug(`Card selected: ${cardName}`);
         setSelectedCard(card);
         setIsCardDetailsVisible(true);
-    };
+    }, []);
 
     const handleCloseCardDetails = () => {
         setIsCardDetailsVisible(false);
@@ -440,14 +474,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleLorcanaScan = () => {
-        console.log('[PriceLookupScreen] Switching to Lorcana scan mode');
+        Logger.debug('Switching to Lorcana scan mode');
         setIsLorcanaScan(true);
         setIsCameraActive(true);
         
         // Set the native module to Lorcana scan mode
-        if (LiveOcrModule) {
-            LiveOcrModule.setLorcanaScanMode(true);
-        }
+        CameraService.setLorcanaScanMode(true);
     };
 
     const handleClearLorcanaDB = async () => {
@@ -472,8 +504,6 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             setIsLoading(false);
         }
     };
-
-
 
     const renderScannedCard = ({ item }: { item: ScannedCard }) => (
         <TouchableOpacity
@@ -502,158 +532,172 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const renderCameraContent = () => (
         <View style={styles.cameraContainer}>
             <CardScanner
-                onTextDetected={(result) => handleScan({ 
-                    text: result.text, 
-                    mainName: result.text, 
-                    subtype: '', 
-                    isLorcana: false 
-                })}
+                onTextDetected={(result) => {
+                    // Adapt the result to match OcrResult type if it's from the classifier
+                    const ocrResult: OcrResult = {
+                        text: result.text,
+                        mainName: result.text,
+                        subtype: '',
+                        isLorcana: isLorcanaScan
+                    };
+                    handleScan(ocrResult);
+                }}
                 onError={handleScanError}
                 scannedCards={scannedCards}
                 totalPrice={totalPrice}
-                onCardPress={handleCardPress}
                 isPaused={isScanningPaused}
                 useClassifier={useClassifier}
             />
             
-          
-
-            {/* Camera Controls */}
-            <View style={styles.cameraControls}>
-                <TouchableOpacity 
-                    style={styles.cameraButton}
-                    onPress={() => setIsScanningPaused(!isScanningPaused)}
-                >
-                    <Icon 
-                        name={isScanningPaused ? "play" : "pause"} 
-                        size={24} 
-                        color="white" 
-                    />
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                    style={styles.cameraButton}
-                    onPress={() => {
-                        setIsLorcanaScan(!isLorcanaScan);
-                        // Toggle Lorcana scan mode in native module
-                        if (LiveOcrModule) {
-                            LiveOcrModule.setLorcanaScanMode(!isLorcanaScan);
-                        }
-                    }}
-                >
-                    <Icon 
-                        name="swap-horizontal" 
-                        size={24} 
-                        color="white" 
-                    />
-                </TouchableOpacity>
-            </View>
-
-            {/* Zoom Controls */}
-            <View style={styles.zoomControls}>
-                <TouchableOpacity 
-                    style={styles.zoomButton}
-                    onPress={() => {
-                        if (LiveOcrModule) {
-                            LiveOcrModule.increaseZoom();
-                        }
-                    }}
-                >
-                    <Icon name="magnify-plus-outline" size={24} color="white" />
-                </TouchableOpacity>
-
-                <TouchableOpacity 
-                    style={styles.zoomButton}
-                    onPress={() => {
-                        if (LiveOcrModule) {
-                            LiveOcrModule.decreaseZoom();
-                        }
-                    }}
-                >
-                    <Icon name="magnify-minus-outline" size={24} color="white" />
-                </TouchableOpacity>
-
-                <TouchableOpacity 
-                    style={styles.zoomButton}
-                    onPress={() => {
-                        if (LiveOcrModule) {
-                            LiveOcrModule.resetZoom();
-                        }
-                    }}
-                >
-                    <Icon name="magnify-close" size={24} color="white" />
-                </TouchableOpacity>
-            </View>
-
-            {/* Recent Scans */}
-            <View style={styles.recentScansContainer}>
-                <View style={styles.recentScansHeader}>
-                    <Text style={styles.recentScansTitle}>Recent Scans</Text>
-                    <Text style={styles.totalPriceText}>
-                        Total: ${totalPrice.toFixed(2)}
-                    </Text>
-                </View>
-                
-                <FlatList
-                    data={scannedCards.slice(0, 5)}
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.recentScansList}
-                    contentContainerStyle={styles.recentScansContent}
-                    renderItem={({ item }) => (
-                        <TouchableOpacity 
-                            style={styles.recentScanCard}
-                            onPress={() => handleCardPress(item)}
-                        >
-                            <Text style={styles.recentScanName} numberOfLines={2}>
-                                {item.name}
-                            </Text>
-                            <Text style={styles.recentScanPrice}>
-                                ${(item.prices?.usd ? Number(item.prices.usd) : 0).toFixed(2)}
-                            </Text>
-                            <Text style={styles.recentScanTime}>
-                                {new Date(item.scannedAt || Date.now()).toLocaleTimeString()}
-                            </Text>
-                        </TouchableOpacity>
-                    )}
-                    keyExtractor={keyExtractor}
-                />
-            </View>
+            {/* Camera Controls using our new components */}
+            <CameraControls 
+                isScanning={!isScanningPaused}
+                isLorcanaScan={isLorcanaScan}
+                onToggleScan={() => setIsScanningPaused(!isScanningPaused)}
+                onToggleLorcanaScan={() => setIsLorcanaScan(!isLorcanaScan)}
+            />
+            
+            {/* Zoom Controls using our new component */}
+            <ZoomControls 
+                disabled={isScanningPaused}
+            />
         </View>
     );
 
-    const renderCardDetailsModal = () => (
-        <Modal
-            visible={isCardDetailsVisible}
-            animationType="slide"
-            onRequestClose={handleCloseCardDetails}
-            transparent={false}
-        >
-            <SafeAreaView style={styles.modalContainer}>
-                <View style={styles.modalHeader}>
-                    <TouchableOpacity onPress={handleCloseCardDetails} style={styles.closeButton}>
-                        <Icon name="close" size={24} color="#666" />
-                    </TouchableOpacity>
-                </View>
-                {selectedCard && (
-                    'Name' in selectedCard ? (
-                        <LorcanaCardList
-                            cards={[selectedCard]}
-                            isLoading={false}
-                            onCardPress={() => {}}
-                            onAddToCollection={(card) => handleAddToCollection(card)}
-                        />
-                    ) : (
-                        <CardList
-                            cards={[{ ...selectedCard, isExpanded: true }]}
-                            isLoading={false}
-                            onAddToCollection={(card) => handleAddToCollection(card)}
-                        />
-                    )
-                )}
-            </SafeAreaView>
-        </Modal>
-    );
+    const renderCardDetailsModal = () => {
+        // Debug log to understand selected card structure
+        if (selectedCard) {
+            // Determine card type more reliably - check for specific Lorcana properties
+            const isLorcanaCard = 
+                ('Name' in selectedCard) || 
+                // Check for Lorcana-specific properties
+                ('Set_Num' in selectedCard) ||
+                // Check if the card has imageUris with Lorcana URL patterns
+                (selectedCard.imageUris?.normal && 
+                 (selectedCard.imageUris.normal.includes('lorcast.io') || 
+                  selectedCard.imageUris.normal.includes('lorcana')));
+            
+            console.log(`[renderCardDetailsModal] Selected card type: ${isLorcanaCard ? 'Lorcana' : 'MTG'}`);
+            
+            if (isLorcanaCard) {
+                // Convert to proper Lorcana format if needed
+                const lorcanaCard = 'Name' in selectedCard ? selectedCard : {
+                    Name: selectedCard.name,
+                    Image: selectedCard.imageUris?.normal || selectedCard.imageUrl,
+                    // Add required Lorcana properties with fallback values
+                    Unique_ID: selectedCard.id,
+                    Set_Name: selectedCard.setName,
+                    Rarity: selectedCard.rarity || 'Unknown',
+                    Color: (selectedCard.colors && selectedCard.colors.length > 0) ? selectedCard.colors[0] : 'Unknown',
+                    Cost: parseInt(selectedCard.cmc?.toString() || '0', 10),
+                    Type: selectedCard.type || 'Unknown',
+                    // Additional properties that might be required
+                    Set_Num: parseInt(selectedCard.collectorNumber || '0', 10),
+                    Body_Text: selectedCard.text || '',
+                    Flavor_Text: selectedCard.flavorText || '',
+                    price_usd: selectedCard.prices?.usd,
+                    price_usd_foil: selectedCard.prices?.usdFoil
+                };
+                console.log(`[renderCardDetailsModal] Lorcana card details: Name=${lorcanaCard.Name}, Image=${lorcanaCard.Image}`);
+            } else {
+                console.log(`[renderCardDetailsModal] MTG card details: name=${selectedCard.name}, imageUrl=${selectedCard.imageUrl}, imageUris:`, selectedCard.imageUris);
+            }
+        }
+        
+        return (
+            <Modal
+                visible={isCardDetailsVisible}
+                animationType="slide"
+                onRequestClose={handleCloseCardDetails}
+                transparent={false}
+            >
+                <SafeAreaView style={styles.modalContainer}>
+                    <View style={styles.modalHeader}>
+                        <TouchableOpacity onPress={handleCloseCardDetails} style={styles.closeButton}>
+                            <Icon name="close" size={24} color="#666" />
+                        </TouchableOpacity>
+                        {selectedCard && (
+                            <Text style={styles.modalHeaderTitle}>
+                                {'Name' in selectedCard ? selectedCard.Name : selectedCard.name || 'Card Details'}
+                            </Text>
+                        )}
+                    </View>
+                    {selectedCard && (
+                        <>
+                            {/* Debug info to understand card structure */}
+                            {__DEV__ && (
+                                <View style={styles.debugInfo}>
+                                    <Text>Card Type: {
+                                        ('Name' in selectedCard || 
+                                         'Set_Num' in selectedCard || 
+                                         (selectedCard.imageUris?.normal && selectedCard.imageUris.normal.includes('lorcast.io'))) 
+                                         ? 'Lorcana' : 'MTG'
+                                    }</Text>
+                                    <Text>Has Image: {'Name' in selectedCard 
+                                        ? Boolean(selectedCard.Image) 
+                                        : Boolean(selectedCard.imageUris?.normal || selectedCard.imageUris?.small || selectedCard.imageUrl)}
+                                    </Text>
+                                    {'name' in selectedCard && (
+                                        <>
+                                            <Text>imageUrl: {selectedCard.imageUrl || 'N/A'}</Text>
+                                            <Text>imageUris?.normal: {selectedCard.imageUris?.normal || 'N/A'}</Text>
+                                            <Text>imageUris?.small: {selectedCard.imageUris?.small || 'N/A'}</Text>
+                                        </>
+                                    )}
+                                </View>
+                            )}
+                            
+                            {('Name' in selectedCard || 
+                              'Set_Num' in selectedCard || 
+                              (selectedCard.imageUris?.normal && selectedCard.imageUris.normal.includes('lorcast.io'))) ? (
+                                // Lorcana card
+                                <LorcanaCardList
+                                    cards={[
+                                        'Name' in selectedCard ? selectedCard : {
+                                            Name: selectedCard.name,
+                                            Image: selectedCard.imageUris?.normal || selectedCard.imageUrl,
+                                            // Add required Lorcana properties with fallback values
+                                            Unique_ID: selectedCard.id,
+                                            Set_Name: selectedCard.setName,
+                                            Rarity: selectedCard.rarity || 'Unknown',
+                                            Color: (selectedCard.colors && selectedCard.colors.length > 0) ? selectedCard.colors[0] : 'Unknown',
+                                            Cost: parseInt(selectedCard.cmc?.toString() || '0', 10),
+                                            Type: selectedCard.type || 'Unknown',
+                                            // Additional properties that might be required
+                                            Set_Num: parseInt(selectedCard.collectorNumber || '0', 10),
+                                            Body_Text: selectedCard.text || '',
+                                            Flavor_Text: selectedCard.flavorText || '',
+                                            price_usd: selectedCard.prices?.usd,
+                                            price_usd_foil: selectedCard.prices?.usdFoil
+                                        } as LorcanaCard
+                                    ]}
+                                    isLoading={false}
+                                    onCardPress={() => {}}
+                                    onAddToCollection={(card) => handleAddToCollection(card)}
+                                />
+                            ) : (
+                                // MTG card - make sure we have all needed properties
+                                <CardList
+                                    cards={[{ 
+                                        ...selectedCard, 
+                                        isExpanded: true,
+                                        // Ensure image URLs are available
+                                        imageUris: selectedCard.imageUris || {
+                                            normal: selectedCard.imageUrl,
+                                            small: selectedCard.imageUrl
+                                        }
+                                    }]}
+                                    isLoading={false}
+                                    onCardPress={() => {}} // Don't re-trigger card press
+                                    onAddToCollection={(card) => handleAddToCollection(card)}
+                                />
+                            )}
+                        </>
+                    )}
+                </SafeAreaView>
+            </Modal>
+        );
+    };
 
     useEffect(() => {
         console.log(`[PriceLookupScreen] Scan mode changed: ${isLorcanaScan ? 'Lorcana' : 'MTG'}`);
@@ -788,41 +832,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                         </TouchableOpacity>
                     )}
                 </View>
-                {scannedCards.length > 0 ? (
-                    <FlatList
-                        data={scannedCards}
-                        renderItem={({ item }) => (
-                            <View style={styles.scannedListItem}>
-                                <View style={styles.cardInfo}>
-                                    <Text style={styles.cardNameText}>{item.name}</Text>
-                                    <Text style={styles.cardSetText}>{item.setName} ({item.setCode})</Text>
-                                </View>
-                                <View style={styles.cardPriceContainer}>
-                                    <Text style={styles.priceText}>
-                                        ${(item.prices?.usd ? Number(item.prices.usd) : 0).toFixed(2)}
-                                    </Text>
-                                    <Text style={styles.timeText}>
-                                        {item.scannedAt ? new Date(item.scannedAt).toLocaleTimeString() : '--:--'}
-                                    </Text>
-                                </View>
-                            </View>
-                        )}
-                        keyExtractor={keyExtractor}
-                        style={styles.scannedList}
-                        contentContainerStyle={styles.scannedListContent}
-                        ListEmptyComponent={
-                            <View style={styles.emptyListContainer}>
-                                <Icon name="card-search-outline" size={48} color="#ccc" />
-                                <Text style={styles.emptyListText}>No cards scanned yet</Text>
-                            </View>
-                        }
-                    />
-                ) : (
-                    <View style={styles.emptyListContainer}>
-                        <Icon name="card-search-outline" size={48} color="#ccc" />
-                        <Text style={styles.emptyListText}>No cards scanned yet</Text>
-                    </View>
-                )}
+                <ScannedCardsList
+                    cards={scannedCards}
+                    isLoading={isLoading}
+                    onCardPress={handleCardPress}
+                    keyExtractor={keyExtractor}
+                />
             </View>
 
             {isLoading ? (
@@ -853,27 +868,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 onRequestClose={() => setIsCameraActive(false)}
             >
                 <SafeAreaView style={styles.modalContainer}>
-                    <View style={styles.modalHeader}>
-                        <TouchableOpacity
-                            style={styles.closeButton}
-                            onPress={() => setIsCameraActive(false)}
-                        >
-                            <Icon name="close" size={24} color="#fff" />
-                        </TouchableOpacity>
-                        
-                        <View style={styles.scanningInfo}>
-                            <Icon name="camera" size={16} color="#fff" style={styles.cameraIcon} />
-                            <Text style={styles.scanningText}>
-                                {isLorcanaScan ? 'Scanning Lorcana Cards' : 'Scanning MTG Cards'}
-                            </Text>
-                            
-                            <View style={styles.counterBadge}>
-                                <Text style={styles.counterText}>
-                                    {scannedCards.length} ${totalPrice.toFixed(2)}
-                                </Text>
-                            </View>
-                        </View>
-                    </View>
+                    <ScanHeaderInfo 
+                        isLorcanaScan={isLorcanaScan}
+                        scannedCardsCount={scannedCards.length}
+                        totalPrice={totalPrice}
+                        onClose={() => setIsCameraActive(false)}
+                    />
                     {renderCameraContent()}
                 </SafeAreaView>
             </Modal>
@@ -892,7 +892,18 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             <LorcanaCardSelectionModal
                 visible={multipleCardsModalVisible}
                 cards={multipleCardsFound}
-                onSelect={handleLorcanaCardSelection}
+                onSelect={(card) => {
+                    if (handleLorcanaCardSelection) {
+                        handleLorcanaCardSelection(card);
+                    } else {
+                        // Fallback if handler is undefined
+                        console.warn('handleLorcanaCardSelection is undefined');
+                        setMultipleCardsModalVisible(false);
+                        setTimeout(() => {
+                            setIsScanningPaused(false);
+                        }, 100);
+                    }
+                }}
                 onClose={() => {
                     setMultipleCardsModalVisible(false);
                     // Add small delay before resuming camera to ensure modal is fully closed
@@ -1246,7 +1257,7 @@ const styles = StyleSheet.create({
         bottom: 100,
         gap: 16,
     },
-    cameraButton: {
+    controlButton: {
         width: 50,
         height: 50,
         borderRadius: 25,
@@ -1255,77 +1266,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 2,
         borderColor: 'white',
-    },
-    recentScansContainer: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.85)',
-        paddingVertical: 16,
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-    },
-    recentScansHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        marginBottom: 12,
-    },
-    recentScansTitle: {
-        color: 'white',
-        fontSize: 18,
-        fontWeight: '600',
-    },
-    totalPriceText: {
-        color: '#4CAF50',
-        fontSize: 16,
-        fontWeight: '600',
-    },
-    recentScansList: {
-        paddingHorizontal: 8,
-    },
-    recentScansContent: {
-        gap: 8,
-    },
-    recentScanCard: {
-        backgroundColor: 'rgba(255, 255, 255, 0.1)',
-        borderRadius: 12,
-        padding: 12,
-        width: 140,
-        marginHorizontal: 4,
-        borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.2)',
-    },
-    recentScanName: {
-        color: 'white',
-        fontSize: 14,
-        fontWeight: '500',
-        marginBottom: 4,
-    },
-    recentScanPrice: {
-        color: '#4CAF50',
-        fontSize: 16,
-        fontWeight: '600',
-        marginBottom: 4,
-    },
-    recentScanTime: {
-        color: 'rgba(255, 255, 255, 0.6)',
-        fontSize: 12,
-    },
-    toggleButton: {
-        position: 'absolute',
-        bottom: 20,
-        right: 20,
-        padding: 10,
-        backgroundColor: 'white',
-        borderRadius: 8,
-        elevation: 3,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
     },
     zoomControls: {
         position: 'absolute',
@@ -1343,6 +1283,19 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         borderWidth: 2,
         borderColor: 'white',
+    },
+    modalHeaderTitle: {
+        color: 'white',
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginLeft: 12,
+    },
+    debugInfo: {
+        padding: 12,
+        backgroundColor: 'white',
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        marginBottom: 12,
     },
 });
 
