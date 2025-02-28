@@ -16,6 +16,7 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     color: string;
 }>;
 import { databaseService } from '../../services/DatabaseService';
+import { collectionCacheService } from '../../services/CollectionCacheService';
 import { 
     getLorcanaSetCollections, 
     ensureLorcanaInitialized, 
@@ -93,40 +94,38 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     const [loadingLorcana, setLoadingLorcana] = useState(true);
 
     // Memoized callbacks
-    const loadSetCollections = useCallback(async (forceRefresh: boolean = false) => {
+    const loadCollections = useCallback(async (forceRefresh = false) => {
         console.log('[SetCompletionScreen] Starting to load collections, forceRefresh:', forceRefresh);
         setIsLoading(true);
         setLoadingMtg(true);
         setLoadingLorcana(true);
 
-        // Load MTG collections
-        databaseService.getSetCollections()
-            .then(collections => {
-                setMtgCollections(collections);
-                setLoadingMtg(false);
-            })
-            .catch(error => {
-                console.error('[SetCompletionScreen] Error loading MTG collections:', error);
-                setMtgCollections([]);
-                setLoadingMtg(false);
-            });
+        // Load MTG collections using the cache service
+        try {
+            const collections = await collectionCacheService.getSetCollections(forceRefresh);
+            setMtgCollections(collections);
+        } catch (error) {
+            console.error('[SetCompletionScreen] Error loading MTG collections:', error);
+            setMtgCollections([]);
+        } finally {
+            setLoadingMtg(false);
+        }
 
         // Load Lorcana collections with force refresh option
-        ensureLorcanaInitialized()
-            .then(() => getLorcanaSetCollections(forceRefresh))
-            .then(collections => {
-                const mappedCollections = collections?.map(c => ({
-                    ...c,
-                    cardCount: c.collectedCards
-                })) || [];
-                setLorcanaCollections(mappedCollections);
-                setLoadingLorcana(false);
-            })
-            .catch(error => {
-                console.error('[SetCompletionScreen] Error loading Lorcana collections:', error);
-                setLorcanaCollections([]);
-                setLoadingLorcana(false);
-            });
+        try {
+            await ensureLorcanaInitialized();
+            const lorcanaCollections = await getLorcanaSetCollections(forceRefresh);
+            const mappedCollections = lorcanaCollections?.map(c => ({
+                ...c,
+                cardCount: c.collectedCards
+            })) || [];
+            setLorcanaCollections(mappedCollections);
+        } catch (error) {
+            console.error('[SetCompletionScreen] Error loading Lorcana collections:', error);
+            setLorcanaCollections([]);
+        } finally {
+            setLoadingLorcana(false);
+        }
 
         // Set a timeout to clear loading state if it gets stuck
         setTimeout(() => {
@@ -155,7 +154,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                             } else {
                                 await deleteLorcanaCollection(collectionId);
                             }
-                            loadSetCollections();
+                            loadCollections();
                         } catch (error) {
                             console.error('Error deleting collection:', error);
                             Alert.alert('Error', 'Failed to delete collection');
@@ -164,7 +163,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                 }
             ]
         );
-    }, [loadSetCollections]);
+    }, [loadCollections]);
 
     const keyExtractor = useCallback((item: SetCollection & { type: string }) => item.id, []);
 
@@ -218,8 +217,8 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
 
     // Effects
     useEffect(() => {
-        loadSetCollections();
-    }, []);
+        loadCollections(false); // Initial load without force refresh
+    }, [loadCollections]);
 
     // Add focus listener to refresh collections
     useEffect(() => {
@@ -229,11 +228,11 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
             setMtgCollections([]);
             setLorcanaCollections([]);
             setIsLoading(true);
-            loadSetCollections(true); // Use forceRefresh = true
+            loadCollections(true); // Use forceRefresh = true
         });
 
         return unsubscribe;
-    }, [navigation, loadSetCollections]);
+    }, [navigation, loadCollections]);
 
     useEffect(() => {
         console.log('[SetCompletionScreen] Loading states:', { loadingMtg, loadingLorcana });
@@ -262,7 +261,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                         try {
                             setIsLoading(true);
                             await reloadLorcanaCards(); // Force reload all cards
-                            await loadSetCollections(true); // Use forceRefresh = true
+                            await loadCollections(true); // Use forceRefresh = true
                             Alert.alert(
                                 'Success',
                                 'Collection data refreshed successfully!',

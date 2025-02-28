@@ -10,16 +10,17 @@ import WatchlistScreen from '../screens/watchlist/WatchlistScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import PriceLookupScreen from '../screens/price/PriceLookupScreen';
 import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScreen';
-import type { ExtendedCard } from '../types/card';
 import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
 import CardDetailsScreen from '../screens/CardDetailsScreen';
 import LorcanaCardDetailsScreen from '../screens/LorcanaCardDetailsScreen';
-import type { LorcanaCardWithPrice } from '../types/lorcana';
 import CameraTest from '../components/test';
-import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import DeckBuilder from '../components/DeckBuilder';
 import ManualCaptureScreen from '../screens/ManualCaptureScreen';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
+import DeckBuilder from '../components/DeckBuilder';
+import DeckDetailScreen from '../screens/decks/DeckDetailScreen';
+import type { ExtendedCard } from '../types/card';
+import type { LorcanaCardWithPrice } from '../types/lorcana';
 
 export type RootStackParamList = {
     MainTabs: undefined;
@@ -48,43 +49,30 @@ export type MainTabParamList = {
     ManualCapture: undefined;
 };
 
-
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
+
+const getTabIconName = (routeName: string): string => {
+  const icons: Record<string, string> = {
+    Collection: 'cards',
+    Search: 'card-search',
+    Watchlist: 'star',
+    Settings: 'cog',
+    PriceLookup: 'cash-multiple',
+    ManualCapture: 'robot'
+  };
+  return icons[routeName] || 'help';
+};
 
 const MainTabs = () => (
     <Tab.Navigator
         screenOptions={({ route }) => ({
-            tabBarIcon: ({ color, size }) => {
-                let iconName: string;
-                switch (route.name) {
-                    case 'Collection':
-                        iconName = 'cards';
-                        break;
-                    case 'Search':
-                        iconName = 'card-search';
-                        break;
-                    case 'Watchlist':
-                        iconName = 'star';
-                        break;
-                    case 'Settings':
-                        iconName = 'cog';
-                        break;
-                    case 'PriceLookup':
-                        iconName = 'cash-multiple';
-                        break;
-                    default:
-                        iconName = 'help';
-                        break;
-                    case 'ManualCapture':
-                        iconName = 'robot';
-                        break;
-                }
-                return <Icon name={iconName} size={size} color={color} />;
-            },
-
+            tabBarIcon: ({ color, size }) => (
+                <Icon name={getTabIconName(route.name)} size={size} color={color} />
+            ),
         })}
     >
+
         <Tab.Screen name="Collection" component={CollectionScreen} />
         <Tab.Screen name="Search" component={SearchScreen} />
         <Tab.Screen name="Watchlist" component={WatchlistScreen} />
@@ -93,7 +81,6 @@ const MainTabs = () => (
         <Tab.Screen name="ManualCapture" component={ManualCaptureScreen} />
     </Tab.Navigator>
 );
-
 
 const AppNavigator = () => (
     <NavigationContainer>
@@ -139,7 +126,7 @@ const AppNavigator = () => (
             />
             <Stack.Screen 
                 name="DeckDetailScreen" 
-                component={require('../screens/decks/DeckDetailScreen').default}
+                component={DeckDetailScreen}
                 options={{ title: 'Deck Details' }}
             />
             <Stack.Screen 
@@ -151,4 +138,4 @@ const AppNavigator = () => (
     </NavigationContainer>
 );
 
-export default AppNavigator; 
+export default AppNavigator;

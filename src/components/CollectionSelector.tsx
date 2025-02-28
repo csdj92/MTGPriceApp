@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Modal,
     View,
@@ -8,10 +8,19 @@ import {
     FlatList,
     TextInput,
     ActivityIndicator,
+    Alert,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { databaseService } from '../services/DatabaseService';
 import type { Collection } from '../services/DatabaseService';
+import { collectionCacheService } from '../services/CollectionCacheService';
+
+// Type assertion to work around TypeScript issues
+const IconComponent = MaterialCommunityIcons as unknown as React.ComponentType<{
+    name: string;
+    size: number;
+    color: string;
+}>;
 
 interface CollectionSelectorProps {
     visible: boolean;
@@ -25,28 +34,56 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
     onSelectCollection,
 }) => {
     const [collections, setCollections] = useState<Collection[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(false);
+    const [isError, setIsError] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
     const [newCollectionName, setNewCollectionName] = useState('');
     const [showCreateForm, setShowCreateForm] = useState(false);
 
+    // Load collections on component mount
     useEffect(() => {
-        if (visible) {
+        loadCollections();
+    }, []);
+
+    // Separate effect to update UI when modal becomes visible
+    useEffect(() => {
+        if (visible && collections.length === 0 && !isLoading) {
+            // Only reload if we don't have collections and aren't already loading
             loadCollections();
         }
-    }, [visible]);
+    }, [visible, collections.length, isLoading]);
 
-    const loadCollections = async () => {
-        setIsLoading(true);
+    const loadCollections = async (forceRefresh = false) => {
+        // Don't show loading indicator if we have cached data
+        const shouldShowLoading = forceRefresh || collections.length === 0;
+        
+        if (shouldShowLoading) {
+            setIsLoading(true);
+        }
+        
+        setIsError(false);
+        
         try {
-            const loadedCollections = await databaseService.getCollections();
-            console.log('Loaded collections:', loadedCollections);
+            // Use the global cache service
+            const loadedCollections = await collectionCacheService.getCollections(forceRefresh);
             setCollections(loadedCollections);
         } catch (error) {
             console.error('Error loading collections:', error);
+            setIsError(true);
+            
+            // Show error alert
+            Alert.alert(
+                'Error',
+                'Failed to load collections. Please try again.',
+                [{ text: 'OK' }]
+            );
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleRetry = () => {
+        loadCollections(true); // Force refresh on retry
     };
 
     const handleCreateCollection = async () => {
@@ -55,12 +92,23 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
         setIsCreating(true);
         try {
             const newCollection = await databaseService.createCollection(newCollectionName.trim());
+            
+            // Update local state
             setCollections(prev => [...prev, newCollection]);
+            
+            // Update the global cache
+            collectionCacheService.addCollectionToCache(newCollection);
+            
             setNewCollectionName('');
             setShowCreateForm(false);
             onSelectCollection(newCollection);
         } catch (error) {
             console.error('Error creating collection:', error);
+            Alert.alert(
+                'Error',
+                'Failed to create collection. Please try again.',
+                [{ text: 'OK' }]
+            );
         } finally {
             setIsCreating(false);
         }
@@ -72,7 +120,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
             onPress={() => onSelectCollection(item)}
         >
             <View style={styles.collectionIcon}>
-                <Icon name="cards" size={24} color="#666" />
+                <IconComponent name="cards" size={24} color="#666" />
             </View>
             <View style={styles.collectionInfo}>
                 <Text style={styles.collectionName}>{item.name}</Text>
@@ -80,8 +128,19 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                     {item.cardCount} cards · ${item.totalValue.toFixed(2)}
                 </Text>
             </View>
-            <Icon name="chevron-right" size={24} color="#666" />
+            <IconComponent name="chevron-right" size={24} color="#666" />
         </TouchableOpacity>
+    );
+
+    // Render error state
+    const renderErrorState = () => (
+        <View style={styles.errorContainer}>
+            <IconComponent name="alert-circle-outline" size={48} color="#ff6b6b" />
+            <Text style={styles.errorText}>Failed to load collections</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
+                <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+        </View>
     );
 
     return (
@@ -96,7 +155,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                     <View style={styles.header}>
                         <Text style={styles.title}>Select Collection</Text>
                         <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-                            <Icon name="close" size={24} color="#666" />
+                            <IconComponent name="close" size={24} color="#666" />
                         </TouchableOpacity>
                     </View>
 
@@ -105,6 +164,8 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                             <ActivityIndicator size="large" color="#2196F3" />
                             <Text style={styles.loadingText}>Loading collections...</Text>
                         </View>
+                    ) : isError ? (
+                        renderErrorState()
                     ) : (
                         <>
                             {!showCreateForm ? (
@@ -124,7 +185,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                                         style={styles.createButton}
                                         onPress={() => setShowCreateForm(true)}
                                     >
-                                        <Icon name="plus" size={24} color="white" />
+                                        <IconComponent name="plus" size={24} color="white" />
                                         <Text style={styles.createButtonText}>Create New Collection</Text>
                                     </TouchableOpacity>
                                 </>
@@ -299,6 +360,28 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     submitButtonText: {
+        color: 'white',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    errorContainer: {
+        padding: 32,
+        alignItems: 'center',
+    },
+    errorText: {
+        fontSize: 16,
+        color: '#666',
+        textAlign: 'center',
+        marginTop: 16,
+        marginBottom: 16,
+    },
+    retryButton: {
+        backgroundColor: '#2196F3',
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 8,
+    },
+    retryButtonText: {
         color: 'white',
         fontSize: 16,
         fontWeight: '600',

@@ -5,259 +5,285 @@ import {
     StyleSheet,
     TouchableOpacity,
     Image,
-    Linking,
+    Switch,
+    Animated,
+    Platform,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
 import type { ExtendedCard } from '../types/card';
-import { getBestPrice } from './MTGGridView';
 
-interface CardItemProps {
+export interface CardItemProps {
     card: ExtendedCard;
-    onPress?: () => void;
-    onAddToCollection?: () => void;
+    viewMode: 'grid' | 'list';
+    isSelected: boolean;
+    onSelect: (card: ExtendedCard) => void;
+    onLongPress: (card: ExtendedCard) => void;
 }
 
-const getFormattedPrice = (price: number) => 
-    price > 0 ? `$${price.toFixed(2)}` : 'N/A';
+const CardItem: React.FC<CardItemProps> = ({ card, viewMode, isSelected, onSelect, onLongPress }) => {
+    // Creating an animated value for card press effect
+    const scaleAnim = React.useRef(new Animated.Value(1)).current;
+    
+    const onPressIn = () => {
+        Animated.spring(scaleAnim, {
+            toValue: 0.97,
+            friction: 5,
+            tension: 300,
+            useNativeDriver: true,
+        }).start();
+    };
+    
+    const onPressOut = () => {
+        Animated.spring(scaleAnim, {
+            toValue: 1,
+            friction: 5,
+            tension: 300,
+            useNativeDriver: true,
+        }).start();
+    };
 
-const CardItem: React.FC<CardItemProps> = ({ card, onPress, onAddToCollection }) => {
-    useEffect(() => {
-        console.log('Card prices:', card.prices);
-    }, [card.prices]);
+    const showCardMana = (card.colors && card.colors.length > 0) || card.colorIdentity;
+    const colors = (card.colors || card.colorIdentity || []).slice(0, 3);
 
     return (
-        <TouchableOpacity
-            style={[styles.cardItem, card.isExpanded && styles.cardItemExpanded]}
-            onPress={onPress}
-            activeOpacity={0.9}
-        >
-            <View style={styles.cardMainInfo}>
-                <View style={styles.cardHeader}>
-                    <Text style={styles.cardName}>{card.name}</Text>
-                </View>
-
-                <View style={styles.cardDetails}>
-                    <View style={styles.setInfoContainer}>
-                        <Text style={styles.setInfo}>
-                            {card.setName} ({card.setCode})
-                        </Text>
-                        <Text style={[
-                            styles.rarity,
-                            styles[((card.rarity || 'common').toLowerCase()) as keyof typeof styles]
+        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+            <TouchableOpacity
+                style={[
+                    viewMode === 'grid' ? styles.gridCard : styles.listCard,
+                    isSelected && styles.selectedCard,
+                    styles.cardShadow,
+                ]}
+                onPress={() => onSelect(card)}
+                onLongPress={() => onLongPress(card)}
+                onPressIn={onPressIn}
+                onPressOut={onPressOut}
+                activeOpacity={0.9}
+                delayPressIn={50}
+            >
+                {isSelected && (
+                    <View style={styles.selectionCheckbox}>
+                        <Icon name="check-circle" size={22} color="#1e88e5" style={styles.checkIcon} />
+                    </View>
+                )}
+                
+                <View style={viewMode === 'grid' ? styles.gridContent : styles.listContent}>
+                    {card.imageUrl ? (
+                        <Image 
+                            source={{ uri: card.imageUrl }} 
+                            style={viewMode === 'grid' ? styles.gridImage : styles.listImage}
+                            resizeMode="cover"
+                        />
+                    ) : (
+                        <View style={[
+                            viewMode === 'grid' ? styles.noImageGrid : styles.noImageList,
+                            { backgroundColor: '#e0e0e0' }
                         ]}>
-                            • {card.rarity}
+                            <Icon name="image-off" size={viewMode === 'grid' ? 40 : 24} color="#999" />
+                        </View>
+                    )}
+                    
+                    <View style={viewMode === 'list' ? styles.listDetails : styles.gridDetails}>
+                        <Text 
+                            style={styles.cardName} 
+                            numberOfLines={viewMode === 'grid' ? 2 : 1}
+                        >
+                            {card.name}
                         </Text>
-                        {card.collectorNumber && (
-                            <Text style={styles.collectorNumber}>• #{card.collectorNumber}</Text>
+                        
+                        {viewMode === 'list' && card.type && (
+                            <Text style={styles.cardType} numberOfLines={1}>
+                                {card.type}
+                            </Text>
+                        )}
+                        
+                        {viewMode === 'list' && showCardMana && (
+                            <View style={styles.colorContainer}>
+                                {colors.map((color, index) => (
+                                    <View 
+                                        key={index} 
+                                        style={[
+                                            styles.colorDot, 
+                                            { backgroundColor: getColorFromMana(color) }
+                                        ]} 
+                                    />
+                                ))}
+                                {(card.colors?.length || card.colorIdentity?.length || 0) > 3 && (
+                                    <Text style={styles.moreColors}>+{(card.colors?.length || card.colorIdentity?.length || 0) - 3}</Text>
+                                )}
+                            </View>
+                        )}
+                        
+                        {viewMode === 'grid' && card.rarity && (
+                            <View style={[styles.rarityBadge, getRarityStyle(card.rarity)]}>
+                                <Text style={styles.rarityText}>
+                                    {card.rarity.charAt(0).toUpperCase()}
+                                </Text>
+                            </View>
                         )}
                     </View>
                 </View>
-
-                {card.isExpanded && (
-                    <>
-                        {card.imageUris?.normal && (
-                            <Image
-                                source={{ uri: card.imageUris.normal }}
-                                style={styles.cardImage}
-                                resizeMode="contain"
-                            />
-                        )}
-                        <Text style={styles.cardType}>{card.type}</Text>
-                        {card.text && (
-                            <View style={styles.cardTextContainer}>
-                                <Text style={styles.cardText}>{card.text}</Text>
-                            </View>
-                        )}
-                        <View style={styles.cardFooter}>
-                            <View style={styles.priceSection}>
-                                <Text style={styles.sectionTitle}>Prices</Text>
-                                <View style={styles.priceContainer}>
-                                    <Text style={styles.price}>
-                                        Normal: {getFormattedPrice(getBestPrice(card.prices, false))}
-                                    </Text>
-                                    <Text style={styles.price}>
-                                        Foil: {getFormattedPrice(getBestPrice(card.prices, true))}
-                                    </Text>
-                                </View>
-                            </View>
-
-                            <View style={styles.urlSection}>
-                                <Text style={styles.sectionTitle}>URL</Text>
-                                <TouchableOpacity 
-                                    style={styles.urlButton}
-                                    onPress={() => {
-                                        if (card.purchaseUrls?.tcgplayer) {
-                                            Linking.openURL(card.purchaseUrls.tcgplayer);
-                                        }
-                                    }}
-                                >
-                                    <Text style={styles.urlButtonText}>View on TCGplayer</Text>
-                                </TouchableOpacity>
-                            </View>
-
-                            {onAddToCollection && (
-                                <TouchableOpacity
-                                    style={styles.addToCollectionButton}
-                                    onPress={onAddToCollection}
-                                    activeOpacity={0.9}
-                                >
-                                    <Icon name="playlist-plus" size={20} color="white" />
-                                    <Text style={styles.addToCollectionText}>Add to Collection</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    </>
-                )}
-            </View>
-        </TouchableOpacity>
+            </TouchableOpacity>
+        </Animated.View>
     );
 };
 
+const getColorFromMana = (color: string): string => {
+    const colorMap: { [key: string]: string } = {
+        W: '#F8E7B9', // White
+        U: '#B3CEEA', // Blue
+        B: '#B0AFAE', // Black
+        R: '#EAA7A7', // Red
+        G: '#B7C4B9', // Green
+    };
+    return colorMap[color] || '#DDDDDD';
+};
+
+const getRarityStyle = (rarity: string) => {
+    switch (rarity.toLowerCase()) {
+        case 'common':
+            return { backgroundColor: '#B0B0B0' };
+        case 'uncommon':
+            return { backgroundColor: '#A1C3D1' };
+        case 'rare':
+            return { backgroundColor: '#F9DA5E' };
+        case 'mythic':
+            return { backgroundColor: '#E85B37' };
+        default:
+            return { backgroundColor: '#B0B0B0' };
+    }
+};
+
 const styles = StyleSheet.create({
-    cardItem: {
+    gridCard: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        marginBottom: 12,
+        marginHorizontal: 6,
+        flex: 0.5,
+        overflow: 'hidden',
+    },
+    listCard: {
         backgroundColor: '#fff',
         borderRadius: 8,
-        padding: 12,
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-        marginBottom: 12,
-    },
-    cardItemExpanded: {
-        padding: 16,
-        elevation: 3,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 4,
-    },
-    cardMainInfo: {
-        flex: 1,
-    },
-    cardImage: {
-        width: '100%',
-        height: 350,
-        borderRadius: 8,
-        marginBottom: 12,
-    },
-    cardDetails: {
         marginBottom: 8,
+        overflow: 'hidden',
+        width: '100%',
     },
-    cardHeader: {
+    cardShadow: {
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.1,
+                shadowRadius: 4,
+            },
+            android: {
+                elevation: 3,
+            },
+        }),
+    },
+    selectedCard: {
+        borderColor: '#1e88e5',
+        borderWidth: 2,
+    },
+    gridContent: {
+        flexDirection: 'column',
+    },
+    listContent: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
+        height: 80,
+    },
+    gridImage: {
+        width: '100%',
+        height: 140,
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
+    },
+    listImage: {
+        width: 60,
+        height: 80,
+    },
+    noImageGrid: {
+        width: '100%',
+        height: 140,
+        justifyContent: 'center',
         alignItems: 'center',
-        marginBottom: 4,
+    },
+    noImageList: {
+        width: 60,
+        height: 80,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    gridDetails: {
+        padding: 8,
+    },
+    listDetails: {
+        flex: 1,
+        padding: 10,
+        justifyContent: 'center',
     },
     cardName: {
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: '600',
         color: '#333',
-        flex: 1,
-        marginRight: 8,
-    },
-    setInfoContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-    },
-    setInfo: {
-        fontSize: 13,
-        color: '#666',
-    },
-    collectorNumber: {
-        fontSize: 14,
-        color: '#666',
     },
     cardType: {
-        fontSize: 15,
-        color: '#444',
-        fontStyle: 'italic',
+        fontSize: 12,
+        color: '#666',
+        marginTop: 2,
     },
-    cardTextContainer: {
-        backgroundColor: '#f8f9fa',
-        borderRadius: 8,
-        padding: 12,
-        marginTop: 8,
+    selectionCheckbox: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        zIndex: 10,
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        borderRadius: 12,
     },
-    cardText: {
-        fontSize: 14,
-        color: '#333',
-        lineHeight: 20,
+    checkIcon: {
+        textShadowColor: 'white',
+        textShadowOffset: { width: 1, height: 1 },
+        textShadowRadius: 2,
     },
-    cardFooter: {
-        borderTopWidth: 1,
-        borderTopColor: '#eee',
-        paddingTop: 12,
+    colorContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 4,
     },
-    sectionTitle: {
-        fontSize: 16,
-        fontWeight: '600',
-        color: '#333',
-        marginBottom: 8,
+    colorDot: {
+        width: 14,
+        height: 14,
+        borderRadius: 7,
+        marginRight: 4,
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.1)',
     },
-    priceSection: {
-        marginBottom: 12,
-    },
-    rarity: {
-        fontSize: 14,
-        fontWeight: '500',
-    },
-    common: {
+    moreColors: {
+        fontSize: 10,
         color: '#666',
     },
-    uncommon: {
-        color: '#607D8B',
-    },
-    rare: {
-        color: '#FFC107',
-    },
-    mythic: {
-        color: '#F44336',
-    },
-    priceContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-    },
-    price: {
-        fontSize: 14,
-        color: '#333',
-        backgroundColor: '#f0f0f0',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 4,
-    },
-    addToCollectionButton: {
-        backgroundColor: '#2196F3',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 6,
-        flexDirection: 'row',
-        alignItems: 'center',
+    rarityBadge: {
+        position: 'absolute',
+        top: -150,
+        right: 8,
+        width: 20,
+        height: 20,
+        borderRadius: 10,
         justifyContent: 'center',
-        gap: 8,
-        marginBottom: 12,
-    },
-    addToCollectionText: {
-        color: 'white',
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    urlButton: {
-        padding: 8,
-        backgroundColor: '#2196F3',
-        borderRadius: 4,
         alignItems: 'center',
+        backgroundColor: '#B0B0B0',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.6)',
     },
-    urlButtonText: {
+    rarityText: {
+        fontSize: 10,
+        fontWeight: 'bold',
         color: 'white',
-        fontWeight: '500',
-    },
-    urlSection: {
-        marginBottom: 12,
+        textShadowColor: 'rgba(0,0,0,0.5)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 1,
     },
 });
 

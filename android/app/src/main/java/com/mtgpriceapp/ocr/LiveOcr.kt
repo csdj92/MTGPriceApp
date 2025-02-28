@@ -95,6 +95,8 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     private var currentPreviewWidth: Int? = null
     private var currentPreviewHeight: Int? = null
 
+    private var processingPaused = false
+
     override fun getName() = NAME
 
     override fun initialize() {
@@ -221,7 +223,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                 MAX_IMAGES
             ).apply {
                 setOnImageAvailableListener({ reader ->
-                    if (!isSessionActive || previewSurface == null) {
+                    if (!isSessionActive || previewSurface == null || processingPaused) {
                         reader.acquireLatestImage()?.close()
                         return@setOnImageAvailableListener
                     }
@@ -615,9 +617,37 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
      * Drain extra images from the ImageReader to prevent a backlog.
      */
     private fun drainExtraImages(reader: ImageReader) {
-        while (true) {
-            val extraImage = reader.acquireLatestImage() ?: break
-            extraImage.close()
+        try {
+            // Only try to acquire latest image once, to avoid exceptions
+            val extraImage = reader.acquireLatestImage()
+            extraImage?.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error draining images: ${e.message}")
+            // Don't try to continue draining if we hit an exception
+        }
+    }
+
+    @ReactMethod
+    fun pauseProcessing(promise: Promise) {
+        try {
+            processingPaused = true
+            Log.d(TAG, "Processing paused")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error pausing processing: ${e.message}")
+            promise.reject("ERR_PAUSE_PROCESSING", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun resumeProcessing(promise: Promise) {
+        try {
+            processingPaused = false
+            Log.d(TAG, "Processing resumed")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resuming processing: ${e.message}")
+            promise.reject("ERR_RESUME_PROCESSING", e.message, e)
         }
     }
 }

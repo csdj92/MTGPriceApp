@@ -22,7 +22,8 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     size: number;
     color: string;
 }>;
-import { getLorcanaCardPrice, getDB, addCardToLorcanaCollection } from '../services/LorcanaService';
+import { getLorcanaCardPrice, getDB, addCardToLorcanaCollection, updateAllCardImages } from '../services/LorcanaService';
+import { getImageSource, handleImageLoadError, preloadImages, handleImageLoadSuccess, getImageLoadingStats, clearImageCache } from '../utils/imageUtils';
 
 interface LorcanaGridViewProps {
     cards: LorcanaCardWithPrice[];
@@ -47,6 +48,160 @@ interface Filters {
 }
 
 const ITEMS_PER_PAGE = 12;
+
+// Create a separate CardItem component
+const CardItem = React.memo(({ 
+    item, 
+    isCollected,
+    onPress,
+    onLongPress
+}: { 
+    item: LorcanaCardWithPrice; 
+    isCollected: boolean;
+    onPress: () => void;
+    onLongPress: () => void;
+}) => {
+    const [imageError, setImageError] = useState(false);
+    
+    return (
+        <TouchableOpacity 
+            style={styles.cardContainer}
+            onPress={onPress}
+            onLongPress={onLongPress}
+        >
+            <View style={styles.cardImageContainer}>
+                {item.Image && !imageError ? (
+                    <FastImage
+                        source={getImageSource(item.Image) || { uri: item.Image }}
+                        style={[
+                            styles.cardImage,
+                            !isCollected && styles.cardImageUncollected
+                        ]}
+                        resizeMode={FastImage.resizeMode.contain}
+                        onError={() => {
+                            handleImageLoadError(item.Image, item.Name);
+                            setImageError(true);
+                        }}
+                        onLoad={() => {
+                            handleImageLoadSuccess(item.Image, { name: item.Name, id: item.Unique_ID });
+                            setImageError(false);
+                        }}
+                    />
+                ) : (
+                    <View style={[styles.cardImage, styles.placeholderImage]}>
+                        <Icon name={imageError ? "image-broken" : "image-off"} size={24} color="#666" />
+                        {imageError && (
+                            <Text style={styles.imageErrorText}>Loading Error</Text>
+                        )}
+                    </View>
+                )}
+                {!isCollected && (
+                    <View style={styles.missingOverlay}>
+                        <Icon name="plus-circle" size={24} color="white" />
+                        <Text style={styles.missingText}>Missing</Text>
+                    </View>
+                )}
+            </View>
+            <View style={[styles.cardInfo, !isCollected && styles.cardInfoUncollected]}>
+                <Text style={styles.cardNumber}>#{item.Card_Num || '0'}</Text>
+                <Text style={[styles.cardName, !isCollected && styles.cardNameUncollected]} numberOfLines={1}>
+                    {item.Name}
+                </Text>
+                <Text style={[styles.cardPrice, !isCollected && styles.cardPriceUncollected]}>
+                    ${item.prices?.usd ? Number(item.prices.usd).toFixed(2) : '0.00'}
+                </Text>
+            </View>
+        </TouchableOpacity>
+    );
+});
+
+// Create a separate CardDetailModal component
+const CardDetailModal = React.memo(({
+    selectedCard, 
+    visible, 
+    onClose
+}: {
+    selectedCard: LorcanaCardWithPrice | null;
+    visible: boolean;
+    onClose: () => void;
+}) => {
+    const [modalImageError, setModalImageError] = useState(false);
+    
+    if (!selectedCard) return null;
+    
+    return (
+        <Modal
+            visible={visible}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={onClose}
+        >
+            <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                    <ScrollView>
+                        <View style={styles.modalImageContainer}>
+                            {selectedCard.Image && !modalImageError ? (
+                                <FastImage
+                                    source={getImageSource(selectedCard.Image) || { uri: selectedCard.Image }}
+                                    style={styles.modalImage}
+                                    resizeMode={FastImage.resizeMode.contain}
+                                    onError={() => {
+                                        handleImageLoadError(selectedCard.Image, selectedCard.Name);
+                                        setModalImageError(true);
+                                    }}
+                                    onLoad={() => {
+                                        handleImageLoadSuccess(selectedCard.Image, { 
+                                            name: selectedCard.Name, 
+                                            id: selectedCard.Unique_ID, 
+                                            context: 'modal' 
+                                        });
+                                        setModalImageError(false);
+                                    }}
+                                />
+                            ) : (
+                                <View style={[styles.modalImage, styles.placeholderImage]}>
+                                    <Icon name={modalImageError ? "image-broken" : "image-off"} size={48} color="#666" />
+                                    {modalImageError && (
+                                        <TouchableOpacity 
+                                            style={styles.refreshImageButton}
+                                            onPress={() => {
+                                                // Clear error state to retry image load
+                                                setModalImageError(false);
+                                            }}
+                                        >
+                                            <Icon name="refresh" size={24} color="#2196F3" />
+                                            <Text style={styles.refreshImageText}>Retry</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
+                            )}
+                            <TouchableOpacity
+                                style={styles.modalCloseButton}
+                                onPress={onClose}
+                            >
+                                <Icon name="close" size={28} color="#666" />
+                            </TouchableOpacity>
+                        </View>
+                        <View style={styles.modalInfo}>
+                            <Text style={styles.modalTitle}>{selectedCard.Name}</Text>
+                            <Text style={styles.modalText}>Set: {selectedCard.Set_Name}</Text>
+                            <Text style={styles.modalText}>Number: {selectedCard.Card_Num}</Text>
+                            <Text style={styles.modalText}>Rarity: {selectedCard.Rarity}</Text>
+                            <Text style={styles.modalText}>Color: {selectedCard.Color}</Text>
+                            <Text style={styles.modalText}>Franchise: {selectedCard.Franchise ? selectedCard.Franchise : ''}</Text>
+                            <View style={styles.modalPrices}>
+                                <Text style={styles.modalPriceTitle}>Price:</Text>
+                                <Text style={styles.modalPrice}>
+                                    ${selectedCard.prices?.usd ? Number(selectedCard.prices.usd).toFixed(2) : '0.00'}
+                                </Text>
+                            </View>
+                        </View>
+                    </ScrollView>
+                </View>
+            </View>
+        </Modal>
+    );
+});
 
 const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     cards,
@@ -161,7 +316,9 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                         const prices = await getLorcanaCardPrice({
                             Name: card.Name,
                             Set_Num: card.Set_Num,
-                            Rarity: card.Rarity
+                            Card_Num: card.Card_Num,
+                            Rarity: card.Rarity,
+                            Unique_ID: card.Unique_ID
                         });
                         
                         if (!prices) {
@@ -356,109 +513,75 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         }
     };
 
-    const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => {
-        // Force boolean evaluation to ensure consistent behavior
-        const isCollected = !!item.collected;
+    // Add a function to preload card images for better performance
+    const preloadCardImages = useCallback(() => {
+        if (!cards || cards.length === 0) return;
         
-        return (
-            <TouchableOpacity 
-                style={styles.cardContainer}
-                onPress={() => setSelectedCard(item)}
-                onLongPress={() => handleLongPress(item)}
-            >
-                <View style={styles.cardImageContainer}>
-                    {item.Image ? (
-                        <FastImage
-                            source={{ 
-                                uri: item.Image,
-                                priority: FastImage.priority.low,
-                                cache: FastImage.cacheControl.immutable,
-                                headers: {
-                                    'User-Agent': 'MTGPriceApp/1.0',
-                                    'Accept': 'image/*'
-                                }
-                            }}
-                            style={[
-                                styles.cardImage,
-                                !isCollected && styles.cardImageUncollected
-                            ]}
-                            resizeMode={FastImage.resizeMode.contain}
-                            onError={() => {
-                                console.log('[LorcanaGridView] Failed to load image:', {
-                                    url: item.Image,
-                                    name: item.Name
-                                });
-                            }}
-                        />
-                    ) : (
-                        <View style={[styles.cardImage, styles.placeholderImage]}>
-                            <Icon name="image-off" size={24} color="#666" />
-                        </View>
-                    )}
-                    {!isCollected && (
-                        <View style={styles.missingOverlay}>
-                            <Icon name="plus-circle" size={24} color="white" />
-                            <Text style={styles.missingText}>Missing</Text>
-                        </View>
-                    )}
-                </View>
-                <View style={[styles.cardInfo, !isCollected && styles.cardInfoUncollected]}>
-                    <Text style={styles.cardNumber}>#{item.Card_Num || '0'}</Text>
-                    <Text style={[styles.cardName, !isCollected && styles.cardNameUncollected]} numberOfLines={1}>
-                        {item.Name}
-                    </Text>
-                    <Text style={[styles.cardPrice, !isCollected && styles.cardPriceUncollected]}>
-                        ${item.prices?.usd ? Number(item.prices.usd).toFixed(2) : '0.00'}
-                    </Text>
-                </View>
-            </TouchableOpacity>
+        // Extract all valid image URLs
+        const imageUrls = cards
+            .map(card => card.Image)
+            .filter(Boolean) as string[];
+        
+        if (imageUrls.length > 0) {
+            console.log(`[LorcanaGridView] Preloading ${imageUrls.length} card images`);
+            // Our enhanced preloadImages will now handle cache checking
+            preloadImages(imageUrls);
+        }
+    }, [cards]);
+
+    // Preload images when cards change
+    useEffect(() => {
+        preloadCardImages();
+    }, [preloadCardImages]);
+
+    // Add a function to view image loading statistics for debugging
+    const showImageLoadingStats = () => {
+        const stats = getImageLoadingStats();
+        console.log('[LorcanaGridView] Image Loading Statistics:', stats);
+        
+        Alert.alert(
+            'Image Loading Stats',
+            `Total successful: ${stats.totalSuccessfulImages}\n` +
+            `Total failed: ${stats.totalFailedImages}\n` +
+            `Cooling down: ${stats.coolingDownImages}\n` +
+            `Recent successful: ${stats.recentlySuccessfulImages}\n` +
+            `HEIF images: ${stats.heifImages}`,
+            [
+                { 
+                    text: 'Reset Cache',
+                    onPress: async () => {
+                        try {
+                            await clearImageCache();
+                            Alert.alert('Success', 'Image cache cleared');
+                            // Force reload cards
+                            preloadCardImages();
+                        } catch (error) {
+                            console.error('[LorcanaGridView] Error clearing cache:', error);
+                            Alert.alert('Error', 'Failed to clear cache');
+                        }
+                    },
+                    style: 'destructive'
+                },
+                { text: 'OK' }
+            ]
         );
     };
 
-    const renderCardModal = () => (
-        <Modal
-            visible={selectedCard !== null && !showVersionModal}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={() => setSelectedCard(null)}
-        >
-            <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                    {selectedCard && (
-                        <ScrollView>
-                            <View style={styles.modalImageContainer}>
-                                <FastImage
-                                    source={{ uri: selectedCard.Image }}
-                                    style={styles.modalImage}
-                                    resizeMode={FastImage.resizeMode.contain}
-                                />
-                                <TouchableOpacity
-                                    style={styles.modalCloseButton}
-                                    onPress={() => setSelectedCard(null)}
-                                >
-                                    <Icon name="close" size={28} color="#666" />
-                                </TouchableOpacity>
-                            </View>
-                            <View style={styles.modalInfo}>
-                                <Text style={styles.modalTitle}>{selectedCard.Name}</Text>
-                                <Text style={styles.modalText}>Set: {selectedCard.Set_Name}</Text>
-                                <Text style={styles.modalText}>Number: {selectedCard.Card_Num}</Text>
-                                <Text style={styles.modalText}>Rarity: {selectedCard.Rarity}</Text>
-                                <Text style={styles.modalText}>Color: {selectedCard.Color}</Text>
-                                <Text style={styles.modalText}>Franchise: {selectedCard.Franchise ? selectedCard.Franchise : ''}</Text>
-                                <View style={styles.modalPrices}>
-                                    <Text style={styles.modalPriceTitle}>Price:</Text>
-                                    <Text style={styles.modalPrice}>
-                                        ${selectedCard.prices?.usd ? Number(selectedCard.prices.usd).toFixed(2) : '0.00'}
-                                    </Text>
-                                </View>
-                            </View>
-                        </ScrollView>
-                    )}
-                </View>
-            </View>
-        </Modal>
-    );
+    
+
+    // Replace the renderCard function with a wrapper that uses our component
+    const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => {
+        // Force boolean evaluation to ensure consistent behavior
+        const isCollected = !!item.collected;
+        return (
+            <CardItem
+                item={item}
+                isCollected={isCollected}
+                onPress={() => setSelectedCard(item)}
+                onLongPress={() => handleLongPress(item)}
+            />
+        );
+    };
 
     const renderVersionModal = () => (
         <Modal
@@ -479,23 +602,17 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                             >
                                 <Text style={styles.versionText}>{version.Name}</Text>
                                 <FastImage
-                                    source={{ 
-                                        uri: version.Image,
-                                        priority: FastImage.priority.normal,
-                                        cache: FastImage.cacheControl.immutable,
-                                        headers: {
-                                            'User-Agent': 'MTGPriceApp/1.0',
-                                            'Accept': 'image/*'
-                                        }
-                                    }}
+                                    source={version.Image ? 
+                                        (getImageSource(version.Image) || { uri: version.Image }) : 
+                                        undefined}
                                     style={styles.versionImage}
                                     resizeMode={FastImage.resizeMode.contain}
-                                    onError={() => {
-                                        console.log('[LorcanaGridView] Failed to load version image:', {
-                                            url: version.Image,
-                                            name: version.Name
-                                        });
-                                    }}
+                                    onError={() => handleImageLoadError(version.Image, version.Name)}
+                                    onLoad={() => handleImageLoadSuccess(version.Image, { 
+                                        name: version.Name, 
+                                        id: version.Unique_ID, 
+                                        context: 'version_modal'
+                                    })}
                                 />
                             </TouchableOpacity>
                         ))}
@@ -986,6 +1103,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                         </TouchableOpacity>
                     </View>
                 </View>
+               
             </View>
 
             {renderFilters()}
@@ -1001,7 +1119,13 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 ListFooterComponent={isLoadingMore ? <ActivityIndicator size="large" color="#2196F3" /> : null}
             />
 
-            {renderCardModal()}
+            {/* Replace renderCardModal with component */}
+            <CardDetailModal 
+                selectedCard={selectedCard}
+                visible={selectedCard !== null && !showVersionModal}
+                onClose={() => setSelectedCard(null)}
+            />
+            
             {renderVersionModal()}
         </View>
     );
@@ -1140,12 +1264,12 @@ const styles = StyleSheet.create({
         borderRadius: 8,
     },
     cardImageUncollected: {
-        opacity: 0.5,
+        opacity: 0.7,
     },
     placeholderImage: {
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#f0f0f0',
     },
     missingOverlay: {
         position: 'absolute',
@@ -1153,16 +1277,34 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.3)',
-        borderRadius: 8,
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.4)',
     },
     missingText: {
         color: 'white',
-        fontSize: 12,
-        fontWeight: '500',
+        fontWeight: 'bold',
         marginTop: 4,
+    },
+    imageErrorText: {
+        marginTop: 8,
+        fontSize: 10,
+        color: '#666',
+        textAlign: 'center',
+    },
+    refreshImageButton: {
+        marginTop: 12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.7)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+    },
+    refreshImageText: {
+        marginLeft: 4,
+        color: '#2196F3',
+        fontWeight: 'bold',
     },
     cardInfoUncollected: {
         opacity: 0.7,
@@ -1300,6 +1442,13 @@ const styles = StyleSheet.create({
     removeButtonText: {
         color: 'white',
         fontWeight: 'bold',
+    },
+    debugButtonsContainer: {
+        flexDirection: 'row',
+        marginLeft: 'auto',
+    },
+    debugButton: {
+        padding: 8,
     },
 });
 

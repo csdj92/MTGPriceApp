@@ -86,6 +86,39 @@ const CardScanner: React.FC<CardScannerProps> = ({
     }
   }, [previewSize]);
 
+  // Add useEffect to handle pause state changes
+  useEffect(() => {
+    const handlePauseStateChange = async () => {
+      if (isPaused) {
+        // If we're paused and active, temporarily stop processing
+        if (isActive) {
+          try {
+            if (useClassifier) {
+              await LiveImageClassifier.pauseProcessing();
+            } else {
+              await LiveOcr.pauseProcessing();
+            }
+          } catch (error) {
+            console.warn('Failed to pause processing:', error);
+          }
+        }
+      } else if (isActive) {
+        // If we're no longer paused and still active, resume processing
+        try {
+          if (useClassifier) {
+            await LiveImageClassifier.resumeProcessing();
+          } else {
+            await LiveOcr.resumeProcessing();
+          }
+        } catch (error) {
+          console.warn('Failed to resume processing:', error);
+        }
+      }
+    };
+
+    handlePauseStateChange();
+  }, [isPaused, isActive, useClassifier]);
+
   const updateAspectRatio = (previewWidth: number, previewHeight: number) => {
     const screen = Dimensions.get('window');
     const screenWidth = screen.width;
@@ -197,6 +230,11 @@ const CardScanner: React.FC<CardScannerProps> = ({
           isActive={isActive && !isPaused}
           type={useClassifier ? 'classifier' : 'ocr'}
         />
+        {isPaused && (
+          <View style={styles.pausedOverlay}>
+            <Text style={styles.pausedText}>Camera Paused</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -247,6 +285,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     marginTop: 2,
+  },
+  pausedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  pausedText: {
+    color: 'white',
+    fontSize: 24,
+    fontWeight: 'bold',
   },
 });
 

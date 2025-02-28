@@ -6,6 +6,7 @@ enablePromise(true)
 
 const LorcanaBulkCardApi = 'https://api.lorcana-api.com/bulk/cards'
 const LorcastPriceApi = 'https://api.lorcast.com/v0/cards/search'
+const LorcastRetrieveBySetNumberApi = 'https://api.lorcast.com/v0/cards/{set_number}/{card_num}'
 
 let dbInstance: SQLiteDatabase | null = null
 let isInitialized = false
@@ -513,7 +514,183 @@ export const searchLorcanaCards = async (name: string, subtype?: string | null) 
 }
 
 // Function to fetch current price for a card
-export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number; Rarity?: string }) => {
+export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number; Rarity?: string; Card_Num?: number; Unique_ID?: string }) => {
+    try {
+        console.log('[LorcanaService] Fetching card price for:', card.Set_Num, card.Card_Num, card.Unique_ID);
+        
+        // Check if we have both Set_Num and Card_Num to use the direct endpoint
+        if (card.Set_Num !== undefined && card.Card_Num !== undefined) {
+            // Use the direct card retrieval endpoint with template literals
+            const directUrl = `https://api.lorcast.com/v0/cards/${card.Set_Num}/${card.Card_Num}`;
+            
+            console.log(`[LorcanaService] Fetching card directly: ${directUrl}`);
+            
+            try {
+                const response = await fetch(directUrl);
+                
+                if (response.ok) {
+                    const cardData = await response.json();
+                    
+                    if (cardData) {
+                        console.log('[LorcanaService] Card prices data from direct request:', cardData.prices);
+                        
+                        // Check if we have an image_uris object with a digital.normal URL
+                        if (cardData.image_uris?.digital?.normal && card.Unique_ID) {
+                            // Update the image URL in the database
+                            await updateCardImageUrl(card.Unique_ID, cardData.image_uris.digital.normal);
+                        }
+                        
+                        // For enchanted cards, which only come in foil, use the foil price as the regular price too
+                        const isEnchanted = card.Rarity === 'Enchanted';
+                        const foilPrice = cardData.prices?.usd_foil || cardData.prices?.foil || null;
+                        
+                        return {
+                            usd: isEnchanted ? foilPrice : (cardData.prices?.regular || cardData.prices?.usd || null),
+                            usd_foil: foilPrice,
+                            tcgplayer_id: cardData.tcgplayer_id || null
+                        };
+                    }
+                }
+                
+                console.log(`[LorcanaService] Direct card request failed or returned no data`);
+                // Continue to next fallback
+            } catch (error) {
+                console.log(`[LorcanaService] Error in direct request:`, error);
+                // Continue to next fallback
+            }
+        }
+        
+        // Try using Unique_ID if available (especially for enchanted cards)
+        if (card.Unique_ID) {
+            const enchantedUrl = `https://api.lorcast.com/v0/cards/${card.Unique_ID}`;
+            console.log(`[LorcanaService] Trying enchanted URL: ${enchantedUrl}`);
+            
+            try {
+                const enchantedResponse = await fetch(enchantedUrl);
+                
+                if (enchantedResponse.ok) {
+                    const enchantedData = await enchantedResponse.json();
+                    
+                    if (enchantedData) {
+                        console.log('[LorcanaService] Card prices data from enchanted request:', enchantedData.prices);
+                        
+                        // Check if we have an image_uris object with a digital.normal URL
+                        if (enchantedData.image_uris?.digital?.normal) {
+                            // Update the image URL in the database
+                            await updateCardImageUrl(card.Unique_ID, enchantedData.image_uris.digital.normal);
+                        }
+                        
+                        // For enchanted cards, which only come in foil, use the foil price as the regular price too
+                        const isEnchanted = card.Rarity === 'Enchanted';
+                        const foilPrice = enchantedData.prices?.usd_foil || enchantedData.prices?.foil || null;
+                        
+                        return {
+                            usd: isEnchanted ? foilPrice : (enchantedData.prices?.regular || enchantedData.prices?.usd || null),
+                            usd_foil: foilPrice,
+                            tcgplayer_id: enchantedData.tcgplayer_id || null
+                        };
+                    }
+                }
+                
+                console.log(`[LorcanaService] Enchanted URL request failed or returned no data`);
+                // Continue to fallback search
+            } catch (error) {
+                console.log(`[LorcanaService] Error in enchanted URL request:`, error);
+                // Continue to fallback search
+            }
+        }
+        
+        // Fall back to search approach if both direct methods fail
+        console.log('[LorcanaService] All direct methods failed, falling back to search approach');
+        const searchResult = await getLorcanaCardPriceBySearch(card);
+        
+        // Try to update the image URL from the search result if available
+        if (card.Unique_ID && searchResult?.searchResponse?.results?.length > 0) {
+            const foundCard = searchResult.searchResponse.results[0];
+            if (foundCard.image_uris?.digital?.normal) {
+                await updateCardImageUrl(card.Unique_ID, foundCard.image_uris.digital.normal);
+            }
+        }
+        
+        // Return only the price data to maintain backward compatibility
+        const { searchResponse, ...priceData } = searchResult;
+        return priceData;
+    } catch (error) {
+        console.error('[LorcanaService] Error fetching Lorcana card price:', error);
+        throw error;
+    }
+};
+
+/**
+ * Updates the image URL for a card in the database
+ * @param cardId The unique ID of the card to update
+ * @param imageUrl The new image URL to set
+ */
+const updateCardImageUrl = async (cardId: string, imageUrl: string) => {
+    try {
+        console.log(`[LorcanaService] Updating image URL for card ${cardId} to: ${imageUrl}`);
+        
+        // Skip if the image URL is null or empty
+        if (!imageUrl) {
+            console.log(`[LorcanaService] Skipping image update - URL is empty`);
+            return;
+        }
+        
+        // Check if the URL is a HEIF/HEIC image
+        const isHeifImage = imageUrl.toLowerCase().includes('.heif') || 
+                           imageUrl.toLowerCase().includes('.heic') || 
+                           imageUrl.toLowerCase().includes('image/heif') || 
+                           imageUrl.toLowerCase().includes('image/heic');
+        
+        // Attempt to get a better URL if this is a HEIF image
+        let finalImageUrl = imageUrl;
+        if (isHeifImage) {
+            console.log(`[LorcanaService] HEIF image detected: ${imageUrl}`);
+            
+            // Try to get a better URL by modifying the source
+            if (imageUrl.includes('lorcana-api.com')) {
+                if (imageUrl.includes('?')) {
+                    finalImageUrl = `${imageUrl}&format=jpg`;
+                } else {
+                    finalImageUrl = `${imageUrl}?format=jpg`;
+                }
+                console.log(`[LorcanaService] Converted HEIF image URL to: ${finalImageUrl}`);
+            }
+        }
+        
+        // Get database connection
+        const db = await getDB();
+        
+        // First check if the current image URL is different
+        const [result] = await db.executeSql(
+            'SELECT Image FROM lorcana_cards WHERE Unique_ID = ?',
+            [cardId]
+        );
+        
+        if (result.rows.length > 0) {
+            const currentImage = result.rows.item(0).Image;
+            
+            // Only update if the URLs are different
+            if (currentImage !== finalImageUrl) {
+                await db.executeSql(
+                    'UPDATE lorcana_cards SET Image = ? WHERE Unique_ID = ?',
+                    [finalImageUrl, cardId]
+                );
+                console.log(`[LorcanaService] Successfully updated image URL for card ${cardId}`);
+            } else {
+                console.log(`[LorcanaService] Image URL already up to date for card ${cardId}`);
+            }
+        } else {
+            console.log(`[LorcanaService] Card with ID ${cardId} not found in database`);
+        }
+    } catch (error) {
+        console.error(`[LorcanaService] Error updating image URL:`, error);
+        // Don't throw the error as this is not critical functionality
+    }
+};
+
+// Original search-based implementation extracted as a fallback method
+const getLorcanaCardPriceBySearch = async (card: { Name: string; Set_Num?: number; Rarity?: string; Card_Num?: number }) => {
     try {
         // Split name into base name and version at " - " (space-hyphen-space)
         // This preserves hyphens within names like "Happy-Go-Lucky"
@@ -541,6 +718,8 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
         const response = await fetch(`${LorcastPriceApi}?${query}`);
         const data = await response.json();
         console.log('[LorcanaService] API response:', data);
+        
+        let searchResponse = data;
 
         if (!data.results || !Array.isArray(data.results) || data.results.length === 0) {
             // Try a more lenient search if exact match fails
@@ -549,13 +728,15 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
             
             const lenientResponse = await fetch(`${LorcastPriceApi}?${lenientQuery}`);
             const lenientData = await lenientResponse.json();
+            searchResponse = lenientData;
             
             if (!lenientData.results || !Array.isArray(lenientData.results) || lenientData.results.length === 0) {
                 console.log('[LorcanaService] No results found for card:', card.Name);
                 return {
                     usd: null,
                     usd_foil: null,
-                    tcgplayer_id: null
+                    tcgplayer_id: null,
+                    searchResponse: null
                 };
             }
             
@@ -605,7 +786,8 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
                 return {
                     usd: null,
                     usd_foil: null,
-                    tcgplayer_id: null
+                    tcgplayer_id: null,
+                    searchResponse: null
                 };
             }
             
@@ -623,15 +805,16 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
         const prices = {
             usd: isEnchanted ? foilPrice : (cardData.prices?.regular || cardData.prices?.usd || null),
             usd_foil: foilPrice,
-            tcgplayer_id: cardData.tcgplayer_id || null
+            tcgplayer_id: cardData.tcgplayer_id || null,
+            searchResponse: searchResponse
         };
 
         return prices;
     } catch (error) {
-        console.error('[LorcanaService] Error fetching Lorcana card price:', error);
+        console.error('[LorcanaService] Error fetching Lorcana card price by search:', error);
         throw error;
     }
-}
+};
 
 // Function to get card with latest price from database
 export const getLorcanaCardWithPrice = async (cardId: string) => {
@@ -879,10 +1062,8 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
 }>> => {
     try {
         const db = await getDB();
-        // Use a shorter period when forceRefresh is true to ensure we're updating
-        const cacheTime = forceRefresh ? 
-            new Date(Date.now() - 1 * 60 * 1000).toISOString() : // 1 minute for force refresh
-            new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours normally
+        // Always use 24 hour cache time regardless of forceRefresh
+        const cacheTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours
 
         // First, get all collections that need updating
         const [collectionsToUpdate] = await db.executeSql(`
@@ -1286,7 +1467,6 @@ export const fetchAndStoreEnchantedCards = async () => {
                             cardData.Set_Name,
                             cardData.Set_Num,
                             cardData.Strength,
-                            cardData.Type,
                             cardData.Unique_ID,
                             cardData.Willpower,
                             cardData.price_usd,
@@ -1330,4 +1510,113 @@ function levenshteinDistance(str1: string, str2: string): number {
     }
     return dp[m][n];
 }
+
+/**
+ * Updates image URLs for all cards or a batch of cards in the database
+ * This can be called periodically to refresh image URLs from rate-limited sources
+ * @param batchSize Optional batch size to process (default: 25)
+ * @param startIndex Optional starting index for pagination (default: 0)
+ * @returns The number of cards processed and updated
+ */
+export const updateAllCardImages = async (batchSize = 25, startIndex = 0) => {
+    try {
+        console.log(`[LorcanaService] Starting batch update of card images (batch: ${batchSize}, start: ${startIndex})`);
+        
+        // Get database connection
+        const db = await getDB();
+        
+        // Get all cards that need image URL updates
+        // Prioritize:
+        // 1. Cards with no image URL
+        // 2. Cards with URLs that are from rate-limited sources or likely HEIF/HEIC images
+        // 3. Cards with URLs that have error messages in logs
+        const [cardsResult] = await db.executeSql(
+            `SELECT Unique_ID, Name, Set_Num, Card_Num, Rarity, Image
+             FROM lorcana_cards 
+             WHERE Image IS NULL 
+                OR Image LIKE '%lorcana-api.com%'  
+                OR Image LIKE '%.heif%' 
+                OR Image LIKE '%.heic%'
+                OR Image LIKE '%image/heif%'
+                OR Image LIKE '%image/heic%'
+             ORDER BY collected DESC
+             LIMIT ? OFFSET ?`,
+            [batchSize, startIndex]
+        );
+        
+        const totalCards = cardsResult.rows.length;
+        console.log(`[LorcanaService] Found ${totalCards} cards that need image updates`);
+        
+        let updatedCount = 0;
+        let failedCount = 0;
+        
+        // Process each card
+        for (let i = 0; i < totalCards; i++) {
+            const card = cardsResult.rows.item(i);
+            
+            try {
+                // Log the image URL before update
+                if (card.Image) {
+                    console.log(`[LorcanaService] Updating image for ${card.Name} (${card.Unique_ID}), current URL: ${card.Image}`);
+                } else {
+                    console.log(`[LorcanaService] Adding image for ${card.Name} (${card.Unique_ID}), currently missing`);
+                }
+                
+                // Attempt to get price and image data
+                const priceData = await getLorcanaCardPrice({
+                    Unique_ID: card.Unique_ID,
+                    Name: card.Name,
+                    Set_Num: card.Set_Num,
+                    Card_Num: card.Card_Num,
+                    Rarity: card.Rarity
+                });
+                
+                // Check if the image was updated by comparing it with the previous value
+                const [updatedCard] = await db.executeSql(
+                    'SELECT Image FROM lorcana_cards WHERE Unique_ID = ?',
+                    [card.Unique_ID]
+                );
+                
+                const newImage = updatedCard.rows.item(0).Image;
+                if (newImage !== card.Image) {
+                    console.log(`[LorcanaService] Successfully updated image for ${card.Name} to: ${newImage}`);
+                    updatedCount++;
+                } else {
+                    // If the image didn't change but it's a HEIF format, log that
+                    const isHeifImage = newImage && (
+                        newImage.toLowerCase().includes('.heif') ||
+                        newImage.toLowerCase().includes('.heic') ||
+                        newImage.toLowerCase().includes('image/heif') ||
+                        newImage.toLowerCase().includes('image/heic')
+                    );
+                    
+                    if (isHeifImage) {
+                        console.log(`[LorcanaService] Card image is still in HEIF format: ${newImage}`);
+                    }
+                }
+                
+                // Add short delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+            } catch (error) {
+                console.error(`[LorcanaService] Error updating card ${card.Name}:`, error);
+                failedCount++;
+            }
+        }
+        
+        console.log(`[LorcanaService] Batch image update complete. Updated: ${updatedCount}, Failed: ${failedCount}`);
+        
+        // Return stats
+        return {
+            processed: totalCards,
+            updated: updatedCount,
+            failed: failedCount,
+            hasMore: totalCards === batchSize // If we got a full batch, there might be more
+        };
+        
+    } catch (error) {
+        console.error('[LorcanaService] Error in batch update of card images:', error);
+        throw error;
+    }
+};
 

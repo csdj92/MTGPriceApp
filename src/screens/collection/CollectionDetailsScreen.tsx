@@ -6,7 +6,7 @@ import { databaseService } from '../../services/DatabaseService';
 import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardFromCollection, getLorcanaSetMissingCards, } from '../../services/LorcanaService';
 import CardList from '../../components/CardList';
 import LorcanaCardList from '../../components/LorcanaCardList';
-import LorcanaGridView from '../../components/LorcanaGridView';
+import LorcanaGridView from '../../components/lorcana/LorcanaGridView';
 import MTGGridView from '../../components/MTGGridView';
 import type { ExtendedCard } from '../../types/card';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';

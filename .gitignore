@@ -77,3 +77,5 @@ yarn-error.log
 android/app/src/main/assets/AllPrintings.sqlite
 *.sqlite
 *.db
+android/app/src/main/assets/mtg_classifier_classes.txt
+android/app/src/main/assets/mtg_classifier.tflite

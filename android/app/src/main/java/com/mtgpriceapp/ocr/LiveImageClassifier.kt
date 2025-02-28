@@ -73,6 +73,7 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
     private var currentZoom = DEFAULT_ZOOM
     private var maxZoom = MAX_ZOOM
     private var zoomRect: Rect? = null
+    private var processingPaused = false
 
     init {
         try {
@@ -169,7 +170,7 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
                 MAX_IMAGES
             ).apply {
                 setOnImageAvailableListener({ reader ->
-                    if (!isSessionActive || previewSurface == null) {
+                    if (!isSessionActive || previewSurface == null || processingPaused) {
                         reader.acquireLatestImage()?.close()
                         return@setOnImageAvailableListener
                     }
@@ -537,6 +538,30 @@ class LiveImageClassifier(private val reactContext: ReactApplicationContext) : R
             
         } catch (e: Exception) {
             Log.e(TAG, "Error updating zoom", e)
+        }
+    }
+
+    @ReactMethod
+    fun pauseProcessing(promise: Promise) {
+        try {
+            processingPaused = true
+            Log.d(TAG, "Processing paused")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error pausing processing: ${e.message}")
+            promise.reject("ERR_PAUSE_PROCESSING", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun resumeProcessing(promise: Promise) {
+        try {
+            processingPaused = false
+            Log.d(TAG, "Processing resumed")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resuming processing: ${e.message}")
+            promise.reject("ERR_RESUME_PROCESSING", e.message, e)
         }
     }
 } 

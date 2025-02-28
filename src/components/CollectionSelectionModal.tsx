@@ -8,7 +8,12 @@ import {
     FlatList,
     ActivityIndicator,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
+    name: string;
+    size: number;
+    color: string;
+}>;
 import { Collection } from '../types/collection';
 import { databaseService } from '../services/DatabaseService';
 
@@ -34,7 +39,7 @@ const CollectionSelectionModal: React.FC<CollectionSelectionModalProps> = ({
         try {
             setLoading(true);
             const result = await databaseService.getCollections();
-            setCollections(result);
+            setCollections(result.map(collection => ({ ...collection, type: 'MTG' as const })));
         } catch (error) {
             console.error('Error loading collections:', error);
         } finally {

@@ -1,6 +1,11 @@
 import SQLite, { SQLError, ResultSet, Transaction, openDatabase } from 'react-native-sqlite-storage';
 import type { ExtendedCard } from '../types/card';
 import RNFS from 'react-native-fs';
+import { migrateNewData } from './migrateNewData';
+import { MigrationManager } from '../database/migrations/MigrationManager';
+import { InitialSchemaMigration } from '../database/migrations/001_InitialSchema';
+import { DataMerger } from '../database/DataMerger';
+import { InteractionManager } from 'react-native';
 
 SQLite.enablePromise(true);
 SQLite.DEBUG(false);
@@ -66,6 +71,8 @@ export default class DatabaseService {
         };
     } = {};
     private readonly EXPENSIVE_CARDS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+    private migrationManager: MigrationManager | null = null;
+    private dataMerger: DataMerger | null = null;
 
     constructor() {
         this.initializeDatabase();
@@ -140,34 +147,40 @@ export default class DatabaseService {
         }
     }
 
-    async downloadMTGJsonDatabase() {
+    async downloadMTGJsonDatabase(): Promise<boolean> {
         const mtgJsonUrl = 'https://mtgjson.com/api/v5/AllPrintings.sqlite';
         const mtgJsonPath = `${RNFS.DocumentDirectoryPath}/AllPrintings.sqlite`;
 
         try {
-            // Download the database file
-            await RNFS.downloadFile({
-                fromUrl: mtgJsonUrl,
-                toFile: mtgJsonPath,
-                progress: (response) => {
-                    const progress = (response.bytesWritten / response.contentLength) * 100;
-                    console.log(`Download progress: ${progress}%`);
-                },
-            }).promise;
+            // Wrap the heavy operations in InteractionManager
+            await new Promise(resolve => InteractionManager.runAfterInteractions(async () => {
+                // Download the new database file
+                await RNFS.downloadFile({
+                    fromUrl: mtgJsonUrl,
+                    toFile: mtgJsonPath,
+                    progress: (response) => {
+                        const progress = (response.bytesWritten / response.contentLength) * 100;
+                        console.log(`Download progress: ${progress}%`);
+                    },
+                }).promise;
 
-            // Open the downloaded database
-            mtgJsonDb = await SQLite.openDatabase({
-                name: mtgJsonPath,
-                location: 'default',
-                createFromLocation: 1
-            });
+                // Open the new database
+                mtgJsonDb = await SQLite.openDatabase({
+                    name: mtgJsonPath,
+                    location: 'default',
+                    createFromLocation: 1
+                });
 
-            // Create price tables
-            await this.createPriceTables();
+                if (this.dataMerger) {
+                    // Migrate price data from old database to new using the correct path
+                    await this.dataMerger.mergePriceDataToNewDb(mtgJsonPath);
+                }
+                resolve(true);
+            }));
 
             return true;
         } catch (error) {
-            console.error('Error downloading MTGJson database:', error);
+            console.error('[DatabaseService] Error downloading/migrating MTGJson database:', error);
             return false;
         }
     }
@@ -257,88 +270,29 @@ export default class DatabaseService {
         }
     }
 
-    private async createTables() {
-        if (!this.db) return;
-
-        try {
-
-            console.log('Creating collection_cards table with correct structure...');
-            
-            // Create the collection_cards table with the correct structure
-            await this.db.executeSql(`
-                CREATE TABLE IF NOT EXISTS collection_cards (
-                    collection_id TEXT NOT NULL,
-                    card_uuid TEXT NOT NULL,
-                    quantity INTEGER DEFAULT 1,
-                    added_at TEXT NOT NULL,
-                    PRIMARY KEY (collection_id, card_uuid),
-                    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
-                )
-            `);
-
-            // Verify the table was created with correct structure
-            const [tableInfo] = await this.db.executeSql("PRAGMA table_info('collection_cards')");
-            console.log('collection_cards table structure:', tableInfo.rows.raw());
-
-            await this.db.executeSql(`
-                CREATE TABLE IF NOT EXISTS cards (
-                    uuid TEXT PRIMARY KEY,
-                    name TEXT,
-                    setCode TEXT,
-                    number TEXT,
-                    rarity TEXT
-                )
-            `);
-
-            // ... existing table creation code ...
-        } catch (error) {
-            console.error('Error creating tables:', error);
-            throw error;
-        }
-    }
-
     async initDatabase(): Promise<void> {
         try {
             console.log('[DatabaseService] Initializing database...');
 
-            // Close existing connection if any
-            if (this.db) {
-                try {
-                    await this.db.close();
-                } catch (closeError) {
-                    console.warn('[DatabaseService] Error closing existing database connection:', closeError);
-                }
-                this.db = null;
-            }
-
-            // Open or create database with retries
-            let retryCount = 0;
-            const maxRetries = 3;
-            
-            while (retryCount < maxRetries) {
-                try {
-                    console.log(`[DatabaseService] Attempting to open database (attempt ${retryCount + 1}/${maxRetries})...`);
-                    this.db = await SQLite.openDatabase({
-                        name: 'mtg.db',
-                        location: 'default',
-                    });
-                    break;
-                } catch (openError) {
-                    retryCount++;
-                    console.error(`[DatabaseService] Failed to open database (attempt ${retryCount}/${maxRetries}):`, openError);
-                    if (retryCount === maxRetries) {
-                        throw openError;
-                    }
-                    // Wait before retrying
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            }
-
+            // Initialize database connection
             if (!this.db) {
-                throw new Error('[DatabaseService] Failed to open database after multiple attempts');
+                this.db = await SQLite.openDatabase({
+                    name: 'mtg.db',
+                    location: 'default',
+                });
             }
 
-            console.log('[DatabaseService] Database connection established');
+            // Initialize migration manager
+            this.migrationManager = new MigrationManager(this.db);
+            this.migrationManager.registerMigration(InitialSchemaMigration);
+            
+            // Run migrations
+            await this.migrationManager.migrateToLatest();
+
+            // Initialize data merger
+            this.dataMerger = new DataMerger(this.db);
+
+            console.log('[DatabaseService] Database initialized successfully');
 
             // Enable foreign keys
             await this.db.executeSql('PRAGMA foreign_keys = ON;');
@@ -561,14 +515,27 @@ export default class DatabaseService {
             await this.initDatabase();
         }
 
+        console.time('getCollections');
         try {
-            // First get basic collection info
+            // Use a single optimized query to get both collection info and total values in one go
             const results = await this.db!.executeSql(`
                 SELECT 
-                    c.*,
-                    COUNT(cc.card_uuid) as card_count
+                    c.id,
+                    c.name,
+                    c.description,
+                    c.created_at,
+                    c.updated_at,
+                    COUNT(DISTINCT cc.card_uuid) as card_count,
+                    COALESCE(SUM(
+                        CASE 
+                            WHEN JSON_VALID(cache.card_data) 
+                            THEN CAST(JSON_EXTRACT(cache.card_data, '$.prices.usd') AS REAL)
+                            ELSE 0 
+                        END
+                    ), 0) as total_value
                 FROM collections c
                 LEFT JOIN collection_cards cc ON c.id = cc.collection_id
+                LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
                 GROUP BY c.id
                 ORDER BY c.updated_at DESC
             `);
@@ -582,37 +549,24 @@ export default class DatabaseService {
                     description: row.description,
                     createdAt: row.created_at,
                     updatedAt: row.updated_at,
-                    totalValue: 0, // We'll calculate this separately
+                    totalValue: row.total_value || 0,
                     cardCount: row.card_count || 0
                 });
             }
 
-            // Now get total values for each collection
-            for (const collection of collections) {
-                const [valueResults] = await this.db!.executeSql(`
-                    SELECT 
-                        COALESCE(SUM(
-                            CASE 
-                                WHEN JSON_VALID(cache.card_data) 
-                                THEN CAST(JSON_EXTRACT(cache.card_data, '$.prices.usd') AS REAL)
-                                ELSE 0 
-                            END
-                        ), 0) as total_value
-                    FROM collection_cards cc
-                    LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
-                    WHERE cc.collection_id = ?
-                `, [collection.id]);
-
-                if (valueResults.rows.length > 0) {
-                    collection.totalValue = valueResults.rows.item(0).total_value || 0;
-                }
-            }
-
-            console.log('Loaded collections:', collections);
+            console.log(`Loaded ${collections.length} collections`);
             return collections;
         } catch (error) {
             console.error('Error getting collections:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', {
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
             return [];
+        } finally {
+            console.timeEnd('getCollections');
         }
     }
 

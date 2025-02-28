@@ -23,6 +23,14 @@ import {
 } from '../application/legalityFilter';
 import { databaseService } from '../services/DatabaseService';
 import { Switch } from 'react-native';
+import CardItem from './CardItem';
+import CardModal from './CardModal';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import { ActivityIndicator } from 'react-native';
+import DeckCharts from './DeckCharts';
+
+const Icon = MaterialIcons as any;
 
 // Add type definitions for our sections
 type DeckSection = {
@@ -83,23 +91,36 @@ const DeckBuilder: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [isSelectAll, setIsSelectAll] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [deckName, setDeckName] = useState('New Deck');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [showCharts, setShowCharts] = useState(false);
+  const insets = useSafeAreaInsets();
   
   useEffect(() => {
     const loadCollectedCards = async () => {
-      console.log('Loading collected cards');
-      const { cards, uuids } = await databaseService.getAllCollectedCards();
-
-      const getCards = await databaseService.mapCollectionUUID(uuids);
-      if (getCards && Array.isArray(getCards) && getCards.length > 0) {
-        const firstCard = getCards[0];
-        console.log('First collected card:', {
-          name: firstCard.name,
-          setCode: firstCard.setCode,
-          imageUrl: firstCard.imageUrl,
-          prices: getCards[0].prices
-        });
+      setIsLoading(true);
+      try {
+        console.log('Loading collected cards');
+        const { cards, uuids } = await databaseService.getAllCollectedCards();
+        const getCards = await databaseService.mapCollectionUUID(uuids);
+        
+        if (getCards && Array.isArray(getCards) && getCards.length > 0) {
+          const firstCard = getCards[0];
+          console.log('First collected card:', {
+            name: firstCard.name,
+            setCode: firstCard.setCode,
+            imageUrl: firstCard.imageUrl,
+            prices: getCards[0].prices
+          });
+        }
+        setCollectedCards(cards);
+      } catch (error) {
+        console.error('Error loading cards:', error);
+        Alert.alert('Error', 'Failed to load your card collection.');
+      } finally {
+        setIsLoading(false);
       }
-      setCollectedCards(cards);
     };
     loadCollectedCards();
   }, []);
@@ -109,7 +130,6 @@ const DeckBuilder: React.FC = () => {
       isCardLegalForFormat(card, selectedFormat)
     );
   }, [selectedFormat, collectedCards]);
-
 
   // Further filter by search query, keywords, and colors
   const filteredCards = useMemo(() => {
@@ -173,14 +193,15 @@ const DeckBuilder: React.FC = () => {
   const addCardToDeck = useCallback(
     (card: ExtendedCard) => {
       const copyCount = deck.filter((c) => c.uuid === card.uuid).length;
-    if (!isCardCopyCountValid(selectedFormat, copyCount + 1)) {
+      if (!isCardCopyCountValid(selectedFormat, copyCount + 1)) {
         Alert.alert(
           'Copy Limit Exceeded',
           `You cannot add more copies of ${card.name} in ${selectedFormat} format.`
         );
-      return;
-    }
+        return;
+      }
       setDeck((prevDeck) => [...prevDeck, card]);
+      // Show feedback toast or animation here
     },
     [deck, selectedFormat]
   );
@@ -188,11 +209,11 @@ const DeckBuilder: React.FC = () => {
   const removeCardFromDeck = useCallback(
     (card: ExtendedCard) => {
       const index = deck.findIndex((c) => c.uuid === card.uuid);
-    if (index !== -1) {
-      const updatedDeck = [...deck];
-      updatedDeck.splice(index, 1);
-      setDeck(updatedDeck);
-    }
+      if (index !== -1) {
+        const updatedDeck = [...deck];
+        updatedDeck.splice(index, 1);
+        setDeck(updatedDeck);
+      }
     },
     [deck]
   );
@@ -208,7 +229,7 @@ const DeckBuilder: React.FC = () => {
     }
     Alert.alert(
       'Deck Saved',
-      `Your deck of ${deck.length} cards has been saved for the ${selectedFormat} format.`
+      `Your deck "${deckName}" with ${deck.length} cards has been saved for the ${selectedFormat} format.`
     );
   };
 
@@ -219,13 +240,15 @@ const DeckBuilder: React.FC = () => {
         style={[styles.viewModeButton, viewMode === 'grid' && styles.activeViewMode]}
         onPress={() => setViewMode('grid')}
       >
-        <Text style={styles.viewModeText}>Grid</Text>
+        <Icon name="grid-view" size={18} color={viewMode === 'grid' ? '#fff' : '#333'} />
+        <Text style={[styles.viewModeText, viewMode === 'grid' && styles.activeViewModeText]}>Grid</Text>
       </TouchableOpacity>
       <TouchableOpacity
         style={[styles.viewModeButton, viewMode === 'list' && styles.activeViewMode]}
         onPress={() => setViewMode('list')}
       >
-        <Text style={styles.viewModeText}>List</Text>
+        <Icon name="view-list" size={18} color={viewMode === 'list' ? '#fff' : '#333'} />
+        <Text style={[styles.viewModeText, viewMode === 'list' && styles.activeViewModeText]}>List</Text>
       </TouchableOpacity>
     </View>
   );
@@ -269,6 +292,8 @@ const DeckBuilder: React.FC = () => {
         'Some cards exceeded format copy limits',
         'Not all selected cards were added to the deck'
       );
+    } else if (addedCount > 0) {
+      Alert.alert('Cards Added', `${addedCount} cards were added to your deck.`);
     }
   }, [selectedCards, deck, selectedFormat, collectedCards]);
 
@@ -291,41 +316,18 @@ const DeckBuilder: React.FC = () => {
 
   // Modify renderAvailableCard to include selection
   const renderAvailableCard = ({ item }: { item: ExtendedCard }) => (
-    <TouchableOpacity
-      style={[
-        viewMode === 'grid' ? styles.gridCard : styles.listCard,
-        item.uuid && selectedCards.has(item.uuid) && styles.selectedCard
-      ]}
-      onPress={() => {
-        console.log('Selected Card:', JSON.stringify(item, null, 2));
-        setSelectedCard(item);
+    <CardItem
+      card={item}
+      viewMode={viewMode}
+      isSelected={!!(item.uuid && selectedCards.has(item.uuid))}
+      onSelect={(card) => {
+        console.log('Selected Card:', JSON.stringify(card, null, 2));
+        setSelectedCard(card);
       }}
-      onLongPress={() => item.uuid && toggleCardSelection(item.uuid)}
-    >
-      {item.uuid && selectedCards.has(item.uuid) && (
-        <View style={styles.selectionCheckbox}>
-          <Switch
-            value={true}
-            trackColor={{ true: "#1e88e5" }}
-            style={styles.checkboxContainer}
-          />
-        </View>
-      )}
-      {item.imageUrl && (
-        <Image 
-          source={{ uri: item.imageUrl }} 
-          style={viewMode === 'grid' ? styles.gridImage : styles.listImage}
-          resizeMode="contain"
-        />
-      )}
-      <Text style={styles.cardTitle}>{item.name}</Text>
-      {item.edhrec_rank && (
-        <Text style={styles.edhrecRank}>EDHREC Rank: {item.edhrec_rank}</Text>
-      )}
-      {viewMode === 'list' && (
-        <Text style={styles.cardDetail}>{item.type}</Text>
-      )}
-    </TouchableOpacity>
+      onLongPress={(card) => {
+        if (card.uuid) toggleCardSelection(card.uuid);
+      }}
+    />
   );
 
   // Render a deck item that shows the card name and quantity, with a remove option
@@ -334,32 +336,133 @@ const DeckBuilder: React.FC = () => {
   }: {
     item: { card: ExtendedCard; count: number };
   }) => (
-    <View style={styles.deckCard}>
-      <Text style={styles.cardTitle}>{item.card.name}</Text>
-      <Text style={styles.cardCount}>x{item.count}</Text>
+    <TouchableOpacity 
+      style={styles.deckCard}
+      onPress={() => setSelectedCard(item.card)}
+    >
+      <View style={styles.deckCardContent}>
+        {item.card.imageUrl && (
+          <Image
+            source={{ uri: item.card.imageUrl }}
+            style={styles.deckCardImage}
+            resizeMode="contain"
+          />
+        )}
+        <View style={styles.deckCardDetails}>
+          <Text style={styles.cardTitle} numberOfLines={1}>{item.card.name}</Text>
+          <Text style={styles.cardType} numberOfLines={1}>{item.card.type}</Text>
+          <View style={styles.countContainer}>
+            <Text style={styles.cardCount}>x{item.count}</Text>
+          </View>
+        </View>
+      </View>
       <TouchableOpacity
         style={styles.removeIcon}
         onPress={() => removeCardFromDeck(item.card)}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
       >
-        <Text style={styles.removeText}>Remove</Text>
+        <Icon name="remove-circle" size={20} color="#ff5252" />
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 
   // Add search instructions text
   const renderSearchInstructions = () => (
-    <View style={styles.searchInstructions}>
-      <Text style={styles.searchInstructionsText}>
-        Search by name, type, or text. Special searches:{'\n'}
-        • Color: c:w (white), c:u (blue), c:b (black), c:r (red), c:g (green), c:c (colorless){'\n'}
-        • Multiple colors: c:wu (white-blue), c:rg (red-green), etc.{'\n'}
-        • Keywords: k:flying, k:vigilance, etc.
-      </Text>
+    <TouchableOpacity 
+      style={styles.searchInstructions}
+      onPress={() => {
+        Alert.alert(
+          'Search Help',
+          'Search by name, type, or text.\n\n' +
+          'Color searches:\n' +
+          '• c:w (white), c:u (blue), c:b (black), c:r (red), c:g (green), c:c (colorless)\n' +
+          '• Multiple colors: c:wu (white-blue), c:rg (red-green), etc.\n\n' +
+          'Keyword searches:\n' +
+          '• k:flying, k:vigilance, etc.'
+        );
+      }}
+    >
+      <Icon name="help-outline" size={16} color="#666" />
+      <Text style={styles.searchInstructionsText}>Search help</Text>
+    </TouchableOpacity>
+  );
+
+  const renderDeckHeader = () => (
+    <View style={styles.deckHeader}>
+      {isEditingName ? (
+        <TextInput
+          style={styles.deckNameInput}
+          value={deckName}
+          onChangeText={setDeckName}
+          autoFocus
+          onBlur={() => setIsEditingName(false)}
+          onSubmitEditing={() => setIsEditingName(false)}
+        />
+      ) : (
+        <TouchableOpacity 
+          style={styles.deckNameContainer}
+          onPress={() => setIsEditingName(true)}
+        >
+          <Text style={styles.deckNameText}>{deckName}</Text>
+          <Icon name="edit" size={16} color="#666" />
+        </TouchableOpacity>
+      )}
+      <View style={styles.deckControls}>
+        <Text style={styles.deckStatsText}>{deck.length} cards</Text>
+        <TouchableOpacity
+          onPress={() => setShowCharts(!showCharts)}
+          style={styles.chartToggle}
+        >
+          <Icon name={showCharts ? "bar-chart" : "analytics"} size={18} color="#555" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Deck Builder</Text>
+        {renderViewModeToggle()}
+        <View style={styles.formatSelector}>
+          <Text style={styles.formatLabel}>Format:</Text>
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={selectedFormat}
+              style={styles.picker}
+              onValueChange={(itemValue: React.SetStateAction<string>) => setSelectedFormat(itemValue)}
+            >
+              {formats.map((format) => (
+                <Picker.Item
+                  key={format}
+                  label={format.charAt(0).toUpperCase() + format.slice(1)}
+                  value={format}
+                />
+              ))}
+            </Picker>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.searchContainer}>
+        <View style={styles.searchInputContainer}>
+          <Icon name="search" size={20} color="#666" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search cards by name, type, color (c:r), or keyword (k:flying)"
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Icon name="clear" size={20} color="#666" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        {renderSearchInstructions()}
+      </View>
+
       {selectedCards.size > 0 && (
         <View style={styles.multiSelectBar}>
           <View style={styles.selectionActions}>
@@ -379,261 +482,119 @@ const DeckBuilder: React.FC = () => {
             style={styles.addSelectedButton}
             onPress={addSelectedToDeck}
           >
-            <Text style={styles.addSelectedText}>Add Selected to Deck</Text>
+            <Icon name="add" size={16} color="#1e88e5" />
+            <Text style={styles.addSelectedText}>Add to Deck</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      <View style={styles.header}>
-        <Text style={styles.title}>Deck Builder</Text>
-        {renderViewModeToggle()}
-      <View style={styles.formatSelector}>
-          <Text style={styles.formatLabel}>Format:</Text>
-        <Picker
-          selectedValue={selectedFormat}
-          style={styles.picker}
-            onValueChange={(itemValue: React.SetStateAction<string>) =>
-              setSelectedFormat(itemValue)
-            }
-          >
-            {formats.map((format) => (
-              <Picker.Item
-                key={format}
-                label={format.charAt(0).toUpperCase() + format.slice(1)}
-                value={format}
-              />
-          ))}
-        </Picker>
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#1e88e5" />
+          <Text style={styles.loadingText}>Loading your cards...</Text>
         </View>
-      </View>
-
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search cards (try 'c:w' for white cards or 'k:flying' for flying)"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {renderSearchInstructions()}
-      </View>
-
-      <FlatList
-        ListHeaderComponent={
-          <>
-            <Text style={styles.sectionTitle}>Available Cards</Text>
+      ) : (
+        <View style={styles.contentContainer}>
+          <View style={styles.cardsSection}>
+            <Text style={styles.sectionTitle}>Available Cards ({filteredCards.length})</Text>
             <FlatList
               data={filteredCards}
               keyExtractor={(item) => item.uuid ?? ''}
-        renderItem={renderAvailableCard}
+              renderItem={renderAvailableCard}
               numColumns={viewMode === 'grid' ? 2 : 1}
               contentContainerStyle={styles.cardsList}
               columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
-              scrollEnabled={false}
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={10}
+              maxToRenderPerBatch={20}
+              windowSize={5}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Icon name="search-off" size={40} color="#ccc" />
+                  <Text style={styles.emptyStateText}>
+                    {searchQuery ? 'No cards match your search' : 'No cards in your collection'}
+                  </Text>
+                </View>
+              }
             />
-            <Text style={styles.sectionTitle}>Your Deck ({deck.length} cards)</Text>
-          </>
-        }
-        data={groupedDeck}
-        keyExtractor={(item) => item.card.uuid ?? ''}
-        renderItem={renderDeckItem}
-        numColumns={2}
-        contentContainerStyle={styles.content}
-        columnWrapperStyle={{ justifyContent: 'space-between' }}
-        ListEmptyComponent={
-          <Text style={styles.emptyDeckText}>
-            Your deck is empty. Tap on a card to add it.
-          </Text>
-        }
-      />
+          </View>
 
-      <TouchableOpacity style={styles.saveButton} onPress={saveDeck}>
+          <View style={styles.deckSection}>
+            {renderDeckHeader()}
+            
+            {showCharts && deck.length > 0 ? (
+              <DeckCharts deck={deck} />
+            ) : (
+              <FlatList
+                data={groupedDeck}
+                keyExtractor={(item) => item.card.uuid ?? ''}
+                renderItem={renderDeckItem}
+                contentContainerStyle={styles.deckList}
+                showsVerticalScrollIndicator={false}
+                ListEmptyComponent={
+                  <View style={styles.emptyState}>
+                    <Icon name="style" size={40} color="#ccc" />
+                    <Text style={styles.emptyStateText}>
+                      Your deck is empty. Tap on a card to add it.
+                    </Text>
+                  </View>
+                }
+              />
+            )}
+          </View>
+        </View>
+      )}
+
+      <TouchableOpacity 
+        style={[styles.saveButton, { bottom: insets.bottom + 20 }]} 
+        onPress={saveDeck}
+        activeOpacity={0.8}
+      >
+        <Icon name="save" size={20} color="#fff" />
         <Text style={styles.saveButtonText}>Save Deck</Text>
       </TouchableOpacity>
 
       {selectedCard && (
-        <Modal
-          transparent={true}
-          animationType="fade"
-          visible={true}
-          onRequestClose={() => setSelectedCard(null)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <ScrollView style={styles.modalScroll}>
-                {/* Header Section */}
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>{selectedCard.name}</Text>
-                  {selectedCard.manaCost && (
-                    <Text style={styles.manaCost}>{selectedCard.manaCost}</Text>
-                  )}
-                </View>
-
-                {/* Image Section */}
-                {selectedCard.imageUrl && (
-                  <Image
-                    source={{ uri: selectedCard.imageUrl }}
-                    style={styles.modalImage}
-                    resizeMode="contain"
-                  />
-                )}
-
-                {/* Type Line Section */}
-                <View style={styles.modalSection}>
-                  <Text style={styles.typeText}>
-                    {selectedCard.type}
-                    {selectedCard.rarity && ` • ${selectedCard.rarity}`}
-                  </Text>
-                </View>
-
-                {/* Card Text Section */}
-                {selectedCard.text && (
-                  <View style={styles.modalSection}>
-                    <Text style={styles.sectionTitle}>Rules Text</Text>
-                    <Text style={styles.rulesText}>{selectedCard.text}</Text>
-                  </View>
-                )}
-
-                {/* Stats Section */}
-                {(selectedCard.power || selectedCard.toughness) && (
-                  <View style={styles.modalSection}>
-                    <Text style={styles.statsText}>
-                      Power/Toughness: {selectedCard.power}/{selectedCard.toughness}
-                    </Text>
-                  </View>
-                )}
-
-                {/* Color Identity Section */}
-                {selectedCard.colorIdentity && selectedCard.colorIdentity.length > 0 && (
-                  <View style={styles.modalSection}>
-                    <Text style={styles.sectionTitle}>Color Identity</Text>
-                    <View style={styles.colorIdentityContainer}>
-                      {selectedCard.colorIdentity.map((color, index) => (
-                        <View 
-                          key={index} 
-                          style={[
-                            styles.colorDot,
-                            { backgroundColor: getColorFromIdentity(color) }
-                          ]}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                {/* Keywords Section */}
-                {selectedCard.keywords && selectedCard.keywords.length > 0 && (
-                  <View style={styles.modalSection}>
-                    <Text style={styles.sectionTitle}>Keywords</Text>
-                    <View style={styles.keywordsContainer}>
-                      {selectedCard.keywords.map((keyword, index) => (
-                        <View key={index} style={styles.keywordPill}>
-                          <Text style={styles.keywordText}>{keyword}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                {/* Set Information */}
-                <View style={styles.modalSection}>
-                  <Text style={styles.sectionTitle}>Set Information</Text>
-                  <Text style={styles.setInfo}>
-                    {selectedCard.setName} ({selectedCard.setCode.toUpperCase()})
-                    {'\n'}Collector Number: {selectedCard.collectorNumber}
-                  </Text>
-                </View>
-
-                {/* Legalities Section */}
-                {selectedCard.legalities && (
-                  <View style={styles.modalSection}>
-                    <Text style={styles.sectionTitle}>Format Legality</Text>
-                    <View style={styles.legalitiesContainer}>
-                      {Object.entries(selectedCard.legalities).map(([format, status]) => (
-                        <View 
-                          key={format} 
-                          style={[
-                            styles.legalityPill,
-                            { backgroundColor: getLegalityColor(status) }
-                          ]}
-                        >
-                          <Text style={styles.legalityText}>
-                            {format}: {status}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                {/* Additional Information */}
-                <View style={styles.modalSection}>
-                  <Text style={styles.sectionTitle}>Additional Information</Text>
-                  <Text style={styles.additionalInfo}>
-                    {`Mana Cost: ${selectedCard.manaCost || 'None'}\n`}
-                    {`CMC: ${calculateCMC(selectedCard.manaCost)}\n`}
-                    {selectedCard.power && `Power: ${selectedCard.power}\n`}
-                    {selectedCard.toughness && `Toughness: ${selectedCard.toughness}\n`}
-                    {selectedCard.rarity && `Rarity: ${selectedCard.rarity}\n`}
-                    {selectedCard.edhrec_rank && `EDHREC Rank: ${selectedCard.edhrec_rank}\n`}
-                    {selectedCard.booster && `Found in Boosters: ${selectedCard.booster}`}
-                  </Text>
-                </View>
-
-                {/* Flavor Text Section */}
-                {selectedCard.flavorText && (
-                  <View style={styles.modalSection}>
-                    <Text style={styles.flavorText}>{selectedCard.flavorText}</Text>
-                  </View>
-                )}
-              </ScrollView>
-              
-              <View style={styles.modalButtons}>
-                <TouchableOpacity
-                  style={styles.modalButton}
-                  onPress={() => {
-                    addCardToDeck(selectedCard);
-                    setSelectedCard(null);
-                  }}
-                >
-                  <Text style={styles.modalButtonText}>Add to Deck</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.cancelButton]}
-                  onPress={() => setSelectedCard(null)}
-                >
-                  <Text style={styles.modalButtonText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-    </View>
-        </Modal>
+        <CardModal
+          card={selectedCard}
+          onAdd={() => {
+            addCardToDeck(selectedCard);
+            setSelectedCard(null);
+          }}
+          onClose={() => setSelectedCard(null)}
+        />
       )}
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
+  container: {
     flex: 1,
-    backgroundColor: '#eaeaea',
+    backgroundColor: '#f5f7fa',
   },
   header: {
     padding: 16,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
-    alignItems: 'center',
+    borderBottomColor: '#eaeaea',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
   title: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
     color: '#333',
+    textAlign: 'center',
+    marginBottom: 8,
   },
   formatSelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    width: '100%',
+    marginTop: 12,
     justifyContent: 'center',
   },
   formatLabel: {
@@ -641,397 +602,300 @@ const styles = StyleSheet.create({
     color: '#555',
     marginRight: 8,
   },
-  picker: {
-    height: 50,
-    width: '70%',
-    backgroundColor: '#f0f0f0',
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#ddd',
     borderRadius: 8,
+    overflow: 'hidden',
+    width: '60%',
+  },
+  picker: {
+    height: 40,
+    backgroundColor: '#f9f9f9',
   },
   searchContainer: {
     padding: 12,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
+    borderBottomColor: '#eaeaea',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    paddingHorizontal: 8,
+  },
+  searchIcon: {
+    marginRight: 8,
   },
   searchInput: {
+    flex: 1,
     height: 40,
-    borderColor: '#ccc',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    backgroundColor: '#f9f9f9',
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#333',
   },
-  content: {
-    padding: 16,
-    paddingBottom: 100, // extra space for floating button
+  searchInstructions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingHorizontal: 4,
+  },
+  searchInstructionsText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
+  },
+  contentContainer: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  cardsSection: {
+    flex: 1,
+    borderRightWidth: 1,
+    borderRightColor: '#eaeaea',
+    padding: 8,
+  },
+  deckSection: {
+    flex: 1,
+    padding: 8,
   },
   sectionTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: '#333',
-    marginVertical: 12,
-  },
-  cardsList: {
-    paddingBottom: 16,
-  },
-  cardContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 16,
-    padding: 12,
-    flex: 1,
-    marginHorizontal: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  cardHeader: {
-    marginBottom: 8,
-  },
-  cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#222',
-    textAlign: 'center',
+    color: '#333',
+    padding: 8,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    marginVertical: 8,
   },
-  cardBody: {
+  cardsList: {
+    paddingVertical: 8,
+  },
+  deckList: {
+    paddingVertical: 8,
+    paddingBottom: 100, // Space for save button
+  },
+  deckHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+  },
+  deckNameContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
-  cardDetail: {
-    fontSize: 14,
-    color: '#666',
+  deckNameText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginRight: 8,
+  },
+  deckNameInput: {
+    flex: 1,
+    height: 30,
+    backgroundColor: '#fff',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    fontSize: 16,
+    color: '#333',
+  },
+  deckControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deckStatsText: {
+    fontSize: 12,
+    color: '#555',
+    fontWeight: '500',
+    marginRight: 8,
+    backgroundColor: '#e5e5e5',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  chartToggle: {
+    padding: 6,
+    backgroundColor: '#e5e5e5',
+    borderRadius: 16,
   },
   deckCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-    flex: 1,
-    marginHorizontal: 8,
-    alignItems: 'center',
+    borderRadius: 8,
+    marginBottom: 8,
+    padding: 8,
     shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deckCardContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deckCardImage: {
+    width: 40,
+    height: 56,
+    marginRight: 8,
+    borderRadius: 4,
+  },
+  deckCardDetails: {
+    flex: 1,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  cardType: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+  countContainer: {
+    marginTop: 4,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignSelf: 'flex-start',
   },
   cardCount: {
-    fontSize: 14,
-    color: '#888',
-    marginVertical: 4,
+    fontSize: 12,
+    color: '#555',
+    fontWeight: '500',
   },
   removeIcon: {
-    backgroundColor: '#ff5252',
-    borderRadius: 20,
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-    marginTop: 6,
+    padding: 4,
   },
-  removeText: {
-    fontSize: 12,
-    color: '#fff',
-    fontWeight: '600',
-  },
-  emptyDeckText: {
-    fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
-    marginVertical: 16,
-  },
-  saveButton: {
-    position: 'absolute',
-    bottom: 20,
-    left: 20,
-    right: 20,
-    backgroundColor: '#1e88e5',
-    borderRadius: 30,
-    paddingVertical: 14,
+  emptyState: {
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 5,
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
-    alignItems: 'center',
+    padding: 24,
   },
-  modalContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    width: '90%',
-    maxHeight: '80%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 12,
-    color: '#333',
-    textAlign: 'center',
-  },
-  modalText: {
-    fontSize: 16,
-    color: '#555',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  modalSubText: {
+  emptyStateText: {
+    marginTop: 8,
     fontSize: 14,
-    color: '#777',
-    marginBottom: 20,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    paddingTop: 8,
-  },
-  modalButton: {
-    flex: 1,
-    backgroundColor: '#1e88e5',
-    paddingVertical: 10,
-    marginHorizontal: 5,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#ff5252',
-  },
-  modalButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#888',
+    textAlign: 'center',
   },
   viewModeContainer: {
     flexDirection: 'row',
+    alignSelf: 'center',
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    overflow: 'hidden',
     marginVertical: 8,
-    
   },
   viewModeButton: {
-    padding: 8,
-    marginHorizontal: 4,
-    borderRadius: 8,
-    backgroundColor: '#e0e0e0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#f0f0f0',
   },
   activeViewMode: {
     backgroundColor: '#1e88e5',
   },
   viewModeText: {
+    marginLeft: 4,
+    fontSize: 13,
     color: '#333',
-    fontWeight: '600',
+    fontWeight: '500',
   },
-  gridCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 16,
-    padding: 12,
-    flex: 1,
-    marginHorizontal: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-    alignItems: 'center',
-  },
-  listCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginBottom: 8,
-    padding: 12,
-    width: '100%',
-  },
-  gridImage: {
-    width: 120,
-    height: 170,
-    marginBottom: 8,
-  },
-  listImage: {
-    width: 60,
-    height: 85,
-    marginRight: 12,
-  },
-  selectedCard: {
-    borderColor: '#1e88e5',
-    borderWidth: 2,
+  activeViewModeText: {
+    color: '#fff',
   },
   multiSelectBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#1e88e5',
+    padding: 12,
+    backgroundColor: '#e3f2fd',
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd',
+    borderBottomColor: '#bbdefb',
   },
   selectionActions: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   selectionCount: {
-    fontSize: 16,
-    color: '#fff',
-    marginRight: 12,
-  },
-  selectAllButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 16,
+    fontSize: 14,
+    color: '#1e88e5',
+    fontWeight: '600',
     marginRight: 8,
   },
+  selectAllButton: {
+    backgroundColor: '#bbdefb',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+  },
   selectAllText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
+    color: '#1565c0',
+    fontWeight: '500',
+    fontSize: 13,
   },
   addSelectedButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#fff',
     paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1e88e5',
   },
   addSelectedText: {
     color: '#1e88e5',
-    fontWeight: '600',
-    fontSize: 14,
+    fontWeight: '500',
+    fontSize: 13,
+    marginLeft: 4,
   },
-  selectionCheckbox: {
+  saveButton: {
     position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 1,
-  },
-  checkboxContainer: {
-    margin: 0,
-    padding: 0,
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-  },
-  modalScroll: {
-    flexGrow: 0,
-  },
-  modalHeader: {
+    left: 20,
+    right: 20,
+    backgroundColor: '#1e88e5',
+    borderRadius: 28,
+    paddingVertical: 14,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
   },
-  manaCost: {
+  saveButtonText: {
+    color: '#fff',
     fontSize: 16,
-    color: '#666',
+    fontWeight: '600',
+    marginLeft: 8,
   },
-  modalImage: {
-    width: '100%',
-    height: 300,
-    marginBottom: 16,
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  modalSection: {
-    marginBottom: 12,
-    padding: 12,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-  },
-  typeText: {
+  loadingText: {
+    marginTop: 16,
     fontSize: 16,
-    color: '#444',
-    fontWeight: '500',
-  },
-  rulesText: {
-    fontSize: 14,
-    color: '#444',
-    lineHeight: 20,
-  },
-  statsText: {
-    fontSize: 14,
-    color: '#444',
-    fontWeight: '500',
-  },
-  colorIdentityContainer: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  colorDot: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#ddd',
-  },
-  keywordsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  keywordPill: {
-    backgroundColor: '#e9ecef',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-  },
-  keywordText: {
-    fontSize: 12,
-    color: '#495057',
-  },
-  setInfo: {
-    fontSize: 14,
-    color: '#495057',
-    lineHeight: 20,
-  },
-  legalitiesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  legalityPill: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 12,
-  },
-  legalityText: {
-    fontSize: 12,
-    color: '#333',
-  },
-  additionalInfo: {
-    fontSize: 14,
-    color: '#495057',
-    lineHeight: 20,
-  },
-  flavorText: {
-    fontSize: 14,
-    color: '#666',
-    fontStyle: 'italic',
-    lineHeight: 20,
-  },
-  edhrecRank: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  searchInstructions: {
-    marginTop: 8,
-    padding: 8,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-  },
-  searchInstructionsText: {
-    fontSize: 12,
-    color: '#666',
-    lineHeight: 18,
+    color: '#555',
   },
 });
 

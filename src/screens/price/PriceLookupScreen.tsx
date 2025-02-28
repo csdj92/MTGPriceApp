@@ -217,9 +217,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 if (lorcanaResults && lorcanaResults.length > 0) {
                     if (lorcanaResults.length > 1) {
                         // Multiple cards found, show selection modal
-                        setMultipleCardsFound(lorcanaResults);
-                        setMultipleCardsModalVisible(true);
                         setIsScanningPaused(true);
+                        // Add a small delay to ensure camera processing stops before showing modal
+                        setTimeout(() => {
+                            setMultipleCardsFound(lorcanaResults);
+                            setMultipleCardsModalVisible(true);
+                        }, 100);
                         return;
                     }
 
@@ -343,8 +346,12 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
     const handleLorcanaCardSelection = async (selectedLorcanaCard: LorcanaCard) => {
         setMultipleCardsModalVisible(false);
-        setIsScanningPaused(false);
+        // Process the card first, then resume scanning
         await processLorcanaCard(selectedLorcanaCard, Date.now());
+        // Add small delay before resuming to ensure modal is fully closed
+        setTimeout(() => {
+            setIsScanningPaused(false);
+        }, 100);
     };
 
     const handleScanError = (error: Error) => {
@@ -834,7 +841,10 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 onSelect={handleLorcanaCardSelection}
                 onClose={() => {
                     setMultipleCardsModalVisible(false);
-                    setIsScanningPaused(false);
+                    // Add small delay before resuming camera to ensure modal is fully closed
+                    setTimeout(() => {
+                        setIsScanningPaused(false);
+                    }, 100);
                 }}
             />
         </SafeAreaView>

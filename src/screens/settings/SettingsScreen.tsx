@@ -9,8 +9,10 @@ import {
     Alert,
     ActivityIndicator,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+const Icon = MaterialCommunityIcons as any;
 import { databaseService } from '../../services/DatabaseService';
+
 
 interface SettingsSectionProps {
     title: string;
