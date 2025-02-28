@@ -10,10 +10,11 @@ import {
 } from 'react-native';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { ExtendedCard, OcrResult } from '../types/card';
+import { LiveOcrModule } from '../types/NativeModules';
 
-const { LiveOcr, LiveImageClassifier } = NativeModules;
-const liveOcrEmitter = new NativeEventEmitter(LiveOcr);
-const liveImageClassifierEmitter = new NativeEventEmitter(LiveImageClassifier);
+const { LiveImageClassifier } = NativeModules;
+const liveOcrEmitter = LiveOcrModule ? new NativeEventEmitter(NativeModules.LiveOcr) : null;
+const liveImageClassifierEmitter = LiveImageClassifier ? new NativeEventEmitter(LiveImageClassifier) : null;
 
 interface CardScannerProps {
   onTextDetected: (result: { text: string }) => void;
@@ -44,7 +45,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
   useEffect(() => {
     checkPermission();
 
-    const subscription = emitter.addListener(eventName, (event) => {
+    const subscription = emitter?.addListener(eventName, (event) => {
       if (!isPaused) {
         if (useClassifier) {
           if (event.label) {
@@ -58,7 +59,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
       }
     });
 
-    const sizeSubscription = emitter.addListener('PreviewSize', (event) => {
+    const sizeSubscription = emitter?.addListener('PreviewSize', (event) => {
       const { width, height } = event;
       setPreviewSize({ width, height });
       updateAspectRatio(width, height);
@@ -71,8 +72,8 @@ const CardScanner: React.FC<CardScannerProps> = ({
     });
 
     return () => {
-      subscription.remove();
-      sizeSubscription.remove();
+      subscription?.remove();
+      sizeSubscription?.remove();
       dimensionsListener.remove();
       setIsActive(false);
       stopSession().catch(() => {});
@@ -96,7 +97,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
             if (useClassifier) {
               await LiveImageClassifier.pauseProcessing();
             } else {
-              await LiveOcr.pauseProcessing();
+              await LiveOcrModule.pauseProcessing();
             }
           } catch (error) {
             console.warn('Failed to pause processing:', error);
@@ -108,7 +109,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
           if (useClassifier) {
             await LiveImageClassifier.resumeProcessing();
           } else {
-            await LiveOcr.resumeProcessing();
+            await LiveOcrModule.resumeProcessing();
           }
         } catch (error) {
           console.warn('Failed to resume processing:', error);
@@ -191,8 +192,8 @@ const CardScanner: React.FC<CardScannerProps> = ({
         const { width, height } = await LiveImageClassifier.getPreviewSize();
         updateAspectRatio(width, height);
       } else {
-        await LiveOcr.startOcrSession();
-        const { width, height } = await LiveOcr.getPreviewSize();
+        await LiveOcrModule.startOcrSession();
+        const { width, height } = await LiveOcrModule.getPreviewSize();
         updateAspectRatio(width, height);
       }
       setIsActive(true);
@@ -207,7 +208,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
       if (useClassifier) {
         await LiveImageClassifier.stopClassificationSession();
       } else {
-        await LiveOcr.stopOcrSession();
+        await LiveOcrModule.stopOcrSession();
       }
     } catch (error) {
       console.error('Failed to stop session:', error);

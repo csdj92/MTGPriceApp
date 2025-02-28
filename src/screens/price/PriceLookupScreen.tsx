@@ -14,6 +14,7 @@ import {
     Platform,
     ToastAndroid,
     Linking,
+    NativeModules
 } from 'react-native';
 import { scryfallService } from '../../services/ScryfallService';
 import { databaseService } from '../../services/DatabaseService';
@@ -32,6 +33,7 @@ import LorcanaCardSelectionModal from '../../components/LorcanaCardSelectionModa
 import CameraTest from '../../components/test';
 import { Camera } from 'react-native-vision-camera';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import { LiveOcrModule } from '../../types/NativeModules';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 
@@ -161,6 +163,11 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         console.log('[PriceLookupScreen] Switching to MTG scan mode');
         setIsLorcanaScan(false);
         setIsCameraActive(true);
+        
+        // Set the native module to MTG scan mode
+        if (LiveOcrModule) {
+            LiveOcrModule.setLorcanaScanMode(false);
+        }
     };
 
     // Clear recent scans periodically
@@ -436,6 +443,11 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         console.log('[PriceLookupScreen] Switching to Lorcana scan mode');
         setIsLorcanaScan(true);
         setIsCameraActive(true);
+        
+        // Set the native module to Lorcana scan mode
+        if (LiveOcrModule) {
+            LiveOcrModule.setLorcanaScanMode(true);
+        }
     };
 
     const handleClearLorcanaDB = async () => {
@@ -521,13 +533,55 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 
                 <TouchableOpacity 
                     style={styles.cameraButton}
-                    onPress={() => setIsLorcanaScan(!isLorcanaScan)}
+                    onPress={() => {
+                        setIsLorcanaScan(!isLorcanaScan);
+                        // Toggle Lorcana scan mode in native module
+                        if (LiveOcrModule) {
+                            LiveOcrModule.setLorcanaScanMode(!isLorcanaScan);
+                        }
+                    }}
                 >
                     <Icon 
                         name="swap-horizontal" 
                         size={24} 
                         color="white" 
                     />
+                </TouchableOpacity>
+            </View>
+
+            {/* Zoom Controls */}
+            <View style={styles.zoomControls}>
+                <TouchableOpacity 
+                    style={styles.zoomButton}
+                    onPress={() => {
+                        if (LiveOcrModule) {
+                            LiveOcrModule.increaseZoom();
+                        }
+                    }}
+                >
+                    <Icon name="magnify-plus-outline" size={24} color="white" />
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                    style={styles.zoomButton}
+                    onPress={() => {
+                        if (LiveOcrModule) {
+                            LiveOcrModule.decreaseZoom();
+                        }
+                    }}
+                >
+                    <Icon name="magnify-minus-outline" size={24} color="white" />
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                    style={styles.zoomButton}
+                    onPress={() => {
+                        if (LiveOcrModule) {
+                            LiveOcrModule.resetZoom();
+                        }
+                    }}
+                >
+                    <Icon name="magnify-close" size={24} color="white" />
                 </TouchableOpacity>
             </View>
 
@@ -1189,8 +1243,7 @@ const styles = StyleSheet.create({
     cameraControls: {
         position: 'absolute',
         right: 20,
-        top: '50%',
-        transform: [{ translateY: -50 }],
+        bottom: 100,
         gap: 16,
     },
     cameraButton: {
@@ -1273,6 +1326,23 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
+    },
+    zoomControls: {
+        position: 'absolute',
+        left: 20,
+        top: '50%',
+        transform: [{ translateY: -50 }],
+        gap: 16,
+    },
+    zoomButton: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderColor: 'white',
     },
 });
 

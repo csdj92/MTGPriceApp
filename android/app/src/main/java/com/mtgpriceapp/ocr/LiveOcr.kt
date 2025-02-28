@@ -30,6 +30,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 import com.mtgpriceapp.ocr.PreviewModule
 
@@ -44,9 +46,9 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         private const val MAX_IMAGES = 2              // ML Kit recommendation for backpressure
         private const val COOLDOWN_MS = 2000L         // 2 seconds cooldown between scans
         private const val AOI_LEFT_PERCENT = 0.1f     // Crop 10% from the left
-        private const val AOI_TOP_PERCENT = 0.3f      // Crop 30% from the top
+        private const val AOI_TOP_PERCENT = 0.2f      // Crop 20% from the top (was 30%) - to capture more of the card
         private const val AOI_WIDTH_PERCENT = 0.8f    // Crop 80% of width
-        private const val AOI_HEIGHT_PERCENT = 0.4f   // Crop 40% of height
+        private const val AOI_HEIGHT_PERCENT = 0.5f   // Crop 50% of height (was 40%) - to capture more details
 
         // Pre-compile regexes to avoid repeated compilation (improves performance)
         private val KEYWORD_FILTER = Regex(
@@ -59,8 +61,14 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                     "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
                     "Power|Toughness|FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE)"
         )
-        private val LORCANA_NAME_REGEX = Regex("^[A-Z][A-Z\\s']+\$")
-        private val LORCANA_VERSION_REGEX = Regex("^[A-Za-z][A-Za-z\\s\\-']+\$")
+        // Updated regex for Lorcana card names - more permissive to catch different formats
+        private val LORCANA_NAME_REGEX = Regex("^[A-Z][A-Z\\s',\\-]+\$")
+        // Updated regex for Lorcana subtypes with more flexibility
+        private val LORCANA_VERSION_REGEX = Regex("^[A-Za-z][A-Za-z\\s\\-',()]+\$")
+        // New regex for detecting Lorcana stats (e.g., "2 ⬥ | 3 ⭒")
+        private val LORCANA_STATS_REGEX = Regex("^(\\d+)\\s*[⬥⭒]\\s*[|]\\s*(\\d+)\\s*[⬥⭒]\$")
+        // New regex for detecting Lorcana ink cost
+        private val LORCANA_INK_COST_REGEX = Regex("^(\\d+)\\s*[⬥⭒]\$")
         private val MTG_NAME_REGEX = Regex("^[A-Z][a-zA-Z\\s,'\\-]+\$")
     }
 
@@ -96,6 +104,11 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     private var currentPreviewHeight: Int? = null
 
     private var processingPaused = false
+    private var isLorcanaScanMode = false
+
+    private var currentZoomLevel = 0.0f
+    private val MAX_ZOOM_LEVEL = 5.0f  // Max zoom level, can be adjusted
+    private val ZOOM_STEP = 0.5f       // Zoom increment/decrement step
 
     override fun getName() = NAME
 
@@ -240,13 +253,27 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
 
                     if (image != null) {
                         try {
-                            // Define the crop area (Area Of Interest = AOI)
+                            // Use different AOI settings for Lorcana cards
+                            val aoiSettings = if (isLorcanaScanMode) {
+                                // For Lorcana cards, focus more on the top portion where the name is
+                                listOf(0.1f, 0.15f, 0.8f, 0.6f)
+                            } else {
+                                // Default settings for MTG cards
+                                listOf(AOI_LEFT_PERCENT, AOI_TOP_PERCENT, AOI_WIDTH_PERCENT, AOI_HEIGHT_PERCENT)
+                            }
+                            
+                            val leftPercent = aoiSettings[0]
+                            val topPercent = aoiSettings[1]
+                            val widthPercent = aoiSettings[2]
+                            val heightPercent = aoiSettings[3]
+                            
                             val width = image.width
                             val height = image.height
-                            val left = (width * AOI_LEFT_PERCENT).toInt()
-                            val top = (height * AOI_TOP_PERCENT).toInt()
-                            val cropWidth = (width * AOI_WIDTH_PERCENT).toInt()
-                            val cropHeight = (height * AOI_HEIGHT_PERCENT).toInt()
+                            
+                            val left = (width * leftPercent).toInt()
+                            val top = (height * topPercent).toInt()
+                            val cropWidth = (width * widthPercent).toInt()
+                            val cropHeight = (height * heightPercent).toInt()
 
                             // Instead of converting the full image, compress only the AOI.
                             val croppedBitmap = cropImage(image, left, top, cropWidth, cropHeight)
@@ -444,26 +471,61 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     /**
-     * Compute a simple score for a candidate name by rewarding typical title features.
+     * Compute a score for a candidate name by rewarding typical card title features.
+     * Higher scores indicate more likely card names.
      */
     private fun computeNameScore(name: String): Int {
         var score = 0
         val words = name.split(" ")
+        
+        // Check for proper title case (first letter caps, rest lowercase)
         val isProperTitleCase = words.all { word ->
             if (word.isEmpty()) false
             else {
                 val first = word.first()
                 first.isUpperCase() && word.drop(1).all { c ->
-                    c.isLowerCase() || c in listOf('-', '\'', '’', '‘')
+                    c.isLowerCase() || c in listOf('-', '\'', ',')
                 }
             }
         }
+        
+        // Favor proper title case heavily
         if (isProperTitleCase) score += 6
-        if (name == name.uppercase()) score += 1
-        if (name == name.lowercase()) score += 1
+        
+        // All uppercase is common for Lorcana names (but not as good as proper title case)
+        if (name == name.uppercase() && name.length >= 3) score += 4
+        
+        // All lowercase is unlikely to be a card name
+        if (name == name.lowercase()) score -= 2
+        
+        // Favor names with 2+ words (common for card names)
         if (words.size >= 2) score += 2
-        if (name.length in 3..30) score += 2
+        
+        // Favor names of reasonable length
+        if (name.length in 3..25) score += 2
+        
+        // Penalize very short or very long names
+        if (name.length < 3 || name.length > 40) score -= 3
+        
+        // Common characters in fantasy names
         if (name.contains("'")) score += 1
+        if (name.contains("-")) score += 1
+        
+        // Penalize names with excessive punctuation (likely not card names)
+        val punctCount = name.count { it in ",.!?;:()[]{}\"" }
+        if (punctCount > 2) score -= punctCount
+        
+        // Penalize names with numbers (uncommon in card titles)
+        if (name.any { it.isDigit() }) score -= 2
+        
+        // Common patterns in Lorcana card names
+        if (name.contains("THE ", ignoreCase = true)) score += 1
+        if (name.contains("OF ", ignoreCase = true)) score += 1
+        
+        // Known Lorcana prefixes
+        val knownPrefixes = listOf("MICKEY", "MINNIE", "DONALD", "GOOFY", "STITCH", "ARIEL", "BELLE", "MULAN", "SIMBA")
+        if (knownPrefixes.any { name.uppercase().startsWith(it) }) score += 3
+        
         return score
     }
 
@@ -516,25 +578,82 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
      */
     private fun findCandidate(allLines: List<String>): Triple<String, String?, Boolean>? {
         val candidates = mutableListOf<Triple<String, String?, Boolean>>()
+        
+        // Temporary storage for potential Lorcana card data
+        data class LorcanaCardData(
+            val nameIndex: Int, 
+            val name: String, 
+            var subtype: String? = null,
+            var inkCost: String? = null,
+            var stats: String? = null,
+            var confidence: Int = 1
+        )
+        
+        val lorcanaCardData = mutableListOf<LorcanaCardData>()
+        
+        // First pass: identify potential Lorcana card names and gather related data
         for (i in allLines.indices) {
             val line = allLines[i]
-            // Try Lorcana format (e.g. "CARDNAME" followed by a version line)
+            
+            // Check for Lorcana card name
             if (LORCANA_NAME_REGEX.matches(line) && !KEYWORD_FILTER.containsMatchIn(line)) {
-                if (i + 1 < allLines.size) {
-                    val nextLine = allLines[i + 1]
-                    if (LORCANA_VERSION_REGEX.matches(nextLine) && !KEYWORD_FILTER.containsMatchIn(nextLine)) {
-                        candidates.add(Triple(line, nextLine, true))
-                        continue
-                    }
-                }
-            }
-            // Otherwise, check for an MTG-style card name.
-            if (MTG_NAME_REGEX.matches(line) && !KEYWORD_FILTER.containsMatchIn(line)) {
-                candidates.add(Triple(line, null, false))
+                lorcanaCardData.add(LorcanaCardData(i, line))
             }
         }
+        
+        // Second pass: look for associated information for each potential card
+        for (cardData in lorcanaCardData) {
+            val nameIndex = cardData.nameIndex
+            
+            // Look for subtype in the next line
+            if (nameIndex + 1 < allLines.size) {
+                val nextLine = allLines[nameIndex + 1]
+                if (LORCANA_VERSION_REGEX.matches(nextLine) && !KEYWORD_FILTER.containsMatchIn(nextLine)) {
+                    cardData.subtype = nextLine
+                    cardData.confidence += 3
+                }
+            }
+            
+            // Look for ink cost and stats in nearby lines (within 3 lines)
+            val searchRange = maxOf(0, nameIndex - 2)..minOf(allLines.size - 1, nameIndex + 3)
+            for (j in searchRange) {
+                val nearbyLine = allLines[j]
+                
+                // Check for ink cost
+                if (cardData.inkCost == null && LORCANA_INK_COST_REGEX.matches(nearbyLine)) {
+                    cardData.inkCost = nearbyLine
+                    cardData.confidence += 1
+                }
+                
+                // Check for stats
+                if (cardData.stats == null && LORCANA_STATS_REGEX.matches(nearbyLine)) {
+                    cardData.stats = nearbyLine
+                    cardData.confidence += 2
+                }
+            }
+            
+            // Add as a candidate if we have at least a name and one other piece of information
+            if (cardData.subtype != null || cardData.inkCost != null || cardData.stats != null) {
+                candidates.add(Triple(cardData.name, cardData.subtype, true))
+            }
+        }
+        
+        // Fall back to looking for MTG cards if no Lorcana candidates were found
+        if (candidates.isEmpty()) {
+            for (line in allLines) {
+                if (MTG_NAME_REGEX.matches(line) && !KEYWORD_FILTER.containsMatchIn(line)) {
+                    candidates.add(Triple(line, null, false))
+                }
+            }
+        }
+        
         // Return the candidate with the highest computed score.
-        return candidates.maxByOrNull { computeNameScore(it.first) }
+        return candidates.maxByOrNull { 
+            val baseScore = computeNameScore(it.first)
+            // Give Lorcana cards a slight boost if that's what we're looking for
+            val lorcanaBoost = if (it.third) 2 else 0
+            baseScore + lorcanaBoost
+        }
     }
 
     /**
@@ -648,6 +767,132 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         } catch (e: Exception) {
             Log.e(TAG, "Error resuming processing: ${e.message}")
             promise.reject("ERR_RESUME_PROCESSING", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun setLorcanaScanMode(enabled: Boolean, promise: Promise) {
+        try {
+            isLorcanaScanMode = enabled
+            Log.d(TAG, "Lorcana scan mode set to: $enabled")
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("SET_MODE_ERROR", "Failed to set Lorcana scan mode", e)
+        }
+    }
+
+    @ReactMethod
+    fun getLorcanaScanMode(promise: Promise) {
+        promise.resolve(isLorcanaScanMode)
+    }
+
+    @ReactMethod
+    fun setZoomLevel(zoomLevel: Float, promise: Promise) {
+        try {
+            currentZoomLevel = when {
+                zoomLevel < 0 -> 0.0f
+                zoomLevel > MAX_ZOOM_LEVEL -> MAX_ZOOM_LEVEL
+                else -> zoomLevel
+            }
+            
+            applyZoom()
+            promise.resolve(currentZoomLevel)
+        } catch (e: Exception) {
+            promise.reject("ZOOM_ERROR", "Failed to set zoom level", e)
+        }
+    }
+
+    @ReactMethod
+    fun increaseZoom(promise: Promise) {
+        try {
+            currentZoomLevel = minOf(currentZoomLevel + ZOOM_STEP, MAX_ZOOM_LEVEL)
+            applyZoom()
+            promise.resolve(currentZoomLevel)
+        } catch (e: Exception) {
+            promise.reject("ZOOM_ERROR", "Failed to increase zoom", e)
+        }
+    }
+
+    @ReactMethod
+    fun decreaseZoom(promise: Promise) {
+        try {
+            currentZoomLevel = maxOf(currentZoomLevel - ZOOM_STEP, 0.0f)
+            applyZoom()
+            promise.resolve(currentZoomLevel)
+        } catch (e: Exception) {
+            promise.reject("ZOOM_ERROR", "Failed to decrease zoom", e)
+        }
+    }
+
+    @ReactMethod
+    fun getZoomLevel(promise: Promise) {
+        promise.resolve(currentZoomLevel)
+    }
+
+    @ReactMethod
+    fun resetZoom(promise: Promise) {
+        try {
+            currentZoomLevel = 0.0f
+            applyZoom()
+            promise.resolve(currentZoomLevel)
+        } catch (e: Exception) {
+            promise.reject("ZOOM_ERROR", "Failed to reset zoom", e)
+        }
+    }
+
+    private fun applyZoom() {
+        try {
+            val captureSession = this.captureSession ?: return
+            val cameraDevice = this.cameraDevice ?: return
+            
+            val captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+            
+            previewSurface?.let { captureRequestBuilder.addTarget(it) }
+            imageReader?.surface?.let { captureRequestBuilder.addTarget(it) }
+            
+            // Set up basic preview settings
+            captureRequestBuilder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            
+            // Apply zoom
+            if (currentZoomLevel > 0.0f) {
+                // A simplified approach to digital zoom
+                val manager = reactApplicationContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+                val cameraId = cameraDevice.id
+                val characteristics = manager.getCameraCharacteristics(cameraId)
+                val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
+                
+                // Calculate zoom ratio based on our zoom level
+                val zoomRatio = 1.0f + currentZoomLevel * (maxZoom - 1.0f) / MAX_ZOOM_LEVEL
+                
+                if (zoomRatio > 1.0f) {
+                    // Get the active array size
+                    val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                    if (activeRect != null) {
+                        // Calculate the crop region
+                        val xCenter = activeRect.width() / 2
+                        val yCenter = activeRect.height() / 2
+                        val halfWidth = (activeRect.width() / (2 * zoomRatio)).toInt()
+                        val halfHeight = (activeRect.height() / (2 * zoomRatio)).toInt()
+                        
+                        val cropRegion = Rect(
+                            xCenter - halfWidth,
+                            yCenter - halfHeight,
+                            xCenter + halfWidth,
+                            yCenter + halfHeight
+                        )
+                        
+                        captureRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, cropRegion)
+                        Log.d(TAG, "Applied zoom: level=$currentZoomLevel, ratio=$zoomRatio")
+                    }
+                }
+            }
+            
+            // Use the existing session to update the repeating request
+            captureSession.setRepeatingRequest(captureRequestBuilder.build(), null, backgroundHandler)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error applying zoom", e)
         }
     }
 }
