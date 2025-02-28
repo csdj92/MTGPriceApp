@@ -12,16 +12,24 @@ import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
 import com.mtgpriceapp.ocr.OcrPackage
+import com.mtgpriceapp.share.SharePackage
 
 class MainApplication : Application(), ReactApplication {
 
   override val reactNativeHost: ReactNativeHost =
       object : DefaultReactNativeHost(this) {
-        override fun getPackages(): List<ReactPackage> =
-            PackageList(this).packages.apply {
-              // Add the OcrPackage which handles both OCR and classifier functionality
-              add(OcrPackage())
-            }
+        override fun getPackages(): List<ReactPackage> {
+          val packages = PackageList(this).packages.toMutableList()
+          // Packages that cannot be autolinked yet can be added manually here
+          
+          // Add OCR package
+          packages.add(OcrPackage())
+          
+          // Add share package
+          packages.add(SharePackage())
+          
+          return packages
+        }
 
         override fun getJSMainModuleName(): String = "index"
 

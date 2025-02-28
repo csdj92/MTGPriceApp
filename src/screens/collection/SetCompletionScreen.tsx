@@ -9,6 +9,7 @@ import {
     Alert,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import DocumentPicker from 'react-native-document-picker';
 // Fix Icon type similar to LorcanaGridView
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -25,6 +26,7 @@ import {
     deleteLorcanaCardFromCollection,
     deleteLorcanaCollection
 } from '../../services/LorcanaService';
+import { exportService, collectionEventEmitter } from '../../services/ExportService';
 import type { Collection } from '../../services/DatabaseService';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
@@ -234,6 +236,26 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         return unsubscribe;
     }, [navigation, loadCollections]);
 
+    // Add listener for collection import/update events
+    useEffect(() => {
+        const handleCollectionsUpdated = (data: { type: string }) => {
+            console.log('[SetCompletionScreen] Collections updated event received:', data);
+            // Force a reload of the collections data
+            setMtgCollections([]);
+            setLorcanaCollections([]);
+            setIsLoading(true);
+            loadCollections(true);
+        };
+
+        // Add event listener and store the subscription
+        const subscription = collectionEventEmitter.addListener('collectionsUpdated', handleCollectionsUpdated);
+
+        // Cleanup function
+        return () => {
+            subscription.remove(); // Use remove() instead of removeListener
+        };
+    }, [loadCollections]);
+
     useEffect(() => {
         console.log('[SetCompletionScreen] Loading states:', { loadingMtg, loadingLorcana });
         if (!loadingMtg && !loadingLorcana) {
@@ -241,6 +263,57 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
             setIsLoading(false);
         }
     }, [loadingMtg, loadingLorcana]);
+
+    const handleImportCollection = async () => {
+        try {
+            // Show loading indicator
+            setIsLoading(true);
+            
+            // Pick a single file
+            const result = await DocumentPicker.pick({
+                type: [DocumentPicker.types.allFiles],
+                copyTo: 'cachesDirectory', // This ensures we get a file path we can work with
+            });
+            
+            if (result && result[0]) {
+                console.log('[SetCompletionScreen] File picked:', result[0]);
+                
+                // Get the file path - use fileCopyUri which is more reliable across platforms
+                const filePath = result[0].fileCopyUri;
+                
+                if (!filePath) {
+                    throw new Error('Failed to get file path from document picker');
+                }
+                
+                console.log('[SetCompletionScreen] File path for import:', filePath);
+                
+                // Show importing message
+                setIsLoading(true);
+                
+                // Import the collection
+                // Note: We don't need to call loadCollections explicitly here anymore
+                // because we'll receive the collectionsUpdated event from ExportService
+                await exportService.importLorcanaCollections(filePath);
+                
+                // The collection update event will trigger the reload
+                // But we'll still clear the loading state in case anything goes wrong
+                setTimeout(() => {
+                    setIsLoading(false);
+                }, 500);
+            }
+        } catch (error) {
+            // Handle user cancellation
+            if (DocumentPicker.isCancel(error)) {
+                console.log('User cancelled the picker');
+            } else {
+                console.error('Error picking document:', error);
+                Alert.alert('Import Error', 'Failed to import collections. Please try again.');
+            }
+        } finally {
+            // Ensure loading state is cleared
+            setIsLoading(false);
+        }
+    };
 
     if (isLoading) {
         return (
@@ -255,28 +328,38 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         <View style={styles.container}>
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Set Completion</Text>
-                <TouchableOpacity
-                    style={styles.forceInitButton}
-                    onPress={async () => {
-                        try {
-                            setIsLoading(true);
-                            await reloadLorcanaCards(); // Force reload all cards
-                            await loadCollections(true); // Use forceRefresh = true
-                            Alert.alert(
-                                'Success',
-                                'Collection data refreshed successfully!',
-                                [{ text: 'OK' }]
-                            );
-                        } catch (error) {
-                            console.error('Error initializing Lorcana:', error);
-                            Alert.alert('Error', 'Failed to initialize Lorcana database');
-                        } finally {
-                            setIsLoading(false);
-                        }
-                    }}
-                >
-                    <Icon name="refresh" size={24} color="#2196F3" />
-                </TouchableOpacity>
+                <View style={styles.headerButtons}>
+                    <TouchableOpacity
+                        style={styles.headerButton}
+                        onPress={handleImportCollection}
+                    >
+                        <Icon name="file-import" size={24} color="#2196F3" />
+                        <Text style={styles.buttonText}>Import</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.headerButton}
+                        onPress={async () => {
+                            try {
+                                setIsLoading(true);
+                                await reloadLorcanaCards(); // Force reload all cards
+                                await loadCollections(true); // Use forceRefresh = true
+                                Alert.alert(
+                                    'Success',
+                                    'Collection data refreshed successfully!',
+                                    [{ text: 'OK' }]
+                                );
+                            } catch (error) {
+                                console.error('Error initializing Lorcana:', error);
+                                Alert.alert('Error', 'Failed to initialize Lorcana database');
+                            } finally {
+                                setIsLoading(false);
+                            }
+                        }}
+                    >
+                        <Icon name="refresh" size={24} color="#2196F3" />
+                        <Text style={styles.buttonText}>Refresh</Text>
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {allCollections.length === 0 ? EmptyComponent : (
@@ -413,8 +496,25 @@ const styles = StyleSheet.create({
     deleteButton: {
         padding: 8,
     },
-    forceInitButton: {
+    headerButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    headerButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
         padding: 8,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        backgroundColor: '#f5f5f5',
+        marginLeft: 8,
+    },
+    buttonText: {
+        color: '#2196F3',
+        marginLeft: 4,
+        fontSize: 14,
+        fontWeight: '500',
     },
 });
 

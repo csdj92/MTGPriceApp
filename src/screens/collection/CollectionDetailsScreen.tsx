@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { databaseService } from '../../services/DatabaseService';
 import { getLorcanaCollectionCards, getLorcanaSetCollections, deleteLorcanaCardFromCollection, getLorcanaSetMissingCards, } from '../../services/LorcanaService';
+import { exportService, collectionEventEmitter } from '../../services/ExportService';
 import CardList from '../../components/CardList';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import LorcanaGridView from '../../components/lorcana/LorcanaGridView';
@@ -27,11 +28,8 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
-    useEffect(() => {
-        loadCollection();
-    }, [collectionId]);
-
-    const loadCollection = async () => {
+    // Define loadCollection as a useCallback to properly handle dependencies
+    const loadCollection = useCallback(async () => {
         setIsLoading(true);
         try {
             // First try MTG collections
@@ -83,7 +81,28 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [collectionId, navigation]);
+
+    useEffect(() => {
+        loadCollection();
+    }, [loadCollection]);
+
+    // Add listener for collection import/update events
+    useEffect(() => {
+        const handleCollectionsUpdated = (data: { type: string }) => {
+            console.log('[CollectionDetailsScreen] Collections updated event received:', data);
+            // Reload the collection data
+            loadCollection();
+        };
+
+        // Add event listener and store the subscription
+        const subscription = collectionEventEmitter.addListener('collectionsUpdated', handleCollectionsUpdated);
+
+        // Cleanup function
+        return () => {
+            subscription.remove(); // Use remove() instead of removeListener
+        };
+    }, [loadCollection]);
 
     const loadMoreCards = async (page: number, type: 'MTG' | 'Lorcana') => {
         if (!hasMore || isLoadingMore) return;
@@ -212,6 +231,70 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         );
     }, [collection]);
 
+    const handleExportCollection = async () => {
+        try {
+            if (!collection || collection.type !== 'Lorcana') {
+                Alert.alert('Export Error', 'Only Lorcana collections can be exported at this time.');
+                return;
+            }
+
+            // Show a loading indicator
+            setIsLoading(true);
+
+            // Export the collection
+            const filePath = await exportService.exportLorcanaCollections();
+            
+            // Hide loading indicator
+            setIsLoading(false);
+
+            // Ask if the user wants to share the file
+            Alert.alert(
+                'Export Successful',
+                'Your Lorcana collection has been exported successfully. Would you like to share it?',
+                [
+                    {
+                        text: 'No',
+                        style: 'cancel'
+                    },
+                    {
+                        text: 'Share',
+                        onPress: async () => {
+                            try {
+                                // Show loading indicator during share
+                                setIsLoading(true);
+                                
+                                // Show a message about what to expect
+                                if (Platform.OS === 'android') {
+                                    console.log('Showing Android share instructions');
+                                    Alert.alert(
+                                        'Sharing Instructions',
+                                        'You will now see share options. If the file is not attached, you can find it in your Downloads/LorcanaExports folder to share manually.',
+                                        [{ text: 'OK', onPress: async () => {
+                                            await exportService.shareLorcanaCollections(filePath);
+                                            setIsLoading(false);
+                                        }}]
+                                    );
+                                } else {
+                                    // On iOS, just share directly
+                                    await exportService.shareLorcanaCollections(filePath);
+                                    setIsLoading(false);
+                                }
+                            } catch (error) {
+                                console.error('Error sharing:', error);
+                                setIsLoading(false);
+                                Alert.alert('Share Error', 'Failed to share. You can find the export file in your downloads folder.');
+                            }
+                        }
+                    }
+                ]
+            );
+        } catch (error) {
+            console.error('Error exporting collection:', error);
+            setIsLoading(false);
+            Alert.alert('Export Error', 'Failed to export your collection. Please try again.');
+        }
+    };
+
     const cards = collection?.type === 'MTG' ? mtgCards : lorcanaCards;
 
     useEffect(() => {
@@ -235,6 +318,19 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                             : Number(collection?.totalValue || 0).toFixed(2)}
                     </Text>
                     <View style={styles.headerButtons}>
+                        {collection?.type === 'Lorcana' && (
+                            <TouchableOpacity 
+                                onPress={handleExportCollection} 
+                                style={styles.exportButton}
+                            >
+                                <Icon
+                                    name="export"
+                                    size={24}
+                                    color="#2196F3"
+                                />
+                                <Text style={styles.buttonText}>Export</Text>
+                            </TouchableOpacity>
+                        )}
                         <TouchableOpacity 
                             onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')} 
                             style={styles.viewButton}
@@ -360,6 +456,22 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    exportButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 8,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: '#e0e0e0',
+        backgroundColor: '#f5f5f5',
+        marginRight: 8,
+    },
+    buttonText: {
+        color: '#2196F3',
+        marginLeft: 4,
+        fontSize: 14,
+        fontWeight: '500',
     },
 });
 
