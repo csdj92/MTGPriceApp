@@ -71,6 +71,9 @@ const CardItem: React.FC<CardItemProps> = ({
         }
     };
 
+    // Determine if card should be displayed in expanded view
+    const shouldShowExpanded = card.isExpanded === true;
+
     return (
         <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
             <TouchableOpacity
@@ -78,6 +81,7 @@ const CardItem: React.FC<CardItemProps> = ({
                     viewMode === 'grid' ? styles.gridCard : styles.listCard,
                     isSelected && styles.selectedCard,
                     styles.cardShadow,
+                    shouldShowExpanded && styles.expandedCard
                 ]}
                 onPress={handlePress}
                 onLongPress={handleLongPress}
@@ -92,37 +96,37 @@ const CardItem: React.FC<CardItemProps> = ({
                     </View>
                 )}
                 
-                <View style={viewMode === 'grid' ? styles.gridContent : styles.listContent}>
+                <View style={shouldShowExpanded ? styles.expandedContent : (viewMode === 'grid' ? styles.gridContent : styles.listContent)}>
                     {(card.imageUris?.normal || card.imageUris?.small || card.imageUrl) ? (
                         <Image 
                             source={{ uri: card.imageUris?.normal || card.imageUris?.small || card.imageUrl }} 
-                            style={viewMode === 'grid' ? styles.gridImage : styles.listImage}
-                            resizeMode="cover"
+                            style={shouldShowExpanded ? styles.expandedImage : (viewMode === 'grid' ? styles.gridImage : styles.listImage)}
+                            resizeMode="contain"
                         />
                     ) : (
                         <View style={[
-                            viewMode === 'grid' ? styles.noImageGrid : styles.noImageList,
+                            shouldShowExpanded ? styles.noImageExpanded : (viewMode === 'grid' ? styles.noImageGrid : styles.noImageList),
                             { backgroundColor: '#e0e0e0' }
                         ]}>
-                            <Icon name="image-off" size={viewMode === 'grid' ? 40 : 24} color="#999" />
+                            <Icon name="image-off" size={shouldShowExpanded ? 60 : (viewMode === 'grid' ? 40 : 24)} color="#999" />
                         </View>
                     )}
                     
-                    <View style={viewMode === 'list' ? styles.listDetails : styles.gridDetails}>
+                    <View style={shouldShowExpanded ? styles.expandedDetails : (viewMode === 'list' ? styles.listDetails : styles.gridDetails)}>
                         <Text 
                             style={styles.cardName} 
-                            numberOfLines={viewMode === 'grid' ? 2 : 1}
+                            numberOfLines={shouldShowExpanded ? 0 : (viewMode === 'grid' ? 2 : 1)}
                         >
                             {card.name}
                         </Text>
                         
-                        {viewMode === 'list' && card.type && (
-                            <Text style={styles.cardType} numberOfLines={1}>
+                        {(viewMode === 'list' || shouldShowExpanded) && card.type && (
+                            <Text style={styles.cardType} numberOfLines={shouldShowExpanded ? 0 : 1}>
                                 {card.type}
                             </Text>
                         )}
                         
-                        {viewMode === 'list' && showCardMana && (
+                        {(viewMode === 'list' || shouldShowExpanded) && showCardMana && (
                             <View style={styles.colorContainer}>
                                 {colors.map((color, index) => (
                                     <View 
@@ -139,11 +143,67 @@ const CardItem: React.FC<CardItemProps> = ({
                             </View>
                         )}
                         
-                        {viewMode === 'grid' && card.rarity && (
+                        {((viewMode === 'grid' && !shouldShowExpanded) || shouldShowExpanded) && card.rarity && (
                             <View style={[styles.rarityBadge, getRarityStyle(card.rarity)]}>
                                 <Text style={styles.rarityText}>
-                                    {card.rarity.charAt(0).toUpperCase()}
+                                    {shouldShowExpanded ? card.rarity : card.rarity.charAt(0).toUpperCase()}
                                 </Text>
+                            </View>
+                        )}
+
+                        {shouldShowExpanded && (
+                            <View style={styles.expandedCardInfo}>
+                                {card.text && (
+                                    <View style={styles.textSection}>
+                                        <Text style={styles.sectionTitle}>Card Text:</Text>
+                                        <Text style={styles.cardText}>{card.text}</Text>
+                                    </View>
+                                )}
+                                
+                                {card.flavorText && (
+                                    <View style={styles.textSection}>
+                                        <Text style={styles.sectionTitle}>Flavor Text:</Text>
+                                        <Text style={styles.flavorText}>"{card.flavorText}"</Text>
+                                    </View>
+                                )}
+                                
+                                <View style={styles.cardMetaSection}>
+                                    {card.setName && (
+                                        <Text style={styles.setInfo}>Set: {card.setName} ({card.setCode})</Text>
+                                    )}
+                                    
+                                    {card.collectorNumber && (
+                                        <Text style={styles.collectorInfo}>Card #: {card.collectorNumber}</Text>
+                                    )}
+                                    
+                                    {card.prices && (
+                                        <View style={styles.priceContainer}>
+                                            <Text style={styles.sectionTitle}>Prices:</Text>
+                                            {card.prices.usd && (
+                                                <Text style={styles.priceInfo}>Normal: ${card.prices.usd}</Text>
+                                            )}
+                                            {card.prices.usdFoil && (
+                                                <Text style={styles.priceInfo}>Foil: ${card.prices.usdFoil}</Text>
+                                            )}
+                                            {card.prices.normal !== undefined && (
+                                                <Text style={styles.priceInfo}>Normal: ${card.prices.normal}</Text>
+                                            )}
+                                            {card.prices.foil !== undefined && (
+                                                <Text style={styles.priceInfo}>Foil: ${card.prices.foil}</Text>
+                                            )}
+                                        </View>
+                                    )}
+                                    
+                                    {onAddToCollection && (
+                                        <TouchableOpacity 
+                                            style={styles.addToCollectionButton}
+                                            onPress={() => onAddToCollection(card)}
+                                        >
+                                            <Icon name="plus-circle" size={20} color="#fff" />
+                                            <Text style={styles.addToCollectionText}>Add to Collection</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
                             </View>
                         )}
                     </View>
@@ -195,6 +255,23 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         width: '100%',
     },
+    expandedCard: {
+        backgroundColor: '#fff',
+        borderRadius: 12,
+        marginBottom: 16,
+        marginHorizontal: 0,
+        overflow: 'hidden',
+        width: '100%',
+        minHeight: 200,
+        elevation: 4,
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.23,
+        shadowRadius: 2.62,
+    },
     cardShadow: {
         ...Platform.select({
             ios: {
@@ -219,6 +296,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         height: 80,
     },
+    expandedContent: {
+        flexDirection: 'column',
+    },
     gridImage: {
         width: '100%',
         height: 140,
@@ -228,6 +308,12 @@ const styles = StyleSheet.create({
     listImage: {
         width: 60,
         height: 80,
+    },
+    expandedImage: {
+        width: '100%',
+        height: 300,
+        borderTopLeftRadius: 12,
+        borderTopRightRadius: 12,
     },
     noImageGrid: {
         width: '100%',
@@ -241,6 +327,12 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    noImageExpanded: {
+        width: '100%',
+        height: 300,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     gridDetails: {
         padding: 8,
     },
@@ -249,28 +341,19 @@ const styles = StyleSheet.create({
         padding: 10,
         justifyContent: 'center',
     },
+    expandedDetails: {
+        padding: 16,
+    },
     cardName: {
-        fontSize: 14,
+        fontSize: 16,
         fontWeight: '600',
         color: '#333',
+        marginBottom: 4,
     },
     cardType: {
-        fontSize: 12,
+        fontSize: 14,
         color: '#666',
-        marginTop: 2,
-    },
-    selectionCheckbox: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        zIndex: 10,
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        borderRadius: 12,
-    },
-    checkIcon: {
-        textShadowColor: 'white',
-        textShadowOffset: { width: 1, height: 1 },
-        textShadowRadius: 2,
+        marginBottom: 4,
     },
     colorContainer: {
         flexDirection: 'row',
@@ -278,37 +361,108 @@ const styles = StyleSheet.create({
         marginTop: 4,
     },
     colorDot: {
-        width: 14,
-        height: 14,
-        borderRadius: 7,
+        width: 12,
+        height: 12,
+        borderRadius: 6,
         marginRight: 4,
         borderWidth: 1,
-        borderColor: 'rgba(0,0,0,0.1)',
+        borderColor: '#ddd',
     },
     moreColors: {
-        fontSize: 10,
+        fontSize: 12,
         color: '#666',
+        marginLeft: 2,
     },
     rarityBadge: {
         position: 'absolute',
-        top: -150,
-        right: 8,
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#B0B0B0',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.6)',
+        top: 0,
+        right: 0,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
     },
     rarityText: {
+        color: '#fff',
         fontSize: 10,
         fontWeight: 'bold',
-        color: 'white',
-        textShadowColor: 'rgba(0,0,0,0.5)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 1,
+    },
+    selectionCheckbox: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        zIndex: 2,
+        backgroundColor: 'white',
+        borderRadius: 12,
+    },
+    checkIcon: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.2,
+        shadowRadius: 1.5,
+    },
+    expandedCardInfo: {
+        marginTop: 12,
+    },
+    textSection: {
+        marginBottom: 12,
+    },
+    sectionTitle: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#555',
+        marginBottom: 4,
+    },
+    cardText: {
+        fontSize: 14,
+        color: '#333',
+        lineHeight: 20,
+    },
+    flavorText: {
+        fontSize: 14,
+        color: '#666',
+        fontStyle: 'italic',
+        lineHeight: 20,
+    },
+    cardMetaSection: {
+        marginTop: 12,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+    },
+    setInfo: {
+        fontSize: 14,
+        color: '#555',
+        marginBottom: 4,
+    },
+    collectorInfo: {
+        fontSize: 14,
+        color: '#555',
+        marginBottom: 8,
+    },
+    priceContainer: {
+        marginTop: 8,
+        marginBottom: 12,
+    },
+    priceInfo: {
+        fontSize: 14,
+        color: '#333',
+        marginBottom: 2,
+    },
+    addToCollectionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2196F3',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 6,
+        marginTop: 8,
+        alignSelf: 'flex-start',
+    },
+    addToCollectionText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '500',
+        marginLeft: 6,
     },
 });
 
