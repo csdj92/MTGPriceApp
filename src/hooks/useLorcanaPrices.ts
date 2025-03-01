@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { getDB, getLorcanaCardPrice } from '../services/LorcanaService';
+import { getDB, getLorcanaCardPrice, debugCardData } from '../services/LorcanaService';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
 
 interface UseLorcanaPricesProps {
@@ -32,10 +32,15 @@ export const useLorcanaPrices = ({ cards, onCardsUpdate }: UseLorcanaPricesProps
             const updatePromises = cardsNeedingPrices.map(async (card) => {
                 if (card.Name && card.Set_Num && card.Rarity) {
                     try {
+                        // Debug the card data integrity
+                        debugCardData(card, 'useLorcanaPrices');
+                        
                         const prices = await getLorcanaCardPrice({
                             Name: card.Name,
                             Set_Num: card.Set_Num,
-                            Rarity: card.Rarity
+                            Card_Num: card.Card_Num,
+                            Rarity: card.Rarity,
+                            Unique_ID: card.Unique_ID
                         });
                         
                         if (!prices) {

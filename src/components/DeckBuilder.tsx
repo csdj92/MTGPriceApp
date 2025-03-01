@@ -320,11 +320,10 @@ const DeckBuilder: React.FC = () => {
       card={item}
       viewMode={viewMode}
       isSelected={!!(item.uuid && selectedCards.has(item.uuid))}
-      onSelect={(card) => {
-        console.log('Selected Card:', JSON.stringify(card, null, 2));
+      onPress={(card: ExtendedCard) => {
         setSelectedCard(card);
       }}
-      onLongPress={(card) => {
+      onLongPress={(card: ExtendedCard) => {
         if (card.uuid) toggleCardSelection(card.uuid);
       }}
     />

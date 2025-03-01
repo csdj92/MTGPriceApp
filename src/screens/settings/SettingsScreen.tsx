@@ -8,6 +8,7 @@ import {
     ScrollView,
     Alert,
     ActivityIndicator,
+    InteractionManager,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
@@ -111,18 +112,26 @@ const SettingsScreen = () => {
                 {
                     text: 'Rebuild',
                     style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            setIsRebuilding(true);
-                            await databaseService.downloadMTGJsonDatabase();
-                            await databaseService.updatePrices({});
-                            Alert.alert('Success', 'Database has been rebuilt successfully.');
-                        } catch (error) {
-                            console.error('Error rebuilding database:', error);
-                            Alert.alert('Error', 'Failed to rebuild database. Please try again.');
-                        } finally {
-                            setIsRebuilding(false);
-                        }
+                    onPress: () => {
+                        // Set rebuilding state immediately to show the UI indicator
+                        setIsRebuilding(true);
+
+                        // Use InteractionManager to ensure UI updates before starting heavy work
+                        InteractionManager.runAfterInteractions(async () => {
+                            try {
+                                // Run the database operations on a separate JS thread
+                                await databaseService.downloadMTGJsonDatabase();
+                                await databaseService.updatePrices({});
+                                
+                                // Show success alert after operations complete
+                                Alert.alert('Success', 'Database has been rebuilt successfully.');
+                            } catch (error) {
+                                console.error('Error rebuilding database:', error);
+                                Alert.alert('Error', 'Failed to rebuild database. Please try again.');
+                            } finally {
+                                setIsRebuilding(false);
+                            }
+                        });
                     },
                 },
             ]

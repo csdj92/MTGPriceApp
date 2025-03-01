@@ -579,27 +579,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             
             console.log(`[renderCardDetailsModal] Selected card type: ${isLorcanaCard ? 'Lorcana' : 'MTG'}`);
             
-            if (isLorcanaCard) {
-                // Convert to proper Lorcana format if needed
-                const lorcanaCard = 'Name' in selectedCard ? selectedCard : {
-                    Name: selectedCard.name,
-                    Image: selectedCard.imageUris?.normal || selectedCard.imageUrl,
-                    // Add required Lorcana properties with fallback values
-                    Unique_ID: selectedCard.id,
-                    Set_Name: selectedCard.setName,
-                    Rarity: selectedCard.rarity || 'Unknown',
-                    Color: (selectedCard.colors && selectedCard.colors.length > 0) ? selectedCard.colors[0] : 'Unknown',
-                    Cost: parseInt(selectedCard.cmc?.toString() || '0', 10),
-                    Type: selectedCard.type || 'Unknown',
-                    // Additional properties that might be required
-                    Set_Num: parseInt(selectedCard.collectorNumber || '0', 10),
-                    Body_Text: selectedCard.text || '',
-                    Flavor_Text: selectedCard.flavorText || '',
-                    price_usd: selectedCard.prices?.usd,
-                    price_usd_foil: selectedCard.prices?.usdFoil
-                };
-                console.log(`[renderCardDetailsModal] Lorcana card details: Name=${lorcanaCard.Name}, Image=${lorcanaCard.Image}`);
-            } else {
+            if (!isLorcanaCard) {
                 console.log(`[renderCardDetailsModal] MTG card details: name=${selectedCard.name}, imageUrl=${selectedCard.imageUrl}, imageUris:`, selectedCard.imageUris);
             }
         }

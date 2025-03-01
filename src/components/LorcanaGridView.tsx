@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
     View,
     Text,
@@ -13,7 +13,7 @@ import {
     Alert,
     Image
 } from 'react-native';
-import FastImage from 'react-native-fast-image';
+import FastImage from "@d11/react-native-fast-image";
 import type { LorcanaCardWithPrice } from '../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 // Fix the Icon type with a proper type assertion to avoid type errors
@@ -23,7 +23,7 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     color: string;
 }>;
 import { getLorcanaCardPrice, getDB, addCardToLorcanaCollection, updateAllCardImages } from '../services/LorcanaService';
-import { getImageSource, handleImageLoadError, preloadImages, handleImageLoadSuccess, getImageLoadingStats, clearImageCache } from '../utils/imageUtils';
+import { getImageSource, handleImageLoadError, preloadImages, handleImageLoadSuccess, getImageLoadingStats, clearImageCache, checkAndFixAllImageUrls } from '../utils/imageUtils';
 
 interface LorcanaGridViewProps {
     cards: LorcanaCardWithPrice[];
@@ -62,6 +62,23 @@ const CardItem = React.memo(({
     onLongPress: () => void;
 }) => {
     const [imageError, setImageError] = useState(false);
+    const [fixedImageUrl, setFixedImageUrl] = useState<string | null>(null);
+    
+    // Debug image URLs
+    useEffect(() => {
+        if (!item.Image) {
+            console.log(`[LorcanaGridView] Card missing image URL: ${item.Name}, Card_Num: ${item.Card_Num}, Unique_ID: ${item.Unique_ID}`);
+        } else if (item.Image.includes('lorcana-api.com')) {
+            console.log(`[LorcanaGridView] Card has lorcana-api URL: ${item.Name}, URL: ${item.Image}`);
+            // The image URL will be fixed by the getImageSource function
+        }
+    }, [item]);
+
+    // Get the image source, applying the URL fixing if needed
+    const imageSource = useMemo(() => {
+        return (fixedImageUrl || item.Image) ? 
+            getImageSource(fixedImageUrl || item.Image) : null;
+    }, [fixedImageUrl, item.Image]);
     
     return (
         <TouchableOpacity 
@@ -70,16 +87,9 @@ const CardItem = React.memo(({
             onLongPress={onLongPress}
         >
             <View style={styles.cardImageContainer}>
-                {item.Image && !imageError ? (
+                {imageSource ? (
                     <FastImage
-                        source={getImageSource(item.Image) || { 
-                            uri: item.Image,
-                            priority: FastImage.priority.high,
-                            cache: FastImage.cacheControl.immutable,
-                            headers: {
-                                'Cache-Control': 'max-age=31536000, immutable'
-                            }
-                        }}
+                        source={imageSource}
                         style={[
                             styles.cardImage,
                             !isCollected && styles.cardImageUncollected
@@ -320,6 +330,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
             const updatePromises = cardsNeedingPrices.map(async (card) => {
                 if (card.Name && card.Set_Num && card.Rarity) {
+                    console.log(`[LorcanaGridView] Updating price for card: ${card.Name}, Set_Num: ${card.Set_Num}, Card_Num: ${card.Card_Num}, Rarity: ${card.Rarity}, Unique_ID: ${card.Unique_ID}`);
                     try {
                         const prices = await getLorcanaCardPrice({
                             Name: card.Name,
@@ -552,9 +563,40 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             `Total successful: ${stats.totalSuccessfulImages}\n` +
             `Total failed: ${stats.totalFailedImages}\n` +
             `Cooling down: ${stats.coolingDownImages}\n` +
-            `Recent successful: ${stats.recentlySuccessfulImages}\n` +
-            `HEIF images: ${stats.heifImages}`,
+            `Recent successful: ${stats.recentlySuccessfulImages}`,
             [
+                {
+                    text: 'Fix Image URLs',
+                    onPress: async () => {
+                        try {
+                            Alert.alert(
+                                'Fixing URLs',
+                                'Checking and fixing all image URLs in the database...'
+                            );
+                            
+                            // Run the fix process
+                            await checkAndFixAllImageUrls();
+                            
+                            // Show success message
+                            Alert.alert(
+                                'URL Fix Complete',
+                                'The image URLs have been fixed. The app will now reload the images with the correct URLs.',
+                                [
+                                    {
+                                        text: 'OK',
+                                        onPress: () => {
+                                            // Force reload cards
+                                            preloadCardImages();
+                                        }
+                                    }
+                                ]
+                            );
+                        } catch (error) {
+                            console.error('[LorcanaGridView] Error fixing URLs:', error);
+                            Alert.alert('Error', 'Failed to fix image URLs. Please try again.');
+                        }
+                    }
+                },
                 { 
                     text: 'Reset Cache',
                     onPress: async () => {

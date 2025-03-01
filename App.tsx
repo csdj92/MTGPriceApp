@@ -5,7 +5,7 @@ import 'react-native-reanimated';
 import { collectionCacheService } from './src/services/CollectionCacheService';
 import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
 import { setupFastImage, getImageLoadingStats } from './src/utils/imageUtils';
-import FastImage from 'react-native-fast-image';
+import FastImage from "@d11/react-native-fast-image";
 
 const App = () => {
   const [isInitializing, setIsInitializing] = useState(true);

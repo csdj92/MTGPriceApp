@@ -4,7 +4,7 @@ import { databaseService } from '../services/DatabaseService';
 import type { MTGJsonPriceData, CardPrices } from '../types/database';
 
 const PRICE_DATA_URL = 'https://mtgjson.com/api/v5/AllPricesToday.json.zip';
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 1000;
 const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
 
 export const downloadAndImportPriceData = async (onProgress: (progress: number) => void, force: boolean = false) => {
@@ -144,6 +144,7 @@ const processPriceDataFromDisk = async (filePath: string, fileSize: number) => {
         let lastProgressLog = 0;
 
         console.log('[PriceData] Starting to read file...');
+        console.time('[PriceData] File reading time');
         // Read file sequentially in chunks
         for (let offset = 0; offset < fileSize; offset += CHUNK_SIZE) {
             const length = Math.min(CHUNK_SIZE, fileSize - offset);
@@ -158,6 +159,7 @@ const processPriceDataFromDisk = async (filePath: string, fileSize: number) => {
                 lastProgressLog = currentProgress;
             }
         }
+        console.timeEnd('[PriceData] File reading time');
 
         console.log('[PriceData] File reading completed. Starting JSON verification...');
         // Verify JSON content
@@ -166,211 +168,223 @@ const processPriceDataFromDisk = async (filePath: string, fileSize: number) => {
         }
 
         console.log('[PriceData] Parsing JSON data...');
+        console.time('[PriceData] JSON parsing time');
         const rawData = JSON.parse(fileContent) as MTGJsonPriceData;
-        console.log('[PriceData] Sample data structure:', JSON.stringify(Object.entries(rawData.data).slice(400, 600), null, 2));
+        console.timeEnd('[PriceData] JSON parsing time');
 
-        // Process in batches
-        const entries = Object.entries(rawData.data).filter(([uuid, cardData]) => {
-
-            // Filter out meta entries
-            if (uuid === 'meta') return false;
-
-            // Check for paper or MTGO prices
-            const priceData = cardData as CardPrices;
-
-            const hasPaperPrices = priceData.paper && (
-                (priceData.paper.tcgplayer?.retail?.normal && Object.keys(priceData.paper.tcgplayer.retail.normal).length > 0) ||
-                (priceData.paper.tcgplayer?.retail?.foil && Object.keys(priceData.paper.tcgplayer.retail.foil).length > 0) ||
-                (priceData.paper.cardmarket?.retail?.normal && Object.keys(priceData.paper.cardmarket.retail.normal).length > 0) ||
-                (priceData.paper.cardmarket?.retail?.foil && Object.keys(priceData.paper.cardmarket.retail.foil).length > 0) ||
-                (priceData.paper.cardkingdom?.retail?.normal && Object.keys(priceData.paper.cardkingdom.retail.normal).length > 0) ||
-                (priceData.paper.cardkingdom?.retail?.foil && Object.keys(priceData.paper.cardkingdom.retail.foil).length > 0) ||
-                (priceData.paper.cardsphere?.retail?.normal && Object.keys(priceData.paper.cardsphere.retail.normal).length > 0) ||
-                (priceData.paper.cardsphere?.retail?.foil && Object.keys(priceData.paper.cardsphere.retail.foil).length > 0)
-            );
-
-            const hasMtgoPrices = priceData.mtgo?.cardhoarder?.retail && (
-                (priceData.mtgo.cardhoarder.retail.normal && Object.keys(priceData.mtgo.cardhoarder.retail.normal).length > 0) ||
-                (priceData.mtgo.cardhoarder.retail.foil && Object.keys(priceData.mtgo.cardhoarder.retail.foil).length > 0)
-            );
-
-            if (!hasPaperPrices && !hasMtgoPrices) {
-                return false;
-            }
-
-            return true;
-        });
-
+        // Process price data
+        console.log('[PriceData] Starting price data processing...');
+        console.time('[PriceData] Total price processing time');
+        
+        // Free up memory as soon as possible
+        fileContent = '';
+        
+        const entries = Object.entries(rawData.data);
         const totalEntries = entries.length;
-        console.log(`[PriceData] Found ${totalEntries.toLocaleString()} valid card entries with paper prices`);
-        console.log('[PriceData] First valid entry sample:', JSON.stringify(entries[0], null, 2));
-
-        if (totalEntries === 0) {
-            throw new Error('No valid card entries found in price data');
-        }
-
-        console.log(`[PriceData] Processing ${totalEntries.toLocaleString()} valid card entries in batches of ${BATCH_SIZE}...`);
-
         let processedCount = 0;
         let progressLog = 0;
 
-        for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-            const batch = entries.slice(i, i + BATCH_SIZE);
-            const priceData: Record<string, { normal: number; foil: number; tcg_normal: number; tcg_foil: number; cardmarket_normal: number; cardmarket_foil: number; cardkingdom_normal: number; cardkingdom_foil: number; cardsphere_normal: number; cardsphere_foil: number; cardhoarder_normal: number; cardhoarder_foil: number }> = {};
+        // Create a buffer for all price data
+        const allPriceData: Record<string, { 
+            normal: number; 
+            foil: number; 
+            tcg_normal: number; 
+            tcg_foil: number; 
+            cardmarket_normal: number; 
+            cardmarket_foil: number; 
+            cardkingdom_normal: number; 
+            cardkingdom_foil: number; 
+            cardsphere_normal: number; 
+            cardsphere_foil: number; 
+            cardhoarder_normal: number; 
+            cardhoarder_foil: number; 
+        }> = {};
 
-            // Process each card in the batch
-            for (const [uuid, cardData] of batch) {
-                const priceInfo = cardData as CardPrices;
-                const paperPrices = priceInfo.paper;
-                let tcgNormal = 0;
-                let tcgFoil = 0;
-                let cardmarketNormal = 0;
-                let cardmarketFoil = 0;
-                let cardkingdomNormal = 0;
-                let cardkingdomFoil = 0;
-                let cardsphereNormal = 0;
-                let cardsphereFoil = 0;
-                let cardhoarderNormal = 0;
-                let cardhoarderFoil = 0;
+        // Process all entries first, gathering price data
+        console.time('[PriceData] Data extraction time');
+        for (const [uuid, cardData] of entries) {
+            if (!uuid || uuid.trim() === '') continue;
 
-                if (paperPrices) {
-                    // Get TCGPlayer prices
-                    if (paperPrices.tcgplayer?.retail) {
-                        const retail = paperPrices.tcgplayer.retail;
-                        if (retail.normal) {
-                            const dates = Object.keys(retail.normal);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                tcgNormal = retail.normal[latestDate];
-                            }
-                        }
-                        if (retail.foil) {
-                            const dates = Object.keys(retail.foil);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                tcgFoil = retail.foil[latestDate];
-                            }
-                        }
-                    }
+            const priceInfo = cardData as CardPrices;
+            const paperPrices = priceInfo.paper;
+            let tcgNormal = 0;
+            let tcgFoil = 0;
+            let cardmarketNormal = 0;
+            let cardmarketFoil = 0;
+            let cardkingdomNormal = 0;
+            let cardkingdomFoil = 0;
+            let cardsphereNormal = 0;
+            let cardsphereFoil = 0;
+            let cardhoarderNormal = 0;
+            let cardhoarderFoil = 0;
 
-                    // Get Cardmarket prices (convert EUR to USD)
-                    if (paperPrices.cardmarket?.retail) {
-                        const retail = paperPrices.cardmarket.retail;
-                        const isEUR = paperPrices.cardmarket.currency === 'EUR';
-                        const rate = isEUR ? 1.1 : 1; // EUR to USD conversion
-                        if (retail.normal) {
-                            const dates = Object.keys(retail.normal);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                cardmarketNormal = retail.normal[latestDate] * rate;
-                            }
-                        }
-                        if (retail.foil) {
-                            const dates = Object.keys(retail.foil);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                cardmarketFoil = retail.foil[latestDate] * rate;
-                            }
-                        }
-                    }
-
-                    // Get Card Kingdom prices
-                    if (paperPrices.cardkingdom?.retail) {
-                        const retail = paperPrices.cardkingdom.retail;
-                        if (retail.normal) {
-                            const dates = Object.keys(retail.normal);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                cardkingdomNormal = retail.normal[latestDate];
-                            }
-                        }
-                        if (retail.foil) {
-                            const dates = Object.keys(retail.foil);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                cardkingdomFoil = retail.foil[latestDate];
-                            }
-                        }
-                    }
-
-                    // Get Cardsphere prices
-                    if (paperPrices.cardsphere?.retail) {
-                        const retail = paperPrices.cardsphere.retail;
-                        if (retail.normal) {
-                            const dates = Object.keys(retail.normal);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                cardsphereNormal = retail.normal[latestDate];
-                            }
-                        }
-                        if (retail.foil) {
-                            const dates = Object.keys(retail.foil);
-                            if (dates.length > 0) {
-                                const latestDate = dates.sort().pop()!;
-                                cardsphereFoil = retail.foil[latestDate];
-                            }
-                        }
-                    }
-                }
-
-                // Get MTGO prices
-                if (priceInfo.mtgo?.cardhoarder?.retail) {
-                    const retail = priceInfo.mtgo.cardhoarder.retail;
+            if (paperPrices) {
+                // Get TCGPlayer prices
+                if (paperPrices.tcgplayer?.retail) {
+                    const retail = paperPrices.tcgplayer.retail;
                     if (retail.normal) {
                         const dates = Object.keys(retail.normal);
                         if (dates.length > 0) {
                             const latestDate = dates.sort().pop()!;
-                            cardhoarderNormal = retail.normal[latestDate];
+                            tcgNormal = retail.normal[latestDate];
                         }
                     }
                     if (retail.foil) {
                         const dates = Object.keys(retail.foil);
                         if (dates.length > 0) {
                             const latestDate = dates.sort().pop()!;
-                            cardhoarderFoil = retail.foil[latestDate];
+                            tcgFoil = retail.foil[latestDate];
                         }
                     }
                 }
 
-                // Use TCGPlayer as the default price if available, otherwise use the first non-zero price
-                const normalPrice = tcgNormal || cardmarketNormal || cardkingdomNormal || cardsphereNormal || cardhoarderNormal || 0;
-                const foilPrice = tcgFoil || cardmarketFoil || cardkingdomFoil || cardsphereFoil || cardhoarderFoil || 0;
+                // Get Cardmarket prices (convert EUR to USD)
+                if (paperPrices.cardmarket?.retail) {
+                    const retail = paperPrices.cardmarket.retail;
+                    const isEUR = paperPrices.cardmarket.currency === 'EUR';
+                    const rate = isEUR ? 1.1 : 1; // EUR to USD conversion
+                    if (retail.normal) {
+                        const dates = Object.keys(retail.normal);
+                        if (dates.length > 0) {
+                            const latestDate = dates.sort().pop()!;
+                            cardmarketNormal = retail.normal[latestDate] * rate;
+                        }
+                    }
+                    if (retail.foil) {
+                        const dates = Object.keys(retail.foil);
+                        if (dates.length > 0) {
+                            const latestDate = dates.sort().pop()!;
+                            cardmarketFoil = retail.foil[latestDate] * rate;
+                        }
+                    }
+                }
 
-                // Only add cards that have at least one price
-                if (normalPrice > 0 || foilPrice > 0) {
-                    priceData[uuid] = {
-                        normal: normalPrice,
-                        foil: foilPrice,
-                        tcg_normal: tcgNormal,
-                        tcg_foil: tcgFoil,
-                        cardmarket_normal: cardmarketNormal,
-                        cardmarket_foil: cardmarketFoil,
-                        cardkingdom_normal: cardkingdomNormal,
-                        cardkingdom_foil: cardkingdomFoil,
-                        cardsphere_normal: cardsphereNormal,
-                        cardsphere_foil: cardsphereFoil,
-                        cardhoarder_normal: cardhoarderNormal,
-                        cardhoarder_foil: cardhoarderFoil
-                    };
+                // Get Card Kingdom prices
+                if (paperPrices.cardkingdom?.retail) {
+                    const retail = paperPrices.cardkingdom.retail;
+                    if (retail.normal) {
+                        const dates = Object.keys(retail.normal);
+                        if (dates.length > 0) {
+                            const latestDate = dates.sort().pop()!;
+                            cardkingdomNormal = retail.normal[latestDate];
+                        }
+                    }
+                    if (retail.foil) {
+                        const dates = Object.keys(retail.foil);
+                        if (dates.length > 0) {
+                            const latestDate = dates.sort().pop()!;
+                            cardkingdomFoil = retail.foil[latestDate];
+                        }
+                    }
+                }
+
+                // Get Cardsphere prices
+                if (paperPrices.cardsphere?.retail) {
+                    const retail = paperPrices.cardsphere.retail;
+                    if (retail.normal) {
+                        const dates = Object.keys(retail.normal);
+                        if (dates.length > 0) {
+                            const latestDate = dates.sort().pop()!;
+                            cardsphereNormal = retail.normal[latestDate];
+                        }
+                    }
+                    if (retail.foil) {
+                        const dates = Object.keys(retail.foil);
+                        if (dates.length > 0) {
+                            const latestDate = dates.sort().pop()!;
+                            cardsphereFoil = retail.foil[latestDate];
+                        }
+                    }
                 }
             }
 
-            // Only import if we have prices in the batch
-            if (Object.keys(priceData).length > 0) {
-                // console.log(`[PriceData] Importing batch of ${Object.keys(priceData).length} card prices...`);
-                await databaseService.updatePrices(priceData);
+            // Get MTGO prices
+            if (priceInfo.mtgo?.cardhoarder?.retail) {
+                const retail = priceInfo.mtgo.cardhoarder.retail;
+                if (retail.normal) {
+                    const dates = Object.keys(retail.normal);
+                    if (dates.length > 0) {
+                        const latestDate = dates.sort().pop()!;
+                        cardhoarderNormal = retail.normal[latestDate];
+                    }
+                }
+                if (retail.foil) {
+                    const dates = Object.keys(retail.foil);
+                    if (dates.length > 0) {
+                        const latestDate = dates.sort().pop()!;
+                        cardhoarderFoil = retail.foil[latestDate];
+                    }
+                }
             }
 
-            // Update progress
-            processedCount += batch.length;
+            // Use TCGPlayer as the default price if available, otherwise use the first non-zero price
+            const normalPrice = tcgNormal || cardmarketNormal || cardkingdomNormal || cardsphereNormal || cardhoarderNormal || 0;
+            const foilPrice = tcgFoil || cardmarketFoil || cardkingdomFoil || cardsphereFoil || cardhoarderFoil || 0;
+
+            // Only add cards that have at least one price
+            if (normalPrice > 0 || foilPrice > 0) {
+                allPriceData[uuid] = {
+                    normal: normalPrice,
+                    foil: foilPrice,
+                    tcg_normal: tcgNormal,
+                    tcg_foil: tcgFoil,
+                    cardmarket_normal: cardmarketNormal,
+                    cardmarket_foil: cardmarketFoil,
+                    cardkingdom_normal: cardkingdomNormal,
+                    cardkingdom_foil: cardkingdomFoil,
+                    cardsphere_normal: cardsphereNormal,
+                    cardsphere_foil: cardsphereFoil,
+                    cardhoarder_normal: cardhoarderNormal,
+                    cardhoarder_foil: cardhoarderFoil
+                };
+            }
+
+            processedCount++;
             const currentProgress = Math.round((processedCount / totalEntries) * 100);
             if (currentProgress >= progressLog + 5) {
                 console.log(`[PriceData] Processed ${processedCount.toLocaleString()}/${totalEntries.toLocaleString()} entries (${currentProgress}%)`);
                 progressLog = currentProgress;
             }
         }
+        console.timeEnd('[PriceData] Data extraction time');
+
+        // Free up memory
+        const validPriceEntries = Object.keys(allPriceData).length;
+        console.log(`[PriceData] Extracted ${validPriceEntries} valid price entries`);
+        
+        // Now update database in larger batches
+        console.time('[PriceData] Database update time');
+        const priceEntries = Object.entries(allPriceData);
+        const totalPriceEntries = priceEntries.length;
+        let updatedCount = 0;
+        progressLog = 0;
+
+        for (let i = 0; i < priceEntries.length; i += BATCH_SIZE) {
+            const batchEntries = priceEntries.slice(i, i + BATCH_SIZE);
+            const batchData: Record<string, any> = {};
+            
+            for (const [uuid, priceData] of batchEntries) {
+                batchData[uuid] = priceData;
+            }
+            
+            // Only import if we have prices in the batch
+            if (Object.keys(batchData).length > 0) {
+                await databaseService.updatePrices(batchData);
+            }
+
+            // Update progress
+            updatedCount += batchEntries.length;
+            const currentProgress = Math.round((updatedCount / totalPriceEntries) * 100);
+            if (currentProgress >= progressLog + 5) {
+                console.log(`[PriceData] Updated ${updatedCount.toLocaleString()}/${totalPriceEntries.toLocaleString()} prices (${currentProgress}%)`);
+                progressLog = currentProgress;
+            }
+        }
+        console.timeEnd('[PriceData] Database update time');
+        console.timeEnd('[PriceData] Total price processing time');
 
         console.log('[PriceData] Finished processing price data');
+        return true;
     } catch (error: unknown) {
         console.error('[PriceData] Error processing price data:', error);
         if (error instanceof Error) {

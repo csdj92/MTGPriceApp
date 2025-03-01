@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -7,8 +7,9 @@ import {
     ActivityIndicator,
     TouchableOpacity,
     Linking,
+    Animated
 } from 'react-native';
-import FastImage from 'react-native-fast-image';
+import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 // Fix the Icon type with a proper type assertion to avoid type errors
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -16,7 +17,7 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     size: number;
     color: string;
 }>;
-import { getLorcanaCardPrice } from '../services/LorcanaService';
+import { getLorcanaCardPrice, debugCardData } from '../services/LorcanaService';
 import type { LorcanaCard } from '../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../utils/imageUtils';
 
@@ -43,10 +44,15 @@ const PriceDisplay = ({ card }: { card: LorcanaCard }) => {
             if (!card.price_usd && !card.price_usd_foil) {
                 setIsLoadingPrices(true);
                 try {
+                    // Debug card data integrity
+                    debugCardData(card, 'PriceDisplay fetchPrices');
+                    
                     const priceData = await getLorcanaCardPrice({
                         Name: card.Name,
                         Set_Num: card.Set_Num,
-                        Rarity: card.Rarity
+                        Card_Num: card.Card_Num,
+                        Rarity: card.Rarity,
+                        Unique_ID: card.Unique_ID
                     });
                     setPrices({
                         usd: priceData.usd,
@@ -61,7 +67,7 @@ const PriceDisplay = ({ card }: { card: LorcanaCard }) => {
         };
 
         fetchPrices();
-    }, [card.Name, card.Set_Num, card.Rarity, card.price_usd, card.price_usd_foil]);
+    }, [card.Name, card.Set_Num, card.Card_Num, card.Rarity, card.Unique_ID, card.price_usd, card.price_usd_foil]);
 
     if (isLoadingPrices) {
         return (
@@ -119,10 +125,15 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
             
             setIsLoadingPrices(true);
             try {
+                // Debug card data integrity
+                debugCardData(card, 'LorcanaCardItem fetchPrices');
+                
                 const priceData = await getLorcanaCardPrice({
                     Name: card.Name,
                     Set_Num: card.Set_Num,
-                    Rarity: card.Rarity
+                    Card_Num: card.Card_Num,
+                    Rarity: card.Rarity,
+                    Unique_ID: card.Unique_ID
                 });
                 setPrices({
                     ...priceData,
@@ -136,7 +147,7 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
         };
 
         fetchPrices();
-    }, [card.Name, card.Set_ID, card.Rarity, card.price_usd, card.price_usd_foil]);
+    }, [card.Name, card.Set_Num, card.Card_Num, card.Rarity, card.Unique_ID, card.price_usd, card.price_usd_foil]);
 
     return (
         <TouchableOpacity

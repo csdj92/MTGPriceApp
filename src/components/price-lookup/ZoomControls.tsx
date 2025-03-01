@@ -98,8 +98,7 @@ const styles = StyleSheet.create({
   zoomControls: {
     position: 'absolute',
     left: 20,
-    top: '50%',
-    transform: [{ translateY: -50 }],
+    top: 260,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     borderRadius: 24,
     padding: 8,

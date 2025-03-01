@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import FastImage from 'react-native-fast-image';
+import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';

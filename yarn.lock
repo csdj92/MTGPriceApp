@@ -1056,6 +1056,11 @@
   resolved "https://registry.npmjs.org/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
+"@d11/react-native-fast-image@^8.9.2":
+  version "8.9.2"
+  resolved "https://registry.yarnpkg.com/@d11/react-native-fast-image/-/react-native-fast-image-8.9.2.tgz#91e9d84d2409c764f2c1b2194ab507ccd183ed1d"
+  integrity sha512-7d0O5mA17SCbIAYq9D0WxDlS3HXf5v9vg9ltphDfP/3R57sBEf6/wby/sHkOmrQGwvgUlz2oSo5Ld8hgocLJeQ==
+
 "@eslint-community/eslint-utils@^4.2.0", "@eslint-community/eslint-utils@^4.4.0":
   version "4.4.1"
   resolved "https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.4.1.tgz"
@@ -5809,11 +5814,6 @@ react-native-document-picker@^9.3.1:
   integrity sha512-Vcofv9wfB0j67zawFjfq9WQPMMzXxOZL9kBmvWDpjVuEcVK73ndRmlXHlkeFl5ZHVsv4Zb6oZYhqm9u5omJOPA==
   dependencies:
     invariant "^2.2.4"
-
-react-native-fast-image@^8.6.3:
-  version "8.6.3"
-  resolved "https://registry.npmjs.org/react-native-fast-image/-/react-native-fast-image-8.6.3.tgz"
-  integrity sha512-Sdw4ESidXCXOmQ9EcYguNY2swyoWmx53kym2zRsvi+VeFCHEdkO+WG1DK+6W81juot40bbfLNhkc63QnWtesNg==
 
 react-native-fs@^2.20.0:
   version "2.20.0"

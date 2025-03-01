@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Modal, TextInput } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Modal, TextInput, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { databaseService } from '../../services/DatabaseService';
 import type { Deck } from '../../services/DatabaseService';
@@ -20,24 +20,59 @@ const DecksScreen = () => {
 
   const loadDecks = async () => {
     try {
+      console.log('Loading decks...');
+      
+      // Make sure the database is properly initialized before accessing it
+      await databaseService.ensureInitialized();
+      
+      // Create decks tables if they don't exist yet
+      await databaseService.createDecksTable();
+      
+      // Get the list of decks
       const deckList = await databaseService.getDecks();
-      setDecks(deckList);
+      console.log(`Found ${deckList?.length || 0} decks`);
+      
+      // Update the state with the list of decks (or an empty array if null)
+      setDecks(Array.isArray(deckList) ? deckList : []);
     } catch (error) {
       console.error('Error loading decks:', error);
+      // Show an empty array instead of failing
+      setDecks([]);
     }
   };
 
   const createDeck = async () => {
     if (newDeckName.trim()) {
       try {
-        const createTable = await databaseService.createDecksTable();
+        // Ensure database is properly initialized
+        await databaseService.ensureInitialized();
+        
+        // Create tables if they don't exist
+        await databaseService.createDecksTable();
+        
+        // Create the deck
         const deckId = await databaseService.createDeck(newDeckName);
-        setDecks([...decks, { id: deckId, name: newDeckName, created_at: new Date().toISOString() }]);
+        console.log(`Created deck with ID: ${deckId}`);
+        
+        // Update state with the new deck
+        setDecks([...decks, { 
+          id: deckId, 
+          name: newDeckName, 
+          created_at: new Date().toISOString() 
+        }]);
+        
+        // Reset state and close modal
         setNewDeckName('');
         setIsModalVisible(false);
       } catch (error) {
         console.error('Error creating deck:', error);
+        Alert.alert(
+          'Error', 
+          'Failed to create deck. Please try again.'
+        );
       }
+    } else {
+      Alert.alert('Error', 'Deck name cannot be empty');
     }
   };
 

@@ -24,7 +24,8 @@ import {
     reloadLorcanaCards,
     getLorcanaCollectionCards,
     deleteLorcanaCardFromCollection,
-    deleteLorcanaCollection
+    deleteLorcanaCollection,
+    safeRefreshLorcanaCards
 } from '../../services/LorcanaService';
 import { exportService, collectionEventEmitter } from '../../services/ExportService';
 import type { Collection } from '../../services/DatabaseService';
@@ -341,16 +342,16 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                         onPress={async () => {
                             try {
                                 setIsLoading(true);
-                                await reloadLorcanaCards(); // Force reload all cards
+                                const result = await safeRefreshLorcanaCards(); // Use safe refresh instead
                                 await loadCollections(true); // Use forceRefresh = true
                                 Alert.alert(
                                     'Success',
-                                    'Collection data refreshed successfully!',
+                                    `Collection data refreshed successfully!\nUpdated: ${result.updated} cards\nAdded: ${result.added} new cards`,
                                     [{ text: 'OK' }]
                                 );
                             } catch (error) {
-                                console.error('Error initializing Lorcana:', error);
-                                Alert.alert('Error', 'Failed to initialize Lorcana database');
+                                console.error('Error refreshing Lorcana data:', error);
+                                Alert.alert('Error', 'Failed to refresh Lorcana database');
                             } finally {
                                 setIsLoading(false);
                             }

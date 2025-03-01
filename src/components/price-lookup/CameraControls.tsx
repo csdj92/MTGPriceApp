@@ -88,13 +88,12 @@ const CameraControls: React.FC<CameraControlsProps> = ({
 const styles = StyleSheet.create({
   cameraControls: {
     position: 'absolute',
-    bottom: 100,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    paddingHorizontal: 20,
+    left: 20,
+    top: 20,
+    flexDirection: 'column',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+    gap: 16,
     zIndex: 10,
   },
   controlButton: {
@@ -102,6 +101,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     alignItems: 'center',
+    width: 60,
   },
   buttonText: {
     color: 'white',

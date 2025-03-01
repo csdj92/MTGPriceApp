@@ -1,4 +1,4 @@
-import FastImage from 'react-native-fast-image';
+import FastImage from '@d11/react-native-fast-image';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 
 // Keep track of failed image loading attempts
@@ -6,9 +6,6 @@ const failedImageAttempts: Record<string, { count: number, lastAttempt: number }
 
 // Keep track of successful image loads for debugging
 const successfulImageLoads: Record<string, { lastSuccess: number, loadCount: number }> = {};
-
-// Keep track of problematic HEIF images
-const heifImageUrls: Set<string> = new Set();
 
 // Track which sets of images have already been preloaded
 // Using a Map where key is a hash of the URLs and value is a timestamp
@@ -25,7 +22,7 @@ const MAX_RETRY_COUNT = 3;
 const RETRY_COOLDOWN = 5 * 60 * 1000;
 
 // Enable or disable detailed logging
-const ENABLE_DEBUG_LOGGING = false;
+const ENABLE_DEBUG_LOGGING = true;
 
 /**
  * Generate a short hash for an array of strings
@@ -89,68 +86,33 @@ const logDebug = (message: string, data?: any) => {
 };
 
 /**
- * Checks if a URL points to a HEIF/HEIC image
- * @param imageUrl URL of the image to check
- * @returns boolean indicating if this is likely a HEIF/HEIC image
- */
-const isHeifImage = (imageUrl: string): boolean => {
-  if (!imageUrl) return false;
-  
-  // Check if we've already identified this as a HEIF image
-  if (heifImageUrls.has(imageUrl)) return true;
-  
-  // Check file extension if present
-  const lowercaseUrl = imageUrl.toLowerCase();
-  const isHeif = lowercaseUrl.endsWith('.heif') || 
-                lowercaseUrl.endsWith('.heic') || 
-                lowercaseUrl.includes('.heif?') || 
-                lowercaseUrl.includes('.heic?');
-  
-  // Check content type in URL if present
-  const hasHeifContentType = lowercaseUrl.includes('image/heif') || 
-                            lowercaseUrl.includes('image/heic');
-  
-  // If this is a HEIF image, add it to our tracking set
-  if (isHeif || hasHeifContentType) {
-    heifImageUrls.add(imageUrl);
-    return true;
-  }
-  
-  return false;
-};
-
-/**
- * Try to get an alternative URL for HEIF images
- * @param imageUrl Original HEIF image URL
- * @returns Modified URL that might work better, or the original if no alternative
- */
-const getHeifAlternativeUrl = (imageUrl: string): string => {
-  if (!imageUrl) return imageUrl;
-  
-  // If this is from a known problematic source, try to modify the URL to request a different format
-  // Example implementations - adapt to your specific image sources
-  if (imageUrl.includes('lorcana-api.com')) {
-    // Try to request a JPG or PNG instead if the API supports format parameter
-    if (imageUrl.includes('?')) {
-      return `${imageUrl}&format=jpg`;
-    } else {
-      return `${imageUrl}?format=jpg`;
-    }
-  }
-  
-  // If we can identify other sources that support format conversion, add them here
-  
-  return imageUrl;
-};
-
-/**
  * Handles image loading with retry logic
  * @param imageUrl URL of the image to load
  * @returns A source object for FastImage with proper caching configuration
  */
 export const getImageSource = (imageUrl: string | null | undefined) => {
   if (!imageUrl) {
+    logDebug('getImageSource called with null or undefined URL');
     return null;
+  }
+
+  // Log the full image URL we're trying to load
+  console.log(`[ImageUtils] Loading full URL: ${imageUrl}`);
+
+  // Check if this image has failed too many times recently
+  const failRecord = failedImageAttempts[imageUrl];
+  if (failRecord && failRecord.count >= MAX_RETRY_COUNT) {
+    const now = Date.now();
+    const timeSinceLastAttempt = now - failRecord.lastAttempt;
+    
+    if (timeSinceLastAttempt < RETRY_COOLDOWN) {
+      logDebug(`Skipping recently failed image (in cooldown): ${imageUrl.substring(0, 30)}...`);
+      return null;
+    }
+    
+    // Reset the failure count if we're trying again after cooldown
+    logDebug(`Retry cooled-down image: ${imageUrl.substring(0, 30)}...`);
+    failedImageAttempts[imageUrl].count = 0;
   }
 
   // Simplified for immediate loading - skip complex checks
@@ -196,11 +158,6 @@ export const handleImageLoadSuccess = (imageUrl: string | null | undefined, meta
   if (failedImageAttempts[imageUrl]) {
     delete failedImageAttempts[imageUrl];
   }
-  
-  // If this was a HEIF image and it succeeded, no need to track it anymore
-  if (heifImageUrls.has(imageUrl)) {
-    heifImageUrls.delete(imageUrl);
-  }
 };
 
 /**
@@ -219,47 +176,18 @@ export const handleImageLoadError = (imageUrl: string | null | undefined, cardNa
   failedImageAttempts[imageUrl].count += 1;
   failedImageAttempts[imageUrl].lastAttempt = Date.now();
   
-  // Check if this might be a HEIF/HEIC image causing problems
-  const mightBeHeif = isHeifImage(imageUrl) || 
-                     (failedImageAttempts[imageUrl].count >= 2 && /HeifDecoderImpl.*not supported/i.test(getLastError()));
-  
-  if (mightBeHeif && !heifImageUrls.has(imageUrl)) {
-    heifImageUrls.add(imageUrl);
-    logDebug(`Adding ${imageUrl} to HEIF tracking after load failure`);
-  }
-  
   // Truncate URL for cleaner logs
   const truncatedUrl = imageUrl.length > 50 ? 
     `${imageUrl.substring(0, 25)}...${imageUrl.substring(imageUrl.length - 25)}` : 
     imageUrl;
   
   console.log(`[ImageUtils] Failed to load image (attempt ${failedImageAttempts[imageUrl].count}): ${truncatedUrl}`, {
-    name: cardName,
-    isHeif: heifImageUrls.has(imageUrl)
+    name: cardName
   });
   
   // After MAX_RETRY_COUNT, log a more visible warning
   if (failedImageAttempts[imageUrl].count >= MAX_RETRY_COUNT) {
     console.warn(`[ImageUtils] Image load failed ${MAX_RETRY_COUNT} times, will cool down: ${truncatedUrl}`);
-  }
-};
-
-// Track the last error for analysis
-let lastError: string = '';
-const getLastError = () => lastError;
-
-// Override console.error to capture HeifDecoder errors
-const originalConsoleError = console.error;
-console.error = function(...args: any[]) {
-  // Call the original console.error
-  originalConsoleError.apply(console, args);
-  
-  // Check if this is a HeifDecoder error
-  if (args.length > 0 && typeof args[0] === 'string') {
-    const errorMsg = args[0];
-    if (errorMsg.includes('HeifDecoderImpl')) {
-      lastError = errorMsg;
-    }
   }
 };
 
@@ -323,23 +251,13 @@ export const preloadImages = (imageUrls: string[]) => {
   
   // Create source objects for preloading
   const sources = validUrls.map(url => {
-    // Check if this is a HEIF image and get alternative URL if possible
-    let finalUrl = url;
-    if (isHeifImage(url)) {
-      const alternativeUrl = getHeifAlternativeUrl(url);
-      if (alternativeUrl !== url) {
-        logDebug(`Using alternative URL for HEIF image in preload: ${alternativeUrl}`);
-        finalUrl = alternativeUrl;
-      }
-    }
-    
     return {
-      uri: finalUrl,
+      uri: url,
       priority: FastImage.priority.normal, // Changed from low to normal for better preloading
       cache: FastImage.cacheControl.immutable,
       headers: {
         'User-Agent': 'MTGPriceApp/1.0',
-        'Accept': 'image/*,image/jpeg,image/png',
+        'Accept': 'image/*,image/jpeg,image/png,image/avif',
         'Cache-Control': 'max-age=31536000, immutable' // Add explicit cache headers
       }
     };
@@ -386,8 +304,7 @@ export const getImageLoadingStats = () => {
     recentlySuccessfulImages: Object.values(successfulImageLoads).filter(
       record => (Date.now() - record.lastSuccess) < 60000 // last minute
     ).length,
-    preloadedImageSets: preloadedImageSets.size,
-    heifImages: heifImageUrls.size
+    preloadedImageSets: preloadedImageSets.size
   };
   
   return stats;
@@ -411,11 +328,124 @@ export const clearImageCache = async () => {
     delete successfulImageLoads[key];
   });
   
-  // Clear HEIF tracking
-  heifImageUrls.clear();
-  
   // Clear preloaded sets tracking
   preloadedImageSets.clear();
   
   logDebug('Image cache cleared');
-}; 
+};
+
+/**
+ * Update all image URLs in the database (converts lorcana-api.com to lorcast.io)
+ * This function requires a database instance to be passed in
+ * @param db SQLite database instance
+ * @returns Promise<number> Number of URLs updated
+ */
+export const updateAllImageUrlsInDatabase = async (db: any): Promise<number> => {
+  if (!db) {
+    console.error('[ImageUtils] Database instance required to update image URLs');
+    return 0;
+  }
+
+  try {
+    logDebug('Starting database image URL update');
+    
+    // Get all cards with problematic URLs
+    const query = `SELECT Unique_ID, Image FROM lorcana_cards WHERE 
+                  Image LIKE '%lorcana-api.com%' OR 
+                  (Image LIKE '%lorcast.io%' AND Image NOT LIKE '%.jpg%' AND Image NOT LIKE '%.png%') OR
+                  (Image LIKE '%cards.lorcast.io%') OR
+                  (Image LIKE '%/normal/%' AND Image NOT LIKE '%/full/%')`;
+    const results = await db.executeSql(query);
+    
+    if (!results || !results[0] || !results[0].rows) {
+      logDebug('No problematic URLs found in database');
+      return 0;
+    }
+    
+    const rows = results[0].rows;
+    const cardsToUpdate = [];
+    
+    // Process all matched cards
+    for (let i = 0; i < rows.length; i++) {
+      const card = rows.item(i);
+      
+      if (!card.Image) continue;
+      
+      console.log(`[ImageUtils] Checking URL for card ${card.Unique_ID}: ${card.Image}`);
+      
+      // Apply fixes based on our utility function
+      const fixedUrl = getLorcanaImageUrl(card);
+      
+      if (fixedUrl && fixedUrl !== card.Image) {
+        cardsToUpdate.push({
+          id: card.Unique_ID,
+          oldUrl: card.Image,
+          newUrl: fixedUrl
+        });
+      }
+    }
+    
+    console.log(`[ImageUtils] Found ${cardsToUpdate.length} cards with URLs to update`);
+    
+    // Update each card with the fixed URL
+    let updatedCount = 0;
+    for (const card of cardsToUpdate) {
+      const updateQuery = "UPDATE lorcana_cards SET Image = ? WHERE Unique_ID = ?";
+      await db.executeSql(updateQuery, [card.newUrl, card.id]);
+      updatedCount++;
+      
+      if (updatedCount % 50 === 0) {
+        console.log(`[ImageUtils] Updated ${updatedCount}/${cardsToUpdate.length} image URLs`);
+      }
+    }
+    
+    console.log(`[ImageUtils] Successfully updated ${updatedCount} image URLs in database`);
+    return updatedCount;
+  } catch (error) {
+    console.error('[ImageUtils] Error updating image URLs in database:', error);
+    return 0;
+  }
+};
+
+/**
+ * Get the appropriate image URL for a Lorcana card
+ * @param card The Lorcana card object
+ * @param size The desired image size ('full' or 'small')
+ * @returns The URL for the card image
+ */
+export const getLorcanaImageUrl = (card: any, size: 'full' | 'small' = 'full'): string => {
+  // Start with null and find the best URL available
+  let imageUrl: string | null = null;
+  
+  // First check if the card has the new image_uris.digital structure
+  if (card.image_uris?.digital) {
+    // Use the appropriate size from the digital collection
+    if (size === 'small' && card.image_uris.digital.small) {
+      return card.image_uris.digital.small;
+    } else if (card.image_uris.digital.normal) {
+      return card.image_uris.digital.normal;
+    } else if (card.image_uris.digital.large) {
+      return card.image_uris.digital.large;
+    }
+  }
+  
+  // If the card already has an image URL, use it
+  if (card.Image && typeof card.Image === 'string') {
+    imageUrl = card.Image;
+  }
+  // If it's a card with imageUris, use those
+  else if (card.imageUris?.normal || card.imageUris?.small) {
+    imageUrl = size === 'full' ? card.imageUris.normal : card.imageUris.small;
+  }
+  // If there's a direct imageUrl, use that
+  else if (card.imageUrl) {
+    imageUrl = card.imageUrl;
+  }
+
+  if (imageUrl) {
+    return imageUrl;
+  }
+
+  // Return a placeholder if no image is available
+  return 'https://via.placeholder.com/488x680/333333/FFFFFF?text=' + encodeURIComponent(card.name || card.Name || '?');
+};

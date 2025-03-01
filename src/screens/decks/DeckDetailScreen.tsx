@@ -8,7 +8,7 @@ import type { RouteProp } from '@react-navigation/native';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import FastImage from 'react-native-fast-image';
+import FastImage from "@d11/react-native-fast-image";
 import RadialMenu from '../../components/RadialMenu';
 import { isCardLegalForFormat, filterLegalCards } from '../../application/legalityFilter';
 const CARD_ASPECT_RATIO = 0.68;

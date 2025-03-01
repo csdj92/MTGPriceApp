@@ -8,7 +8,7 @@ import {
     FlatList,
     Dimensions,
 } from 'react-native';
-import FastImage from 'react-native-fast-image';
+import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 // Fix the Icon type with a proper type assertion to avoid type errors
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{

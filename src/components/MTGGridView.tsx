@@ -13,7 +13,7 @@ import {
     ActivityIndicator,
     Button,
 } from 'react-native';
-import FastImage from 'react-native-fast-image';
+import FastImage from "@d11/react-native-fast-image";
 import type { ExtendedCard } from '../types/card';
 import { databaseService, getDB } from '../services/DatabaseService';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
