@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     View,
     StyleSheet,
@@ -10,15 +10,20 @@ import {
     TextInput,
     Image,
 } from 'react-native';
-import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-const Icon = MaterialIcons as unknown as React.ComponentType<IconProps>;
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+
 import { databaseService } from '../../services/DatabaseService';
 import type { Collection } from '../../services/DatabaseService';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
-import { IconProps } from 'react-native-vector-icons/Icon';
-import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import { useTheme } from '../../context/ThemeContext';
+import type { Theme } from '../../context/ThemeContext';
+const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
+    name: string;
+    size: number;
+    color: string;
+}>;
 
 const CollectionsTab: React.FC = () => {
     const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -27,6 +32,10 @@ const CollectionsTab: React.FC = () => {
     const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
     const [newCollectionName, setNewCollectionName] = useState('');
     const [newCollectionDescription, setNewCollectionDescription] = useState('');
+    const { theme } = useTheme();
+    
+    // Create styles with the current theme
+    const styles = useMemo(() => createStyles(theme), [theme]);
 
     useEffect(() => {
         loadCollections();
@@ -84,7 +93,7 @@ const CollectionsTab: React.FC = () => {
             })}
         >
             <View style={styles.collectionIcon}>
-                <Icon name="cards" size={24} color="#666" />
+                <Icon name="cards" size={24} color={theme.icon} />
             </View>
             <View style={styles.collectionInfo}>
                 <Text style={styles.collectionName}>{item.name}</Text>
@@ -98,14 +107,14 @@ const CollectionsTab: React.FC = () => {
                     </Text>
                 </View>
             </View>
-            <Icon name="chevron-right" size={24} color="#666" />
+            <Icon name="chevron-right" size={24} color={theme.iconSecondary} />
         </TouchableOpacity>
     );
 
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#2196F3" />
+                <ActivityIndicator size="large" color={theme.primary} />
                 <Text style={styles.loadingText}>Loading collections...</Text>
             </View>
         );
@@ -125,7 +134,7 @@ const CollectionsTab: React.FC = () => {
 
             {collections.length === 0 ? (
                 <View style={styles.emptyContainer}>
-                    <Icon name="folder" size={64} color="#ccc" />
+                    <Icon name="cards-playing-outline" size={64} color={theme.iconSecondary} />
                     <Text style={styles.emptyText}>No Collections</Text>
                     <Text style={styles.emptySubtext}>
                         Create a collection to start organizing your cards
@@ -189,24 +198,25 @@ const CollectionsTab: React.FC = () => {
     );
 };
 
-const styles = StyleSheet.create({
+// Create styles function that takes a theme and returns StyleSheet
+const createStyles = (theme: Theme) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: 16,
-        backgroundColor: 'white',
+        backgroundColor: theme.surface,
         borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        borderBottomColor: theme.border,
     },
     headerTitle: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#333',
+        color: theme.text,
     },
     addButton: {
         padding: 8,
@@ -217,12 +227,12 @@ const styles = StyleSheet.create({
     collectionItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'white',
+        backgroundColor: theme.surface,
         borderRadius: 12,
         padding: 16,
         marginBottom: 12,
         elevation: 2,
-        shadowColor: '#000',
+        shadowColor: theme.border,
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
@@ -231,7 +241,7 @@ const styles = StyleSheet.create({
         width: 48,
         height: 48,
         borderRadius: 24,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 16,
@@ -242,7 +252,7 @@ const styles = StyleSheet.create({
     collectionName: {
         fontSize: 18,
         fontWeight: '600',
-        color: '#333',
+        color: theme.text,
         marginBottom: 4,
     },
     collectionStats: {
@@ -251,7 +261,7 @@ const styles = StyleSheet.create({
     },
     statsText: {
         fontSize: 14,
-        color: '#666',
+        color: theme.textSecondary,
         marginRight: 8,
     },
     emptyContainer: {
@@ -263,24 +273,24 @@ const styles = StyleSheet.create({
     emptyText: {
         fontSize: 20,
         fontWeight: '600',
-        color: '#333',
+        color: theme.text,
         marginTop: 16,
     },
     emptySubtext: {
         fontSize: 16,
-        color: '#666',
+        color: theme.textSecondary,
         textAlign: 'center',
         marginTop: 8,
         marginBottom: 24,
     },
     createButton: {
-        backgroundColor: '#2196F3',
+        backgroundColor: theme.primary,
         paddingHorizontal: 24,
         paddingVertical: 12,
         borderRadius: 8,
     },
     createButtonText: {
-        color: 'white',
+        color: '#ffffff',
         fontSize: 16,
         fontWeight: '600',
     },
@@ -292,7 +302,7 @@ const styles = StyleSheet.create({
     loadingText: {
         marginTop: 16,
         fontSize: 16,
-        color: '#666',
+        color: theme.textSecondary,
     },
     modalContainer: {
         flex: 1,
@@ -301,22 +311,23 @@ const styles = StyleSheet.create({
         padding: 16,
     },
     modalContent: {
-        backgroundColor: 'white',
+        backgroundColor: theme.surface,
         borderRadius: 12,
         padding: 24,
     },
     modalTitle: {
         fontSize: 20,
         fontWeight: '600',
-        color: '#333',
+        color: theme.text,
         marginBottom: 16,
     },
     input: {
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
         borderRadius: 8,
         padding: 12,
         fontSize: 16,
         marginBottom: 12,
+        color: theme.text,
     },
     descriptionInput: {
         height: 100,
@@ -334,15 +345,15 @@ const styles = StyleSheet.create({
         marginLeft: 12,
     },
     cancelButton: {
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
     },
     cancelButtonText: {
-        color: '#666',
+        color: theme.textSecondary,
         fontSize: 16,
         fontWeight: '600',
     },
     createModalButton: {
-        backgroundColor: '#2196F3',
+        backgroundColor: theme.primary,
     },
 });
 

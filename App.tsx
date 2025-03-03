@@ -11,11 +11,13 @@ import { setupFastImage, getImageLoadingStats } from './src/utils/imageUtils';
 import FastImage from "@d11/react-native-fast-image";
 import ErrorBoundary from './src/components/ErrorBoundary';
 import DatabaseErrorScreen from './src/components/DatabaseErrorScreen';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 
-const App = () => {
+const AppContent = () => {
   const [isDbInitialized, setIsDbInitialized] = useState(false);
   const [initError, setInitError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const { theme } = useTheme();
 
   useEffect(() => {
     // Initialize FastImage with improved caching settings
@@ -61,12 +63,22 @@ const App = () => {
   }
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <StatusBar barStyle="dark-content" />
-        <AppNavigator />
-      </NavigationContainer>
-    </SafeAreaProvider>
+    <NavigationContainer>
+      <StatusBar barStyle={theme.statusBar} />
+      <AppNavigator />
+    </NavigationContainer>
+  );
+};
+
+const App = () => {
+  return (
+    <ErrorBoundary fallback={<DatabaseErrorScreen />}>
+      <ThemeProvider>
+        <SafeAreaProvider>
+          <AppContent />
+        </SafeAreaProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 };
 
@@ -92,9 +104,4 @@ const styles = StyleSheet.create({
   },
 });
 
-// Wrap the App component in an ErrorBoundary
-export default () => (
-  <ErrorBoundary fallback={<DatabaseErrorScreen />}>
-    <App />
-  </ErrorBoundary>
-);
+export default App;

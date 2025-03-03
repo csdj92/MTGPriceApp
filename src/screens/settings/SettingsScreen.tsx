@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     StyleSheet,
@@ -13,6 +13,8 @@ import {
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
 import { databaseService } from '../../services/DatabaseService';
+import { fixCardNames } from '../../services/LorcanaService';
+import { useTheme } from '../../context/ThemeContext';
 
 
 interface SettingsSectionProps {
@@ -20,12 +22,15 @@ interface SettingsSectionProps {
     children: React.ReactNode;
 }
 
-const SettingsSection: React.FC<SettingsSectionProps> = ({ title, children }) => (
-    <View style={styles.section}>
-        <Text style={styles.sectionTitle}>{title}</Text>
-        <View style={styles.sectionContent}>{children}</View>
-    </View>
-);
+const SettingsSection: React.FC<SettingsSectionProps> = ({ title, children }) => {
+    const { theme } = useTheme();
+    return (
+        <View style={[styles.section, { backgroundColor: theme.background }]}>
+            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>{title}</Text>
+            <View style={[styles.sectionContent, { backgroundColor: theme.surface, borderColor: theme.border }]}>{children}</View>
+        </View>
+    );
+};
 
 interface SettingsItemProps {
     icon: string;
@@ -43,34 +48,38 @@ const SettingsItem: React.FC<SettingsItemProps> = ({
     onPress,
     value,
     onValueChange,
-}) => (
-    <TouchableOpacity
-        style={styles.settingsItem}
-        onPress={onPress}
-        disabled={!onPress && !onValueChange}
-    >
-        <Icon name={icon} size={24} color="#666" style={styles.settingsIcon} />
-        <View style={styles.settingsText}>
-            <Text style={styles.settingsTitle}>{title}</Text>
-            {subtitle && <Text style={styles.settingsSubtitle}>{subtitle}</Text>}
-        </View>
-        {onValueChange && (
-            <Switch
-                value={value}
-                onValueChange={onValueChange}
-                trackColor={{ false: '#ddd', true: '#81c784' }}
-                thumbColor={value ? '#4caf50' : '#f5f5f5'}
-            />
-        )}
-        {onPress && <Icon name="chevron-right" size={24} color="#ccc" />}
-    </TouchableOpacity>
-);
+}) => {
+    const { theme } = useTheme();
+    return (
+        <TouchableOpacity
+            style={[styles.settingsItem, { borderBottomColor: theme.borderLight }]}
+            onPress={onPress}
+            disabled={!onPress && !onValueChange}
+        >
+            <Icon name={icon} size={24} color={theme.icon} style={styles.settingsIcon} />
+            <View style={styles.settingsText}>
+                <Text style={[styles.settingsTitle, { color: theme.text }]}>{title}</Text>
+                {subtitle && <Text style={[styles.settingsSubtitle, { color: theme.textSecondary }]}>{subtitle}</Text>}
+            </View>
+            {onValueChange && (
+                <Switch
+                    value={value}
+                    onValueChange={onValueChange}
+                    trackColor={{ false: theme.switchTrackFalse, true: theme.switchTrackTrue }}
+                    thumbColor={value ? theme.switchThumbTrue : theme.switchThumbFalse}
+                />
+            )}
+            {onPress && <Icon name="chevron-right" size={24} color={theme.iconSecondary} />}
+        </TouchableOpacity>
+    );
+};
 
 const SettingsScreen = () => {
     const [notifications, setNotifications] = useState(true);
     const [priceAlerts, setPriceAlerts] = useState(true);
-    const [darkMode, setDarkMode] = useState(false);
+    const { isDark, setDarkMode, theme } = useTheme();
     const [isRebuilding, setIsRebuilding] = useState(false);
+    const [isFixingNames, setIsFixingNames] = useState(false);
 
     const handleBackup = () => {
         Alert.alert('Coming Soon', 'Backup functionality will be available in a future update.');
@@ -138,8 +147,42 @@ const SettingsScreen = () => {
         );
     };
 
+    const handleFixCardNames = async () => {
+        try {
+            setIsFixingNames(true);
+            
+            // Use InteractionManager to ensure UI remains responsive
+            InteractionManager.runAfterInteractions(async () => {
+                try {
+                    const fixedCount = await fixCardNames();
+                    
+                    if (fixedCount > 0) {
+                        Alert.alert(
+                            'Success',
+                            `Fixed ${fixedCount} cards with "Name - undefined" issue.`
+                        );
+                    } else {
+                        Alert.alert(
+                            'No Issues Found',
+                            'No cards with "Name - undefined" were found in the database.'
+                        );
+                    }
+                } catch (error) {
+                    console.error('Error fixing card names:', error);
+                    Alert.alert('Error', 'Failed to fix card names. Please try again.');
+                } finally {
+                    setIsFixingNames(false);
+                }
+            });
+        } catch (error) {
+            console.error('Error fixing card names:', error);
+            setIsFixingNames(false);
+            Alert.alert('Error', 'Failed to fix card names. Please try again.');
+        }
+    };
+
     return (
-        <ScrollView style={styles.container}>
+        <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
             <SettingsSection title="Preferences">
                 <SettingsItem
                     icon="bell-outline"
@@ -159,7 +202,7 @@ const SettingsScreen = () => {
                     icon="theme-light-dark"
                     title="Dark Mode"
                     subtitle="Use dark theme"
-                    value={darkMode}
+                    value={isDark}
                     onValueChange={setDarkMode}
                 />
             </SettingsSection>
@@ -172,12 +215,23 @@ const SettingsScreen = () => {
                     onPress={handleRebuildDatabase}
                 />
                 {isRebuilding && (
-                    <View style={styles.rebuildingContainer}>
-                        <ActivityIndicator size="small" color="#2196F3" />
-                        <Text style={styles.rebuildingText}>Rebuilding database...</Text>
+                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
+                        <ActivityIndicator size="small" color={theme.primary} />
+                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Rebuilding database...</Text>
                     </View>
                 )}
-               
+                <SettingsItem
+                    icon="card-text-outline"
+                    title="Fix Card Names"
+                    subtitle="Fix cards with 'Name - undefined' issue"
+                    onPress={handleFixCardNames}
+                />
+                {isFixingNames && (
+                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
+                        <ActivityIndicator size="small" color={theme.primary} />
+                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Fixing card names...</Text>
+                    </View>
+                )}
             </SettingsSection>
 
             <SettingsSection title="Data Management">

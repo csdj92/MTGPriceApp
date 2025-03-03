@@ -31,6 +31,9 @@ import { exportService, collectionEventEmitter } from '../../services/ExportServ
 import type { Collection } from '../../services/DatabaseService';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
+import { useTheme } from '../../context/ThemeContext';
+import useThemedStyles from '../../hooks/useThemedStyles';
+import type { Theme } from '../../context/ThemeContext';
 
 type SetCompletionScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'SetCompletion'>;
@@ -47,46 +50,51 @@ const SetItem = memo(({ item, onDelete, onPress }: {
     item: SetCollection & { type: string },
     onDelete: (id: string, name: string) => void,
     onPress: (item: SetCollection & { type: string }) => void
-}) => (
-    <TouchableOpacity 
-        style={styles.setItem}
-        onPress={() => onPress(item)}
-    >
-        <View style={styles.setIcon}>
-            <Icon name={item.type === 'MTG' ? 'cards' : 'cards-playing-outline'} size={24} color="#666" />
-        </View>
-        <View style={styles.setInfo}>
-            <Text style={styles.setName}>{item.name}</Text>
-            <View style={styles.progressContainer}>
-                <View style={styles.progressBar}>
-                    <View 
-                        style={[
-                            styles.progressFill, 
-                            { width: `${item.completionPercentage}%` }
-                        ]} 
-                    />
+}) => {
+    const { theme } = useTheme();
+    const styles = useThemedStyles(() => createStyles(theme));
+    
+    return (
+        <TouchableOpacity 
+            style={styles.setItem}
+            onPress={() => onPress(item)}
+        >
+            <View style={styles.setIcon}>
+                <Icon name={item.type === 'MTG' ? 'cards' : 'cards-playing-outline'} size={24} color={theme.icon} />
+            </View>
+            <View style={styles.setInfo}>
+                <Text style={styles.setName}>{item.name}</Text>
+                <View style={styles.progressContainer}>
+                    <View style={styles.progressBar}>
+                        <View 
+                            style={[
+                                styles.progressFill, 
+                                { width: `${item.completionPercentage}%` }
+                            ]} 
+                        />
+                    </View>
+                    <Text style={styles.progressText}>
+                        {item.collectedCards}/{item.totalCards} ({item.completionPercentage.toFixed(1)}%)
+                    </Text>
                 </View>
-                <Text style={styles.progressText}>
-                    {item.collectedCards}/{item.totalCards} ({item.completionPercentage.toFixed(1)}%)
-                </Text>
+                <View style={styles.setStats}>
+                    <Text style={styles.statsText}>
+                        ${(item.totalValue || 0).toFixed(2)}
+                    </Text>
+                </View>
             </View>
-            <View style={styles.setStats}>
-                <Text style={styles.statsText}>
-                    ${(item.totalValue || 0).toFixed(2)}
-                </Text>
+            <View style={styles.actionButtons}>
+                <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => onDelete(item.id, item.name)}
+                >
+                    <Icon name="delete" size={24} color="#ff5252" />
+                </TouchableOpacity>
+                <Icon name="chevron-right" size={24} color={theme.iconSecondary} />
             </View>
-        </View>
-        <View style={styles.actionButtons}>
-            <TouchableOpacity
-                style={styles.deleteButton}
-                onPress={() => onDelete(item.id, item.name)}
-            >
-                <Icon name="delete" size={24} color="#ff5252" />
-            </TouchableOpacity>
-            <Icon name="chevron-right" size={24} color="#666" />
-        </View>
-    </TouchableOpacity>
-));
+        </TouchableOpacity>
+    );
+});
 
 const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation }) => {
     // State hooks
@@ -95,6 +103,8 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     const [lorcanaCollections, setLorcanaCollections] = useState<SetCollection[]>([]);
     const [loadingMtg, setLoadingMtg] = useState(true);
     const [loadingLorcana, setLoadingLorcana] = useState(true);
+    const { theme } = useTheme();
+    const styles = useThemedStyles(() => createStyles(theme));
 
     // Memoized callbacks
     const loadCollections = useCallback(async (forceRefresh = false) => {
@@ -210,13 +220,13 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
 
     const EmptyComponent = useMemo(() => (
         <View style={styles.emptyContainer}>
-            <Icon name="cards-outline" size={64} color="#ccc" />
+            <Icon name="cards-outline" size={64} color={theme.iconSecondary} />
             <Text style={styles.emptyText}>No Sets Found</Text>
             <Text style={styles.emptySubtext}>
                 Scan cards to start tracking set completion
             </Text>
         </View>
-    ), []);
+    ), [theme, styles]);
 
     // Effects
     useEffect(() => {
@@ -226,16 +236,17 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     // Add focus listener to refresh collections
     useEffect(() => {
         const unsubscribe = navigation.addListener('focus', () => {
-            console.log('[SetCompletionScreen] Screen focused, reloading collections...');
-            // Force a complete reload from the database when screen is focused
-            setMtgCollections([]);
-            setLorcanaCollections([]);
-            setIsLoading(true);
-            loadCollections(true); // Use forceRefresh = true
+            // Only show loading indicator if we have no data yet
+            if (mtgCollections.length === 0 && lorcanaCollections.length === 0) {
+                setIsLoading(true);
+            }
+            
+            // Refresh data in background without clearing existing data
+            loadCollections(true);
         });
 
         return unsubscribe;
-    }, [navigation, loadCollections]);
+    }, [navigation, loadCollections, mtgCollections.length, lorcanaCollections.length]);
 
     // Add listener for collection import/update events
     useEffect(() => {
@@ -319,7 +330,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#2196F3" />
+                <ActivityIndicator size="large" color={theme.primary} />
                 <Text style={styles.loadingText}>Loading collections...</Text>
             </View>
         );
@@ -334,7 +345,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                         style={styles.headerButton}
                         onPress={handleImportCollection}
                     >
-                        <Icon name="file-import" size={24} color="#2196F3" />
+                        <Icon name="file-import" size={24} color={theme.primary} />
                         <Text style={styles.buttonText}>Import</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
@@ -357,7 +368,7 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                             }
                         }}
                     >
-                        <Icon name="refresh" size={24} color="#2196F3" />
+                        <Icon name="refresh" size={24} color={theme.primary} />
                         <Text style={styles.buttonText}>Refresh</Text>
                     </TouchableOpacity>
                 </View>
@@ -380,24 +391,25 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     );
 };
 
-const styles = StyleSheet.create({
+// Define styles
+const createStyles = (theme: Theme) => StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: 16,
-        backgroundColor: 'white',
+        backgroundColor: theme.surface,
         borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        borderBottomColor: theme.border,
     },
     headerTitle: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: '#333',
+        color: theme.text,
     },
     listContainer: {
         padding: 16,
@@ -405,12 +417,12 @@ const styles = StyleSheet.create({
     setItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'white',
+        backgroundColor: theme.card,
         borderRadius: 12,
         padding: 16,
         marginBottom: 12,
         elevation: 2,
-        shadowColor: '#000',
+        shadowColor: theme.text,
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
@@ -419,7 +431,7 @@ const styles = StyleSheet.create({
         width: 48,
         height: 48,
         borderRadius: 24,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 16,
@@ -430,7 +442,7 @@ const styles = StyleSheet.create({
     setName: {
         fontSize: 18,
         fontWeight: '600',
-        color: '#333',
+        color: theme.text,
         marginBottom: 4,
     },
     progressContainer: {
@@ -438,18 +450,18 @@ const styles = StyleSheet.create({
     },
     progressBar: {
         height: 4,
-        backgroundColor: '#e0e0e0',
+        backgroundColor: theme.border,
         borderRadius: 2,
         marginBottom: 4,
     },
     progressFill: {
         height: '100%',
-        backgroundColor: '#2196F3',
+        backgroundColor: theme.primary,
         borderRadius: 2,
     },
     progressText: {
         fontSize: 12,
-        color: '#666',
+        color: theme.textSecondary,
     },
     setStats: {
         flexDirection: 'row',
@@ -458,34 +470,36 @@ const styles = StyleSheet.create({
     },
     statsText: {
         fontSize: 14,
-        color: '#666',
+        color: theme.textSecondary,
         marginRight: 8,
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: theme.background,
     },
     loadingText: {
         marginTop: 16,
         fontSize: 16,
-        color: '#666',
+        color: theme.textSecondary,
     },
     emptyContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
         padding: 20,
+        backgroundColor: theme.background,
     },
     emptyText: {
         fontSize: 20,
         fontWeight: '600',
-        color: '#333',
+        color: theme.text,
         marginTop: 16,
     },
     emptySubtext: {
         fontSize: 16,
-        color: '#666',
+        color: theme.textSecondary,
         textAlign: 'center',
         marginTop: 8,
     },
@@ -507,16 +521,16 @@ const styles = StyleSheet.create({
         padding: 8,
         borderRadius: 4,
         borderWidth: 1,
-        borderColor: '#e0e0e0',
-        backgroundColor: '#f5f5f5',
+        borderColor: theme.border,
+        backgroundColor: theme.surface,
         marginLeft: 8,
     },
     buttonText: {
-        color: '#2196F3',
+        color: theme.primary,
         marginLeft: 4,
         fontSize: 14,
         fontWeight: '500',
     },
 });
 
-export default SetCompletionScreen; 
+export default SetCompletionScreen;

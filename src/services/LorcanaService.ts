@@ -8,7 +8,6 @@ enablePromise(true)
 
 const LorcanaBulkCardApi = 'https://api.lorcana-api.com/bulk/cards'
 const LorcastPriceApi = 'https://api.lorcast.com/v0/cards/search'
-const LorcastRetrieveBySetNumberApi = 'https://api.lorcast.com/v0/cards/{set_number}/{card_num}'
 
 let dbInstance: SQLiteDatabase | null = null
 let isInitialized = false
@@ -1392,7 +1391,7 @@ export const fetchAndStoreEnchantedCards = async () => {
                         Image: card.image_uris?.digital?.normal || null,
                         Inkable: card.inkwell ? 1 : 0,
                         Lore: card.lore || null,
-                        Name: `${card.name} - ${card.version}`,
+                        Name: card.version ? `${card.name} - ${card.version}` : card.name,
                         Rarity: 'Enchanted',
                         Set_ID: setId,
                         Set_Name: card.set.name || null,
@@ -1729,6 +1728,46 @@ export const fetchCardVersionsByName = async (cardName: string): Promise<Lorcana
     } catch (error) {
         handleError(`Failed to fetch card versions for "${cardName}"`, error);
         return [];
+    }
+};
+
+// Function to specifically fix cards with "Name - undefined" issue
+export const fixCardNames = async (): Promise<number> => {
+    try {
+        const db = await getDB();
+        let fixedCount = 0;
+
+        // Find all cards with "Name - undefined" in their name
+        const [results] = await db.executeSql(
+            "SELECT * FROM lorcana_cards WHERE Name LIKE '% - undefined'",
+            []
+        );
+
+        if (results.rows.length === 0) {
+            console.log('No cards with "Name - undefined" found in the database.');
+            return 0;
+        }
+
+        console.log(`Found ${results.rows.length} cards with "Name - undefined" to fix.`);
+
+        // Fix each card by removing the " - undefined" part
+        await db.transaction(async (tx) => {
+            for (let i = 0; i < results.rows.length; i++) {
+                const card = results.rows.item(i);
+                const fixedName = card.Name.replace(' - undefined', '');
+                
+                await tx.executeSql(
+                    'UPDATE lorcana_cards SET Name = ? WHERE Unique_ID = ?',
+                    [fixedName, card.Unique_ID]
+                );
+                fixedCount++;
+            }
+        });
+
+        console.log(`Fixed ${fixedCount} card names.`);
+        return fixedCount;
+    } catch (error) {
+        return handleError('Error fixing card names', error);
     }
 };
 
