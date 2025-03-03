@@ -294,8 +294,10 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     };
 
     const handleCardPress = useCallback((card: ExtendedCard) => {
-        navigation.navigate('CardDetails', { card });
-    }, [navigation]);
+        // Make sure we have the most up-to-date card data from state
+        const updatedCard = mtgCards.find(c => c.id === card.id) || card;
+        navigation.navigate('CardDetails', { card: updatedCard });
+    }, [navigation, mtgCards]);
 
     const handleLorcanaCardPress = useCallback((card: PartialLorcanaCardWithPrice) => {
         // Safe navigation - make sure we have a valid card and collectionId
@@ -316,24 +318,20 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         }
         
         try {
-            databaseService.removeCardFromCollection(card.id, collectionId)
+            databaseService.markCardAsMissing(card.id, collectionId)
                 .then(() => {
-                    setMtgCards(prevCards => prevCards.filter(c => c.id !== card.id));
-                    // Update the collection count
-                    if (collection) {
-                        setCollection({
-                            ...collection,
-                            cardCount: collection.cardCount - 1
-                        });
-                    }
+                    setMtgCards(prevCards => prevCards.map(c => 
+                        c.id === card.id ? { ...c, quantity: 0 } : c
+                    ));
+                    // No need to update the collection count since the card is still in the collection, just marked as missing
                 })
                 .catch(error => {
-                    console.error('[CollectionDetailsScreen] Error removing card from collection:', error);
+                    console.error('[CollectionDetailsScreen] Error marking card as missing:', error);
                 });
         } catch (error) {
-            console.error('[CollectionDetailsScreen] Exception when removing card from collection:', error);
+            console.error('[CollectionDetailsScreen] Exception when marking card as missing:', error);
         }
-    }, [collectionId, collection, databaseService]);
+    }, [collectionId, databaseService]);
 
     const handleRemoveLorcanaCardFromCollection = useCallback((card: PartialLorcanaCardWithPrice) => {
         const cardId = card.Unique_ID || (card as any).id;
@@ -531,6 +529,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         cards={mtgCards.filter(card => card.collected)}
                         isLoading={isLoading}
                         onCardPress={handleCardPress}
+                        onDeleteCard={handleDeleteCard}
                         onEndReached={handleEndReached}
                         onEndReachedThreshold={0.5}
                         ListFooterComponent={

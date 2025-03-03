@@ -19,6 +19,8 @@ import { databaseService, getDB } from '../services/DatabaseService';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useDebouncedCallback } from 'use-debounce';
 import { InteractionManager } from 'react-native';
+import { useTheme } from '../context/ThemeContext';
+import { CardDetailModal } from './CardDetail';
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<any>;
 interface MTGGridViewProps {
     cards: ExtendedCard[];
@@ -101,7 +103,6 @@ interface SortState {
 interface ModalState {
     showFilters: boolean;
     selectedCard: ExtendedCard | null;
-    showVersionModal: boolean;
     availableVersions: ExtendedCard[];
     showFoil: boolean;
     setShowFoil: (value: boolean) => void;
@@ -118,7 +119,6 @@ const DEFAULT_FILTERS: Filters = {
 const INITIAL_MODAL_STATE: ModalState = {
     showFilters: false,
     selectedCard: null,
-    showVersionModal: false,
     availableVersions: [],
     showFoil: false,
     setShowFoil: () => {}
@@ -170,7 +170,12 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
     const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
     const [showFilters, setShowFilters] = useState(false);
     const [sortState, setSortState] = useState<SortState>({ sortBy: 'number', direction: 'asc' });
-    const [modalState, setModalState] = useState<ModalState>(INITIAL_MODAL_STATE);
+    const [showFoil, setShowFoil] = useState(false);
+    const [modalState, setModalState] = useState<ModalState>({
+        ...INITIAL_MODAL_STATE,
+        showFoil,
+        setShowFoil
+    });
 
     // Filter options
     const colorOptions = ['White', 'Blue', 'Black', 'Red', 'Green', 'Colorless', 'Multicolor'];
@@ -182,13 +187,15 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
 
     // Handler memoization
     const handleCardPress = useCallback((card: ExtendedCard) => {
-        setModalState(prev => ({ ...prev, selectedCard: card }));
-    }, []);
+        // Get the most up-to-date version of the card from the filtered cards array
+        const updatedCard = filteredCards.find(c => c.id === card.id) || card;
+        setModalState(prev => ({ ...prev, selectedCard: updatedCard }));
+    }, [filteredCards]);
 
     const handleLongPress = useCallback(async (card: ExtendedCard) => {
         try {
             const variants = await fetchCardVariants(card.name);
-            setModalState(prev => ({ ...prev, availableVersions: variants, showVersionModal: true }));
+            setModalState(prev => ({ ...prev, availableVersions: variants }));
         } catch (error) {
             handleFetchError(error);
         }
@@ -221,7 +228,8 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
             );
             props.onCardsUpdate(updatedCards);
         }
-        setModalState(prev => ({ ...prev, showVersionModal: false }));
+        // Update the selected card to the new version
+        setModalState(prev => ({ ...prev, selectedCard: newVersion }));
     };
 
     const addToCollection = async (card: ExtendedCard) => {
@@ -238,20 +246,47 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
                 props.onCardsUpdate(updatedCards);
             }
 
-            // Update local state references
+            // Update modal state - this is crucial to immediately show the Mark as Missing button instead of the Add button
             setModalState(prev => ({
                 ...prev,
-                selectedCard: prev.selectedCard ? { ...prev.selectedCard, quantity: 1 } : null,
-                availableVersions: prev.availableVersions.map(v => v.id === card.id ? { ...v, quantity: 1 } : v)
+                selectedCard: prev.selectedCard ? { ...prev.selectedCard, quantity: 1 } : null
             }));
 
             // Force immediate UI update by resetting filtered cards
             setFilters(prev => ({ ...prev })); // Trigger filter recalculation
-
-            setModalState(prev => ({ ...prev, showVersionModal: false }));
         } catch (error) {
             console.error('Error adding card to collection:', error);
             Alert.alert('Error', 'Failed to add card to collection');
+        }
+    };
+
+    // Handle marking a card as missing (quantity = 0)
+    const markCardAsMissing = async (card: ExtendedCard) => {
+        try {
+            // Call the parent's onDeleteCard handler (which uses markCardAsMissing in DatabaseService)
+            props.onDeleteCard(card);
+            
+            // Update local state to mark the card as missing (quantity = 0)
+            const updatedCards = props.cards.map(c => 
+                c.id === card.id ? { ...c, quantity: 0 } : c
+            );
+            
+            // Update parent component's state
+            if (props.onCardsUpdate) {
+                props.onCardsUpdate(updatedCards);
+            }
+            
+            // Update modal state - this is crucial to immediately show the Add button instead of the Mark as Missing button
+            setModalState(prev => ({
+                ...prev,
+                selectedCard: prev.selectedCard ? { ...prev.selectedCard, quantity: 0 } : null
+            }));
+            
+            // Force immediate UI update by resetting filtered cards
+            setFilters(prev => ({ ...prev })); // Trigger filter recalculation
+        } catch (error) {
+            console.error('Error marking card as missing:', error);
+            Alert.alert('Error', 'Failed to mark card as missing');
         }
     };
 
@@ -281,6 +316,15 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
         };
         preloadImages();
     }, [props.cards]);
+
+    // Make sure showFoil state stays in sync with the state hook
+    useEffect(() => {
+        setModalState(prev => ({
+            ...prev,
+            showFoil,
+            setShowFoil
+        }));
+    }, [showFoil]);
 
     return (
         <View style={styles.container}>
@@ -392,11 +436,15 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
             />
 
             <CardDetailModal
-                state={modalState}
-                onClose={() => setModalState(INITIAL_MODAL_STATE)}
+                state={{
+                    selectedCard: modalState.selectedCard,
+                    showFoil: modalState.showFoil,
+                    setShowFoil: modalState.setShowFoil
+                }}
+                onClose={() => setModalState(prev => ({ ...prev, selectedCard: null }))}
                 onVersionChange={handleVersionChange}
                 onAddToCollection={addToCollection}
-                onDeleteCard={props.onDeleteCard}
+                onDeleteCard={markCardAsMissing}
             />
         </View>
     );
@@ -636,85 +684,6 @@ const FilterPanel = memo(({ visible, filters, onFilterChange }: {
         </View>
     );
 });
-
-const CardDetailModal = ({ state, onClose, onVersionChange, onAddToCollection, onDeleteCard }: { state: ModalState; onClose: () => void; onVersionChange: (newVersion: ExtendedCard) => void; onAddToCollection: (card: ExtendedCard) => void; onDeleteCard: (card: ExtendedCard) => void }) => {
-    const normalPrice = useMemo(() => getBestPrice(state.selectedCard?.prices, false).toFixed(2), [state.selectedCard?.prices]);
-    const foilPrice = useMemo(() => getBestPrice(state.selectedCard?.prices, true).toFixed(2), [state.selectedCard?.prices]);
-
-    return (
-        <Modal
-            visible={state.selectedCard !== null}
-            animationType="slide"
-            transparent={true}
-            onRequestClose={onClose}
-        >
-            <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                    {state.selectedCard && (
-                        <ScrollView>
-                            <View style={styles.modalImageContainer}>
-                                <FastImage
-                                    source={{ 
-                                        uri: `${state.selectedCard.imageUris?.normal || state.selectedCard.imageUrl}${state.showFoil ? '&version=foil' : ''}`,
-                                        priority: FastImage.priority.high,
-                                        cache: FastImage.cacheControl.immutable
-                                    }}
-                                    style={styles.modalImage}
-                                    resizeMode={FastImage.resizeMode.contain}
-                                />
-                                <TouchableOpacity
-                                    style={styles.modalCloseButton}
-                                    onPress={onClose}
-                                >
-                                    <Icon name="close" size={28} color="#666" />
-                                </TouchableOpacity>
-                            </View>
-                            <View style={styles.modalInfo}>
-                                <View style={styles.modalHeader}>
-                                    <Text style={styles.modalTitle}>{state.selectedCard.name}</Text>
-                                    {state.selectedCard.hasFoil && (
-                                        <TouchableOpacity 
-                                            style={[styles.foilToggle, state.showFoil && styles.foilToggleActive]}
-                                            onPress={() => state.setShowFoil(!state.showFoil)}
-                                        >
-                                            <Icon 
-                                                name={state.showFoil ? "checkbox-marked" : "checkbox-blank-outline"} 
-                                                size={24} 
-                                                color={state.showFoil ? "#FFD700" : "#666"} 
-                                            />
-                                            <Text style={[styles.foilToggleText, state.showFoil && styles.foilToggleTextActive]}>
-                                                Foil
-                                            </Text>
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-                                <Text style={styles.modalText}>Set: {state.selectedCard.setName}</Text>
-                                <Text style={styles.modalText}>Card Number: {state.selectedCard.collectorNumber}</Text>
-                                <Text style={styles.modalText}>Rarity: {state.selectedCard.rarity}</Text>
-                                <Text style={styles.modalText}>Type: {state.selectedCard.type}</Text>
-                                {state.selectedCard.manaCost && (
-                                    <Text style={styles.modalText}>Mana Cost: {state.selectedCard.manaCost}</Text>
-                                )}
-                                {state.selectedCard.text && (
-                                    <Text style={styles.modalText}>Card Text: {state.selectedCard.text}</Text>
-                                )}
-                                <View style={styles.modalPrices}>
-                                    <Text style={styles.modalPriceTitle}>Prices:</Text>
-                                    {state.selectedCard.hasNonFoil && (
-                                        <Text style={styles.modalPrice}>Normal: {getFormattedPrice(parseFloat(normalPrice))}</Text>
-                                    )}
-                                    {state.selectedCard.hasFoil && (
-                                        <Text style={styles.modalPrice}>Foil: {getFormattedPrice(parseFloat(foilPrice))}</Text>
-                                    )}
-                                </View>
-                            </View>
-                        </ScrollView>
-                    )}
-                </View>
-            </View>
-        </Modal>
-    );
-};
 
 const fetchCardVariants = async (cardName: string) => {
     const db = await getDB();
@@ -1215,6 +1184,105 @@ const styles = StyleSheet.create({
     priceRangeSeparator: {
         fontSize: 16,
         color: '#666',
+    },
+    tabContent: {
+        padding: 16,
+        flex: 1,
+    },
+    centerContent: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    noContentText: {
+        fontSize: 16,
+        color: '#666',
+        textAlign: 'center',
+    },
+    rulingItem: {
+        marginBottom: 16,
+        padding: 12,
+        backgroundColor: '#f9f9f9',
+        borderRadius: 8,
+        borderLeftWidth: 4,
+        borderLeftColor: '#0066cc',
+    },
+    rulingDate: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#666',
+        marginBottom: 4,
+    },
+    rulingText: {
+        fontSize: 16,
+        color: '#333',
+    },
+    variationItem: {
+        flexDirection: 'row',
+        marginBottom: 12,
+        padding: 8,
+        backgroundColor: '#f9f9f9',
+        borderRadius: 8,
+    },
+    variationImageContainer: {
+        width: 80,
+        height: 112,
+        marginRight: 12,
+    },
+    variationImage: {
+        width: '100%',
+        height: '100%',
+        borderRadius: 4,
+    },
+    variationInfo: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    variationSetName: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        marginBottom: 4,
+    },
+    variationNumber: {
+        fontSize: 14,
+        color: '#666',
+    },
+    variationRarity: {
+        fontSize: 14,
+        color: '#666',
+        textTransform: 'capitalize',
+        marginBottom: 8,
+    },
+    variationPrices: {
+        marginTop: 4,
+    },
+    variationPrice: {
+        fontSize: 14,
+        color: '#0066cc',
+    },
+    modalActions: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        padding: 16,
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+    },
+    modalButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#0066cc',
+        padding: 10,
+        borderRadius: 8,
+        flex: 1,
+        marginHorizontal: 4,
+    },
+    modalButtonDanger: {
+        backgroundColor: '#cc0000',
+    },
+    modalButtonText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        marginLeft: 6,
     },
 });
 

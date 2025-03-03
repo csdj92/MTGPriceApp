@@ -20,6 +20,7 @@ export interface CardItemProps {
     onPress?: (card: ExtendedCard) => void;
     onLongPress?: (card: ExtendedCard) => void;
     onAddToCollection?: (card: ExtendedCard) => void;
+    onDeleteCard?: (card: ExtendedCard) => void;
 }
 
 const CardItem: React.FC<CardItemProps> = ({ 
@@ -28,7 +29,8 @@ const CardItem: React.FC<CardItemProps> = ({
     isSelected = false, 
     onPress, 
     onLongPress,
-    onAddToCollection
+    onAddToCollection,
+    onDeleteCard
 }) => {
     // Creating an animated value for card press effect
     const scaleAnim = React.useRef(new Animated.Value(1)).current;
@@ -194,7 +196,7 @@ const CardItem: React.FC<CardItemProps> = ({
                                         </View>
                                     )}
                                     
-                                    {onAddToCollection && (
+                                    {onAddToCollection && (!card.quantity || card.quantity === 0) && (
                                         <TouchableOpacity 
                                             style={styles.addToCollectionButton}
                                             onPress={() => onAddToCollection(card)}
@@ -203,11 +205,28 @@ const CardItem: React.FC<CardItemProps> = ({
                                             <Text style={styles.addToCollectionText}>Add to Collection</Text>
                                         </TouchableOpacity>
                                     )}
+                                    
+                                    {onDeleteCard && card.quantity && card.quantity > 0 && (
+                                        <TouchableOpacity 
+                                            style={styles.removeFromCollectionButton}
+                                            onPress={() => onDeleteCard(card)}
+                                        >
+                                            <Icon name="minus-circle" size={20} color="#fff" />
+                                            <Text style={styles.removeFromCollectionText}>Mark as Missing</Text>
+                                        </TouchableOpacity>
+                                    )}
                                 </View>
                             </View>
                         )}
                     </View>
                 </View>
+                
+                {/* Badge for missing cards (quantity = 0) */}
+                {card.quantity === 0 && (
+                    <View style={styles.missingBadge}>
+                        <Text style={styles.missingText}>Missing</Text>
+                    </View>
+                )}
             </TouchableOpacity>
         </Animated.View>
     );
@@ -463,6 +482,36 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '500',
         marginLeft: 6,
+    },
+    removeFromCollectionButton: {
+        backgroundColor: '#e53935',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        marginTop: 12,
+    },
+    removeFromCollectionText: {
+        color: '#fff',
+        fontWeight: '600',
+        marginLeft: 8,
+    },
+    missingBadge: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        backgroundColor: 'rgba(244, 67, 54, 0.8)',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+        zIndex: 10,
+    },
+    missingText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 'bold',
     },
 });
 

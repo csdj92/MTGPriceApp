@@ -158,8 +158,6 @@ export const initializeLorcanaDatabase = async () => {
             // Check if we need to populate the lorcana_card_prices table
             await populateLorcanaCardPricesTable();
             
-            // Try to recover any lost collection cards
-            await recoveryLorcanaCollectionCards();
             
             // Check if we need to refresh the card data
             const [results] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_cards WHERE Name IS NOT NULL');
@@ -215,84 +213,7 @@ export const initializeLorcanaDatabase = async () => {
     return initializationPromise;
 };
 
-// Function to try to recover collection cards that may have been lost
-const recoveryLorcanaCollectionCards = async () => {
-    try {
-        const db = await getDB();
-        
-        // First check if there are any orphaned collection cards
-        const [orphanedResult] = await db.executeSql(`
-            SELECT cc.collection_id, cc.card_id, cc.added_at
-            FROM lorcana_collection_cards cc
-            LEFT JOIN lorcana_cards c ON cc.card_id = c.Unique_ID
-            WHERE c.Unique_ID IS NULL
-        `);
-        
-        const orphanedCount = orphanedResult.rows.length;
-        console.log(`[LorcanaService] Found ${orphanedCount} orphaned collection cards`);
-        
-        if (orphanedCount > 0) {
-            // We need to fetch the API data to recover these cards
-            try {
-                console.log(`[LorcanaService] Attempting to recover orphaned collection cards`);
-                const response = await fetch(LorcanaBulkCardApi);
-                if (!response.ok) throw new Error(`API request failed: ${response.status}`);
 
-                const allCards = await response.json();
-                
-                // Create a map of Unique_ID to card data for quick lookup
-                const cardMap = new Map<string, LorcanaCard>();
-                allCards.forEach((card: LorcanaCard) => {
-                    if (card && card.Unique_ID) {
-                        cardMap.set(card.Unique_ID, card);
-                    }
-                });
-                
-                // Process each orphaned card
-                const recoveredCards = [];
-                for (let i = 0; i < orphanedResult.rows.length; i++) {
-                    const item = orphanedResult.rows.item(i);
-                    const cardId = item.card_id;
-                    
-                    // Check if we have this card in our map
-                    if (cardMap.has(cardId)) {
-                        recoveredCards.push(cardId);
-                        const card = cardMap.get(cardId);
-                        
-                        // Only proceed if we have a valid card object
-                        if (card) {
-                            // Re-add the card to the lorcana_cards table
-                            await db.executeSql(`INSERT OR REPLACE INTO lorcana_cards (
-                                Artist, Body_Text, Card_Num, Classifications, Color, Cost,
-                                Date_Added, Date_Modified, Flavor_Text, Franchise, Image,
-                                Inkable, Lore, Name, Rarity, Set_ID, Set_Name, Set_Num,
-                                Strength, Type, Unique_ID, Willpower,
-                                price_usd, price_usd_foil, last_updated, collected
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
-                                card.Artist || null, card.Body_Text || null, card.Card_Num || null,
-                                card.Classifications || null, card.Color || null, card.Cost || null,
-                                card.Date_Added || null, card.Date_Modified || null, card.Flavor_Text || null,
-                                card.Franchise || null, card.Image || null, card.Inkable ? 1 : 0,
-                                card.Lore || null, card.Name || null, card.Rarity || null,
-                                card.Set_ID || null, card.Set_Name || null, card.Set_Num || null,
-                                card.Strength || null, card.Type || null, card.Unique_ID || null,
-                                card.Willpower || null, null, null, new Date().toISOString(), 1
-                            ]);
-                        } else {
-                            console.warn(`[LorcanaService] Card with ID ${cardId} found in map but returned undefined`);
-                        }
-                    }
-                }
-                
-                console.log(`[LorcanaService] Successfully recovered ${recoveredCards.length} of ${orphanedCount} orphaned collection cards`);
-            } catch (apiError) {
-                console.error('[LorcanaService] Error recovering orphaned cards from API:', apiError);
-            }
-        }
-    } catch (error) {
-        console.error('[LorcanaService] Error checking for orphaned collection cards:', error);
-    }
-};
 
 // Add function to populate the lorcana_card_prices table from existing data
 const populateLorcanaCardPricesTable = async () => {

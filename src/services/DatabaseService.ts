@@ -2570,6 +2570,44 @@ export default class DatabaseService {
         }
     }
 
+    /**
+     * Marks a card as "missing" in a collection by setting its quantity to 0
+     * This keeps the card in the collection but indicates it's not owned
+     */
+    async markCardAsMissing(cardUuid: string, collectionId: string): Promise<void> {
+        if (!cardUuid || !collectionId) {
+            console.error('[DatabaseService] Cannot mark card as missing: missing id or collectionId');
+            throw new Error('Card UUID and Collection ID are required');
+        }
+        
+        try {
+            console.log(`[DatabaseService] Marking card ${cardUuid} as missing in collection ${collectionId}`);
+            const now = new Date().toISOString();
+            
+            await this.db!.executeSql(
+                `UPDATE collection_cards 
+                 SET quantity = 0, added_at = ?
+                 WHERE card_uuid = ? AND collection_id = ?`,
+                [now, cardUuid, collectionId]
+            );
+            
+            // Verify the update
+            const [verifyResult] = await this.db!.executeSql(
+                'SELECT quantity FROM collection_cards WHERE collection_id = ? AND card_uuid = ?',
+                [collectionId, cardUuid]
+            );
+            
+            if (verifyResult.rows.length > 0) {
+                console.log(`[DatabaseService] Card quantity is now: ${verifyResult.rows.item(0).quantity}`);
+            } else {
+                console.error('[DatabaseService] Card not found in collection after update');
+            }
+        } catch (error) {
+            console.error('[DatabaseService] Error marking card as missing:', error);
+            throw error;
+        }
+    }
+
     async getSetMissingCards(setCode: string): Promise<ExtendedCard[]> {          
         try {
             // First get the collection ID for this set
@@ -2861,33 +2899,144 @@ export default class DatabaseService {
     async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
         try {
             const db = await getDB();
-            const variants = await new Promise<ExtendedCard[]>((resolve, reject) => {
-                db!.transaction(tx => {
+            if (!db) {
+                console.error('[DatabaseService] Database not initialized');
+                return [];
+            }
+            
+            // Get the cards with the given name, joining with sets and prices tables
+            const cards = await new Promise<any[]>((resolve, reject) => {
+                db.transaction(tx => {
                     tx.executeSql(
-                        `SELECT * FROM cards WHERE name = ? AND (imageUris IS NOT NULL OR imageUrl IS NOT NULL)`,
+                        `SELECT c.*, 
+                         s.name as setName, 
+                         s.code as setCode,
+                         s.releaseDate as releaseDate,
+                         p.normal_price, 
+                         p.foil_price,
+                         p.tcg_normal_price,
+                         p.tcg_foil_price,
+                         p.cardmarket_normal_price,
+                         p.cardmarket_foil_price,
+                         p.cardkingdom_normal_price,
+                         p.cardkingdom_foil_price
+                         FROM cards c
+                         LEFT JOIN sets s ON c.setCode = s.code
+                         LEFT JOIN prices p ON c.uuid = p.uuid
+                         WHERE c.name = ?
+                         ORDER BY s.releaseDate DESC, c.number ASC`,
                         [cardName],
                         (_, results) => {
-                            const cards: ExtendedCard[] = [];
+                            const foundCards: any[] = [];
                             for (let i = 0; i < results.rows.length; i++) {
-                                const card = results.rows.item(i);
-                                // Parse JSON fields
-                                card.imageUris = card.imageUris ? JSON.parse(card.imageUris) : null;
-                                card.prices = card.prices ? JSON.parse(card.prices) : null;
-                                cards.push(card);
+                                foundCards.push(results.rows.item(i));
                             }
-                            resolve(cards);
+                            resolve(foundCards);
                         },
                         (_, error) => {
+                            console.error(`[DatabaseService] Error fetching cards by name: ${error}`);
                             reject(error);
-                            return false;
+                            return true;
                         }
                     );
                 });
             });
-            return variants;
+            
+            // Helper function to safely parse JSON or comma-separated strings
+            const safeJsonParse = (jsonString: any, defaultValue: any = []) => {
+                if (!jsonString) return defaultValue;
+                if (typeof jsonString !== 'string') return jsonString;
+                
+                // First try to parse as JSON
+                try {
+                    if (jsonString.trim().startsWith('[')) {
+                        return JSON.parse(jsonString);
+                    }
+                } catch (error) {
+                    // JSON parsing failed, we'll handle below
+                }
+                
+                // If it's not JSON or parsing failed, try to split by comma
+                if (jsonString.includes(',')) {
+                    return jsonString.split(',').map(item => item.trim());
+                }
+                
+                // If it's a single value, return as a single-element array
+                return [jsonString.trim()];
+            };
+            
+            // Transform the raw cards into ExtendedCard objects
+            return cards.map(card => {
+                // Create prices object
+                const prices = {
+                    normal: card.normal_price || 0,
+                    foil: card.foil_price || 0,
+                    tcgplayer: {
+                        normal: card.tcg_normal_price || 0,
+                        foil: card.tcg_foil_price || 0
+                    },
+                    cardmarket: {
+                        normal: card.cardmarket_normal_price || 0,
+                        foil: card.cardmarket_foil_price || 0
+                    }
+                };
+                
+                // Get image URL or construct fallbacks in order of preference
+                let imageUrl = card.imageUrl || '';
+                
+                // If no image URL is available, try constructing from scryfallId
+                if (!imageUrl && card.scryfallId) {
+                    imageUrl = `https://api.scryfall.com/cards/${card.scryfallId}?format=image`;
+                } 
+                // If still no URL, try constructing from setCode and number
+                else if (!imageUrl && card.setCode && card.number) {
+                    imageUrl = `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image`;
+                }
+                
+                // Construct a descriptive set name with code in parentheses
+                const setNameWithCode = card.setName ? 
+                    `${card.setName} (${card.setCode})` : 
+                    card.setCode || 'Unknown Set';
+                
+                // Create the ExtendedCard object
+                const extendedCard: ExtendedCard = {
+                    id: card.id || card.uuid || '',
+                    uuid: card.uuid,
+                    name: card.name,
+                    setCode: card.setCode || '',
+                    setName: setNameWithCode,
+                    collectorNumber: card.number || '',
+                    type: card.type || '',
+                    manaCost: card.manaCost || '',
+                    text: card.text || '',
+                    rarity: card.rarity || '',
+                    toughness: card.toughness || '',
+                    power: card.power || '',
+                    imageUrl: imageUrl,
+                    imageUris: {
+                        normal: imageUrl,
+                        small: imageUrl,
+                        large: imageUrl,
+                        art_crop: imageUrl
+                    },
+                    prices: prices,
+                    purchaseUrls: {},
+                    legalities: {},
+                    colorIdentity: safeJsonParse(card.colorIdentity, []),
+                    keywords: safeJsonParse(card.keywords, []),
+                    cmc: card.cmc || 0,
+                    flavorText: card.flavorText || '',
+                    frameEffects: safeJsonParse(card.frameEffects, []),
+                    hasNonFoil: Boolean(card.hasNonFoil),
+                    hasFoil: Boolean(card.hasFoil),
+                    colors: safeJsonParse(card.colors, [])
+                };
+                
+                return extendedCard;
+            });
         } catch (error) {
-            console.error('Error getting card variants:', error);
-            throw error;
+            console.error(`[DatabaseService] Error getting card variants: ${error}`);
+            return [];
         }
     }
 
@@ -3231,6 +3380,87 @@ export default class DatabaseService {
             console.error('Error diagnosing collection issues:', error);
             result.issues.push(`Diagnostic error: ${error}`);
             return result;
+        }
+    }
+
+    // Add this near the database initialization
+    private async createTables() {
+        try {
+            // ... existing code ...
+
+            // Create card rulings table
+            await this.db!.executeSql(`
+                CREATE TABLE IF NOT EXISTS cardRulings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cardUuid TEXT NOT NULL,
+                    date TEXT,
+                    text TEXT,
+                    FOREIGN KEY (cardUuid) REFERENCES cards (uuid)
+                )
+            `);
+
+            // ... existing code ...
+        } catch (error) {
+            console.error('[DatabaseService] Error creating tables:', error);
+            throw error;
+        }
+    }
+
+    // Add a new method to get card rulings
+    async getCardRulings(cardUuid: string): Promise<{date: string, text: string}[]> {
+        try {
+                if (!mtgJsonDb) {
+                    throw new Error('Database not initialized');
+                }
+
+            const [results] = await mtgJsonDb!.executeSql(`
+                SELECT date, text FROM cardRulings
+                WHERE uuid = ?
+                ORDER BY date ASC
+            `, [cardUuid]);
+
+            const rulings: {date: string, text: string}[] = [];
+            for (let i = 0; i < results.rows.length; i++) {
+                rulings.push(results.rows.item(i));
+            }
+
+            return rulings;
+        } catch (error) {
+            console.error('[DatabaseService] Error getting card rulings:', error);
+            return [];
+        }
+    }
+
+    // Add a method to save card rulings to database
+    async saveCardRulings(cardUuid: string, rulings: {date: string, text: string}[]): Promise<void> {
+        try {
+            if (!this.db) {
+                throw new Error('Database not initialized');
+            }
+
+            // Begin transaction
+            await this.db.executeSql('BEGIN TRANSACTION');
+
+            // Delete existing rulings
+            await this.db.executeSql('DELETE FROM cardRulings WHERE cardUuid = ?', [cardUuid]);
+
+            // Insert new rulings
+            for (const ruling of rulings) {
+                await this.db.executeSql(
+                    'INSERT INTO cardRulings (cardUuid, date, text) VALUES (?, ?, ?)',
+                    [cardUuid, ruling.date, ruling.text]
+                );
+            }
+
+            // Commit transaction
+            await this.db.executeSql('COMMIT');
+        } catch (error) {
+            // Rollback on error
+            if (this.db) {
+                await this.db.executeSql('ROLLBACK');
+            }
+            console.error('[DatabaseService] Error saving card rulings:', error);
+            throw error;
         }
     }
 

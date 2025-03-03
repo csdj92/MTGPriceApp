@@ -15,6 +15,7 @@ interface CardListProps {
     isLoading: boolean;
     onCardPress?: (card: ExtendedCard) => void;
     onAddToCollection?: (card: ExtendedCard) => void;
+    onDeleteCard?: (card: ExtendedCard) => void;
     onEndReached?: () => void;
     onEndReachedThreshold?: number;
     ListFooterComponent?: React.ReactElement | null;
@@ -25,6 +26,7 @@ const CardList: React.FC<CardListProps> = ({
     isLoading,
     onCardPress,
     onAddToCollection,
+    onDeleteCard,
     onEndReached,
     onEndReachedThreshold = 0.5,
     ListFooterComponent
@@ -34,6 +36,7 @@ const CardList: React.FC<CardListProps> = ({
             card={item}
             onPress={() => onCardPress?.(item)}
             onAddToCollection={() => onAddToCollection?.(item)}
+            onDeleteCard={() => onDeleteCard?.(item)}
         />
     );
 
