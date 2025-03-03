@@ -1694,3 +1694,41 @@ export const safeRefreshLorcanaCards = async (): Promise<{ updated: number, adde
     }
 };
 
+export const fetchCardVersionsByName = async (cardName: string): Promise<LorcanaCardWithPrice[]> => {
+    try {
+        const db = await getDB();
+        const [results] = await db.executeSql(
+            'SELECT * FROM lorcana_cards WHERE Name = ?',
+            [cardName]
+        );
+        
+        const versions: LorcanaCardWithPrice[] = [];
+        for (let i = 0; i < results.rows.length; i++) {
+            const card = results.rows.item(i);
+            
+            // Fetch price data if available
+            try {
+                const priceData = await getLorcanaCardPrice(card);
+                versions.push({
+                    ...card,
+                    prices: priceData || null,
+                    collected: !!card.collected
+                });
+            } catch (error) {
+                // If price fetch fails, still include the card without price data
+                console.warn(`[LorcanaService] Failed to fetch price for card version ${card.Name} (${card.Unique_ID}):`, error);
+                versions.push({
+                    ...card,
+                    prices: null,
+                    collected: !!card.collected
+                });
+            }
+        }
+        
+        return versions;
+    } catch (error) {
+        handleError(`Failed to fetch card versions for "${cardName}"`, error);
+        return [];
+    }
+};
+

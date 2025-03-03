@@ -96,14 +96,9 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                         >
                             <Text style={styles.removeButtonText}>Remove from Collection</Text>
                         </TouchableOpacity>
-                    )}
+                    )}                   
 
-                    <TouchableOpacity
-                        style={styles.deleteButton}
-                        onPress={onDelete}
-                    >
-                        <Text style={styles.deleteButtonText}>Delete Card</Text>
-                    </TouchableOpacity>
+                    
                 </View>
             </View>
         </Modal>

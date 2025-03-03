@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Modal, TextInput, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Modal, TextInput, Alert, Image } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { databaseService } from '../../services/DatabaseService';
 import type { Deck } from '../../services/DatabaseService';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 const DecksScreen = () => {
   const [decks, setDecks] = useState<Deck[]>([]);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newDeckName, setNewDeckName] = useState('');
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  
+  // Get the plus icon as an image source
+  const plusIcon = MaterialCommunityIcons.getImageSourceSync('plus', 24, 'white');
 
   useEffect(() => {
     loadDecks();
@@ -21,10 +23,7 @@ const DecksScreen = () => {
   const loadDecks = async () => {
     try {
       console.log('Loading decks...');
-      
-      // Make sure the database is properly initialized before accessing it
-      await databaseService.ensureInitialized();
-      
+       
       // Create decks tables if they don't exist yet
       await databaseService.createDecksTable();
       
@@ -43,10 +42,7 @@ const DecksScreen = () => {
 
   const createDeck = async () => {
     if (newDeckName.trim()) {
-      try {
-        // Ensure database is properly initialized
-        await databaseService.ensureInitialized();
-        
+      try {  
         // Create tables if they don't exist
         await databaseService.createDecksTable();
         
@@ -103,7 +99,7 @@ const DecksScreen = () => {
         style={styles.addButton}
         onPress={() => setIsModalVisible(true)}
       >
-        <Icon name="plus" size={24} color="white" />
+        <Image source={plusIcon} />
       </TouchableOpacity>
 
       <Modal visible={isModalVisible} transparent animationType="slide">

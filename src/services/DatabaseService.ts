@@ -2063,14 +2063,7 @@ export default class DatabaseService {
         }
     }
 
-    // print all the rows in the cards table debug
-    async printTenCardsRows(): Promise<void> {
-        await safeMTGJsonOperation(async (db) => {
-            const [result] = await db.executeSql('SELECT * FROM cards LIMIT 10');
-            console.log('[DatabaseService] All cards:', JSON.stringify(result.rows.raw(), null, 2));
-        });
-    }
-
+   
     async getMostExpensiveCards(pageSize: number, offset: number, sortBy: 'normal_price' | 'foil_price'): Promise<any[]> {
         if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');

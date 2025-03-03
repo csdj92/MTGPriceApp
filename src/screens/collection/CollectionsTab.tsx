@@ -8,6 +8,7 @@ import {
     ActivityIndicator,
     Modal,
     TextInput,
+    Image,
 } from 'react-native';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 const Icon = MaterialIcons as unknown as React.ComponentType<IconProps>;
@@ -17,6 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { IconProps } from 'react-native-vector-icons/Icon';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const CollectionsTab: React.FC = () => {
     const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -37,6 +39,8 @@ const CollectionsTab: React.FC = () => {
 
         return unsubscribe;
     }, [navigation]);
+
+    const plusIcon = MaterialCommunityIcons.getImageSourceSync('plus', 24, 'white');
 
     const loadCollections = async () => {
         setIsLoading(true);
@@ -115,13 +119,13 @@ const CollectionsTab: React.FC = () => {
                     style={styles.addButton}
                     onPress={() => setIsCreateModalVisible(true)}
                 >
-                    <Icon name="plus" size={24} color="#2196F3" />
+                <Image source={plusIcon} />
                 </TouchableOpacity>
             </View>
 
             {collections.length === 0 ? (
                 <View style={styles.emptyContainer}>
-                    <Icon name="folder-outline" size={64} color="#ccc" />
+                    <Icon name="folder" size={64} color="#ccc" />
                     <Text style={styles.emptyText}>No Collections</Text>
                     <Text style={styles.emptySubtext}>
                         Create a collection to start organizing your cards

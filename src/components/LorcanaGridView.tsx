@@ -709,15 +709,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                             <Text style={styles.removeButtonText}>Remove from Collection</Text>
                         </TouchableOpacity>
                     )}
-                    <TouchableOpacity
-                        style={styles.deleteButton}
-                        onPress={() => {
-                            onDeleteCard(selectedCard!);
-                            setShowVersionModal(false);
-                        }}
-                    >
-                        <Text style={styles.deleteButtonText}>Delete Card</Text>
-                    </TouchableOpacity>
+                   
                     <TouchableOpacity
                         style={styles.modalCloseButton}
                         onPress={() => setShowVersionModal(false)}

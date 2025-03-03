@@ -92,7 +92,7 @@ const CollectionSelectionModal: React.FC<CollectionSelectionModalProps> = ({
                             contentContainerStyle={styles.listContainer}
                             ListEmptyComponent={
                                 <View style={styles.emptyContainer}>
-                                    <Icon name="folder-outline" size={48} color="#ccc" />
+                                    <Icon name="folder" size={48} color="#ccc" />
                                     <Text style={styles.emptyText}>No collections found</Text>
                                 </View>
                             }

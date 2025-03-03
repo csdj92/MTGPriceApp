@@ -335,7 +335,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     }, [collectionId, collection, databaseService]);
 
-    const handleDeleteLorcanaCard = useCallback((card: PartialLorcanaCardWithPrice) => {
+    const handleRemoveLorcanaCardFromCollection = useCallback((card: PartialLorcanaCardWithPrice) => {
         const cardId = card.Unique_ID || (card as any).id;
         
         if (!cardId || !collectionId) {
@@ -346,9 +346,14 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         try {
             removeLorcanaCardFromCollection(cardId.toString(), collectionId)
                 .then(() => {
-                    setLorcanaCards(prevCards => prevCards.filter(c => 
-                        (c.Unique_ID !== cardId && (c as any).id !== cardId)
-                    ));
+                    setLorcanaCards(prevCards => 
+                        prevCards.map(c => {
+                            if ((c.Unique_ID === cardId) || ((c as any).id === cardId)) {
+                                return { ...c, collected: false };
+                            }
+                            return c;
+                        })
+                    );
                     // Update the collection count
                     if (collection) {
                         setCollection({
@@ -509,14 +514,14 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         cards={lorcanaCards.filter(card => card.collected)}
                         isLoading={isLoading}
                         onCardPress={handleLorcanaCardPress}
-                        onDeleteCard={handleDeleteLorcanaCard}
+                        onDeleteCard={handleRemoveLorcanaCardFromCollection}
                     />
                 ) : (
                     <LorcanaGridView
                         cards={lorcanaCards as any}
                         isLoading={isLoading}
                         onCardPress={handleLorcanaCardPress}
-                        onDeleteCard={handleDeleteLorcanaCard}
+                        onDeleteCard={handleRemoveLorcanaCardFromCollection}
                         onCardsUpdate={setLorcanaCards}
                     />
                 )
