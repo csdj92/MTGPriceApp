@@ -3,7 +3,7 @@ import RNFS from 'react-native-fs';
 import { databaseService } from './DatabaseService';
 import { getLorcanaCollectionCards, getLorcanaSetCollections, getDB } from './LorcanaService';
 import { collectionCacheService } from './CollectionCacheService';
-import type { LorcanaCardWithPrice, LorcanaPrice } from '../types/lorcana';
+import type { LorcanaCardWithPrice, LorcanaPrice, PartialLorcanaCardWithPrice } from '../types/lorcana';
 import type { ResultSet, Transaction } from 'react-native-sqlite-storage';
 import { NativeModules, DeviceEventEmitter } from 'react-native';
 
@@ -84,7 +84,71 @@ class ExportService {
         console.log(`[ExportService] Processing collection: ${collection.name}`);
         
         // Get all cards for this collection
-        const cards = await getLorcanaCollectionCards(collection.id);
+        let cards: PartialLorcanaCardWithPrice[] = [];
+        try {
+          cards = await getLorcanaCollectionCards(collection.id, 1, 0);  // Use pageSize 0 to get all cards
+        } catch (error: any) {
+          console.error(`[LorcanaService] Error fetching Lorcana collection cards:`, error);
+          
+          // If the error is about missing lorcana_card_prices table, try a fallback query
+          if (error && error.message && error.message.includes('no such table: lorcana_card_prices')) {
+            console.log('[ExportService] Using fallback query without prices table...');
+            try {
+              // Get a direct database connection
+              const db = await getDB();
+              
+              // Use a simpler query without the prices table
+              const query = `
+                SELECT c.*, cc.collected
+                FROM lorcana_cards c
+                INNER JOIN lorcana_collection_cards cc ON c.Unique_ID = cc.card_id
+                WHERE cc.collection_id = ?
+                ORDER BY c.Name
+              `;
+              
+              const [results] = await db.executeSql(query, [collection.id]);
+              
+              if (results && results.rows) {
+                // Process the results
+                for (let i = 0; i < results.rows.length; i++) {
+                  const item = results.rows.item(i);
+                  if (item && item.Unique_ID) {
+                    cards.push({
+                      Unique_ID: item.Unique_ID,
+                      Name: item.Name || 'Unknown Card',
+                      Set_Name: item.Set_Name || 'Unknown Set',
+                      Set_ID: item.Set_ID,
+                      Set_Num: item.Set_Num,
+                      Card_Num: item.Card_Num,
+                      Rarity: item.Rarity,
+                      Color: item.Color,
+                      Cost: item.Cost,
+                      Strength: item.Strength,
+                      Willpower: item.Willpower,
+                      Type: item.Type || 'Unknown',
+                      Classifications: item.Classifications,
+                      Body_Text: item.Body_Text,
+                      Flavor_Text: item.Flavor_Text,
+                      Image: item.Image,
+                      collected: !!item.collected,
+                      price_usd: item.price_usd,
+                      price_usd_foil: item.price_usd_foil,
+                      // Add prices object for compatibility
+                      prices: {
+                        usd: item.price_usd,
+                        usd_foil: item.price_usd_foil,
+                        tcgplayer_id: null
+                      }
+                    });
+                  }
+                }
+                console.log(`[ExportService] Fallback query retrieved ${cards.length} cards for collection ${collection.name}`);
+              }
+            } catch (fallbackError) {
+              console.error('[ExportService] Fallback query failed:', fallbackError);
+            }
+          }
+        }
         
         // Add this collection to the export data
         exportData.collections.push({
@@ -99,20 +163,25 @@ class ExportService {
             Unique_ID: card.Unique_ID || '',
             Type: card.Type || '',
             Name: card.Name || '',
-            Flavor_Text: card.Flavor_Text,
+            Flavor_Text: card.Flavor_Text || '',
+            Rules_Text: card.Body_Text || '',
             Set_ID: card.Set_ID || '',
             Set_Name: card.Set_Name || '',
             Color: card.Color || '',
             Rarity: card.Rarity || '',
-            Card_Num: card.Card_Num,
-            Strength: card.Strength,
-            Willpower: card.Willpower,
-            Artist: card.Artist,
-            collected: card.collected || false,
-            collection_id: collection.id,
+            Card_Num: card.Card_Num || 0,
+            Ink_Cost: card.Cost || 0,
+            Strength: card.Strength || 0,
+            Willpower: card.Willpower || 0,
+            Artist: card.Artist || '',
+            collected: !!card.collected,
             quantity: 1,
-            prices: card.prices
-          })) as LorcanaExportCard[]
+            prices: card.prices || {
+              usd: card.price_usd || null,
+              usd_foil: card.price_usd_foil || null,
+              tcgplayer_id: null
+            }
+          }))
         });
       }
 
@@ -376,7 +445,7 @@ class ExportService {
                                       Unique_ID, Name, Set_ID, Set_Name, Type, Color, Rarity, 
                                       Card_Num, Strength, Willpower, Artist, Flavor_Text, 
                                       collected, price_usd, price_usd_foil, last_updated
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                                     [
                                       card.Unique_ID,
                                       card.Name,

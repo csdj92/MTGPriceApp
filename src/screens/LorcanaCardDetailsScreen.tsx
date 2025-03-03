@@ -9,9 +9,17 @@ type Props = NativeStackScreenProps<RootStackParamList, 'LorcanaCardDetails'>;
 const LorcanaCardDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     const { card } = route.params;
 
+    // Add safety checks for potentially undefined properties
+    const cardName = card.Name || 'Unknown Card';
+    const cardSet = card.Set_Name || 'Unknown Set';
+    const cardNum = card.Card_Num !== undefined ? card.Card_Num : 'N/A';
+    const cardRarity = card.Rarity || 'Unknown';
+    const cardColor = card.Color || 'Unknown';
+    const cardPrice = card.prices?.usd ? Number(card.prices.usd).toFixed(2) : '0.00';
+
     React.useEffect(() => {
-        navigation.setOptions({ title: card.Name || 'Card Details' });
-    }, [card.Name, navigation]);
+        navigation.setOptions({ title: cardName });
+    }, [cardName, navigation]);
 
     return (
         <ScrollView style={styles.container}>
@@ -25,13 +33,13 @@ const LorcanaCardDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                 )}
             </View>
             <View style={styles.detailsContainer}>
-                <Text style={styles.cardName}>{card.Name}</Text>
-                <Text style={styles.cardText}>Set: {card.Set_Name}</Text>
-                <Text style={styles.cardText}>Number: {card.Card_Num}</Text>
-                <Text style={styles.cardText}>Rarity: {card.Rarity}</Text>
-                <Text style={styles.cardText}>Color: {card.Color}</Text>
+                <Text style={styles.cardName}>{cardName}</Text>
+                <Text style={styles.cardText}>Set: {cardSet}</Text>
+                <Text style={styles.cardText}>Number: {cardNum}</Text>
+                <Text style={styles.cardText}>Rarity: {cardRarity}</Text>
+                <Text style={styles.cardText}>Color: {cardColor}</Text>
                 <Text style={styles.priceText}>
-                    Price: ${card.prices?.usd ? Number(card.prices.usd).toFixed(2) : '0.00'}
+                    Price: ${cardPrice}
                 </Text>
             </View>
         </ScrollView>

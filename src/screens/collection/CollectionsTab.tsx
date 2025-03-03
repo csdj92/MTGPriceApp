@@ -9,12 +9,14 @@ import {
     Modal,
     TextInput,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+const Icon = MaterialIcons as unknown as React.ComponentType<IconProps>;
 import { databaseService } from '../../services/DatabaseService';
 import type { Collection } from '../../services/DatabaseService';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
+import { IconProps } from 'react-native-vector-icons/Icon';
 
 const CollectionsTab: React.FC = () => {
     const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();

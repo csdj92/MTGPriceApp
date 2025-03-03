@@ -18,18 +18,21 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     color: string;
 }>;
 import { getLorcanaCardPrice, debugCardData } from '../services/LorcanaService';
-import type { LorcanaCard } from '../types/lorcana';
+import type { LorcanaCard, PartialLorcanaCard, PartialLorcanaCardWithPrice } from '../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../utils/imageUtils';
 
+// Use a more flexible type for cards
+type LorcanaCardType = LorcanaCard | PartialLorcanaCard | PartialLorcanaCardWithPrice;
+
 interface LorcanaCardListProps {
-    cards: LorcanaCard[];
+    cards: LorcanaCardType[];
     isLoading: boolean;
-    onCardPress?: (card: LorcanaCard) => void;
-    onAddToCollection?: (card: LorcanaCard) => void;
-    onDeleteCard?: (card: LorcanaCard) => void;
+    onCardPress?: (card: LorcanaCardType) => void;
+    onAddToCollection?: (card: LorcanaCardType) => void;
+    onDeleteCard?: (card: LorcanaCardType) => void;
 }
 
-const PriceDisplay = ({ card }: { card: LorcanaCard }) => {
+const PriceDisplay = ({ card }: { card: LorcanaCardType }) => {
     const [prices, setPrices] = useState<{ 
         usd: string | null; 
         usd_foil: string | null;
@@ -48,26 +51,26 @@ const PriceDisplay = ({ card }: { card: LorcanaCard }) => {
                     debugCardData(card, 'PriceDisplay fetchPrices');
                     
                     const priceData = await getLorcanaCardPrice({
-                        Name: card.Name,
+                        Name: card.Name || '',
                         Set_Num: card.Set_Num,
                         Card_Num: card.Card_Num,
                         Rarity: card.Rarity,
-                        Unique_ID: card.Unique_ID
+                        Unique_ID: card.Unique_ID || ''
                     });
                     setPrices({
                         usd: priceData.usd,
                         usd_foil: priceData.usd_foil
                     });
                 } catch (error) {
-                    console.error('Error fetching price for card:', error);
+                    console.error('[PriceDisplay] Error fetching price data:', error);
                 } finally {
                     setIsLoadingPrices(false);
                 }
             }
         };
-
+        
         fetchPrices();
-    }, [card.Name, card.Set_Num, card.Card_Num, card.Rarity, card.Unique_ID, card.price_usd, card.price_usd_foil]);
+    }, [card]);
 
     if (isLoadingPrices) {
         return (
@@ -93,10 +96,10 @@ const PriceDisplay = ({ card }: { card: LorcanaCard }) => {
 };
 
 const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: { 
-    card: LorcanaCard; 
+    card: LorcanaCardType; 
     onPress?: () => void;
-    onAddToCollection?: (card: LorcanaCard) => void;
-    onDelete?: (card: LorcanaCard) => void;
+    onAddToCollection?: (card: LorcanaCardType) => void;
+    onDelete?: (card: LorcanaCardType) => void;
 }) => {
     const [isExpanded, setIsExpanded] = useState(true);
     const [prices, setPrices] = useState<{ 
@@ -106,6 +109,11 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
     }>({ usd: null, usd_foil: null });
     const [isLoadingPrices, setIsLoadingPrices] = useState(false);
     const [imageError, setImageError] = useState(false);
+
+    // Safe access to properties with nullish coalescing
+    const cardName = card.Name || 'Unknown Card';
+    const cardUniqueId = card.Unique_ID;
+    const cardSet = card.Set_Name || 'Unknown Set';
 
     const openTCGPlayer = () => {
         if (prices.tcgplayer_id) {
@@ -129,11 +137,11 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
                 debugCardData(card, 'LorcanaCardItem fetchPrices');
                 
                 const priceData = await getLorcanaCardPrice({
-                    Name: card.Name,
-                    Set_Num: card.Set_Num,
+                    Name: cardName,
+                    Set_Num: typeof cardSet === 'number' ? cardSet : undefined,
                     Card_Num: card.Card_Num,
                     Rarity: card.Rarity,
-                    Unique_ID: card.Unique_ID
+                    Unique_ID: cardUniqueId
                 });
                 setPrices({
                     ...priceData,
@@ -147,7 +155,7 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
         };
 
         fetchPrices();
-    }, [card.Name, card.Set_Num, card.Card_Num, card.Rarity, card.Unique_ID, card.price_usd, card.price_usd_foil]);
+    }, [cardName, cardSet, card.Card_Num, card.Rarity, cardUniqueId]);
 
     return (
         <TouchableOpacity
@@ -159,8 +167,8 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
         >
             <View style={styles.cardHeader}>
                 <View style={styles.titleContainer}>
-                    <Text style={styles.cardName}>{card.Name}</Text>
-                    <Text style={styles.setName}>{card.Set_Name}</Text>
+                    <Text style={styles.cardName}>{cardName}</Text>
+                    <Text style={styles.setName}>{cardSet}</Text>
                 </View>
                 <View style={styles.headerButtons}>
                     {onAddToCollection && (
@@ -232,12 +240,12 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
                                     style={styles.cardImage}
                                     resizeMode={FastImage.resizeMode.contain}
                                     onError={() => {
-                                        console.log(`[LorcanaCardList] Image load error for ${card.Name}: ${card.Image}`);
-                                        handleImageLoadError(card.Image, card.Name);
+                                        console.log(`[LorcanaCardList] Image load error for ${cardName}: ${card.Image}`);
+                                        handleImageLoadError(card.Image, cardName);
                                         setImageError(true);
                                     }}
                                     onLoad={() => {
-                                        handleImageLoadSuccess(card.Image, { name: card.Name, id: card.Unique_ID });
+                                        handleImageLoadSuccess(card.Image, { name: cardName, id: cardUniqueId });
                                         setImageError(false);
                                     }}
                                 />
@@ -306,7 +314,7 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
                     onDelete={onDeleteCard}
                 />
             )}
-            keyExtractor={(item) => item.Unique_ID}
+            keyExtractor={(item) => item.Unique_ID?.toString() || Math.random().toString()}
             contentContainerStyle={styles.listContainer}
         />
     );

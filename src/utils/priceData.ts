@@ -8,7 +8,6 @@ const BATCH_SIZE = 1000;
 const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
 
 export const downloadAndImportPriceData = async (onProgress: (progress: number) => void, force: boolean = false) => {
-    await databaseService.initDatabase();
 
     const zipFilePath = `${RNFS.DocumentDirectoryPath}/prices.zip`;
     const extractPath = `${RNFS.DocumentDirectoryPath}/prices`;
@@ -138,7 +137,6 @@ export const downloadAndImportPriceData = async (onProgress: (progress: number) 
 
 const processPriceDataFromDisk = async (filePath: string, fileSize: number) => {
     try {
-        await databaseService.initDatabase();
         let fileContent = '';
         let totalBytesRead = 0;
         let lastProgressLog = 0;

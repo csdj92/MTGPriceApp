@@ -1,5 +1,4 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
@@ -20,7 +19,7 @@ const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 import DeckBuilder from '../components/DeckBuilder';
 import DeckDetailScreen from '../screens/decks/DeckDetailScreen';
 import type { ExtendedCard } from '../types/card';
-import type { LorcanaCardWithPrice } from '../types/lorcana';
+import type { LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../types/lorcana';
 
 export type RootStackParamList = {
     MainTabs: undefined;
@@ -31,7 +30,7 @@ export type RootStackParamList = {
     PriceLookup: undefined;
     LorcanaCollection: { collectionId: string; title: string; setCode: string };
     LorcanaCardDetails: {
-        card: LorcanaCardWithPrice;
+        card: PartialLorcanaCardWithPrice;
         collectionId: string;
     };
     CameraTest: undefined;
@@ -53,15 +52,15 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
 const getTabIconName = (routeName: string): string => {
-  const icons: Record<string, string> = {
-    Collection: 'cards',
-    Search: 'card-search',
-    Watchlist: 'star',
-    Settings: 'cog',
-    PriceLookup: 'cash-multiple',
-    ManualCapture: 'robot'
-  };
-  return icons[routeName] || 'help';
+    const icons: Record<string, string> = {
+        Collection: 'cards',
+        Search: 'card-search',
+        Watchlist: 'star',
+        Settings: 'cog',
+        PriceLookup: 'cash-multiple',
+        ManualCapture: 'robot'
+    };
+    return icons[routeName] || 'help';
 };
 
 const MainTabs = () => (
@@ -72,7 +71,6 @@ const MainTabs = () => (
             ),
         })}
     >
-
         <Tab.Screen name="Collection" component={CollectionScreen} />
         <Tab.Screen name="Search" component={SearchScreen} />
         <Tab.Screen name="Watchlist" component={WatchlistScreen} />
@@ -83,59 +81,57 @@ const MainTabs = () => (
 );
 
 const AppNavigator = () => (
-    <NavigationContainer>
-        <Stack.Navigator
-            screenOptions={{
-                headerShown: true,
+    <Stack.Navigator
+        screenOptions={{
+            headerShown: true,
+        }}
+    >
+        <Stack.Screen 
+            name="MainTabs" 
+            component={MainTabs}
+            options={{ headerShown: false }}
+        />
+        <Stack.Screen 
+            name="CollectionDetails" 
+            component={CollectionDetailsScreen}
+            options={({ route }) => ({
+                title: route.params.title || 'Collection Details'
+            })}
+        />
+        <Stack.Screen 
+            name="CardDetails" 
+            component={CardDetailsScreen}
+            options={{ title: 'Card Details' }}
+        />
+        <Stack.Screen 
+            name="SetCompletion" 
+            component={SetCompletionScreen}
+            options={{ title: 'Set Completion' }}
+        />
+        <Stack.Screen 
+            name="LorcanaCardDetails" 
+            component={LorcanaCardDetailsScreen}
+            options={{ title: 'Lorcana Card Details' }}
+        />
+        <Stack.Screen 
+            name="CameraTest" 
+            component={CameraTest}
+            options={{
+                title: 'Camera Test',
+                headerShown: false
             }}
-        >
-            <Stack.Screen 
-                name="MainTabs" 
-                component={MainTabs}
-                options={{ headerShown: false }}
-            />
-            <Stack.Screen 
-                name="CollectionDetails" 
-                component={CollectionDetailsScreen}
-                options={({ route }) => ({
-                    title: route.params.title || 'Collection Details'
-                })}
-            />
-            <Stack.Screen 
-                name="CardDetails" 
-                component={CardDetailsScreen}
-                options={{ title: 'Card Details' }}
-            />
-            <Stack.Screen 
-                name="SetCompletion" 
-                component={SetCompletionScreen}
-                options={{ title: 'Set Completion' }}
-            />
-            <Stack.Screen 
-                name="LorcanaCardDetails" 
-                component={LorcanaCardDetailsScreen}
-                options={{ title: 'Lorcana Card Details' }}
-            />
-            <Stack.Screen 
-                name="CameraTest" 
-                component={CameraTest}
-                options={{
-                    title: 'Camera Test',
-                    headerShown: false
-                }}
-            />
-            <Stack.Screen 
-                name="DeckDetailScreen" 
-                component={DeckDetailScreen}
-                options={{ title: 'Deck Details' }}
-            />
-            <Stack.Screen 
-                name="DeckBuilder" 
-                component={DeckBuilder}
-                options={{ title: 'Deck Builder' }}
-            />
-        </Stack.Navigator>
-    </NavigationContainer>
+        />
+        <Stack.Screen 
+            name="DeckDetailScreen" 
+            component={DeckDetailScreen}
+            options={{ title: 'Deck Details' }}
+        />
+        <Stack.Screen 
+            name="DeckBuilder" 
+            component={DeckBuilder}
+            options={{ title: 'Deck Builder' }}
+        />
+    </Stack.Navigator>
 );
 
 export default AppNavigator;

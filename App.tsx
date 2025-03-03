@@ -1,14 +1,21 @@
 import React, { useEffect, useState } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { databaseService } from './src/services/DatabaseService';
 import AppNavigator from './src/navigation/AppNavigator';
+import LoadingScreen from './src/components/LoadingScreen';
 import 'react-native-reanimated';
 import { collectionCacheService } from './src/services/CollectionCacheService';
-import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
+import { ActivityIndicator, View, Text, StyleSheet, StatusBar } from 'react-native';
 import { setupFastImage, getImageLoadingStats } from './src/utils/imageUtils';
 import FastImage from "@d11/react-native-fast-image";
+import ErrorBoundary from './src/components/ErrorBoundary';
+import DatabaseErrorScreen from './src/components/DatabaseErrorScreen';
 
 const App = () => {
-  const [isInitializing, setIsInitializing] = useState(true);
+  const [isDbInitialized, setIsDbInitialized] = useState(false);
+  const [initError, setInitError] = useState<Error | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     // Initialize FastImage with improved caching settings
@@ -19,37 +26,46 @@ const App = () => {
     // Instead just log the current image stats
     console.log('App starting - current image cache stats:', getImageLoadingStats());
     
-    // Preload collections data when app starts
-    const preloadData = async () => {
+    const initializeApp = async () => {
       try {
-        // Preload collections
-        await collectionCacheService.preloadCollections();
+        setIsLoading(true);
+        // Initialize database
+        await databaseService.initializeAllDatabases();
+        
+        // Preload cache
+        await collectionCacheService.preloadCache();
+        
+        setIsDbInitialized(true);
       } catch (error) {
-        console.error('Error preloading app data:', error);
+        console.error('Failed to initialize app:', error);
+        setInitError(error instanceof Error ? error : new Error('Unknown initialization error'));
       } finally {
-        // Set initialization as complete after 1 second minimum to avoid flickering
-        setTimeout(() => {
-          setIsInitializing(false);
-        }, 1000);
+        setIsLoading(false);
       }
     };
 
-    preloadData();
+    initializeApp();
   }, []);
 
-  // Show a splash screen while initializing
-  if (isInitializing) {
+  if (isLoading) {
+    return <LoadingScreen message="Initializing database..." />;
+  }
+
+  if (initError) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#2196F3" />
-        <Text style={styles.loadingText}>Loading MTG Price App...</Text>
-      </View>
+      <LoadingScreen 
+        message="Database initialization failed" 
+        error={initError.message}
+      />
     );
   }
 
   return (
     <SafeAreaProvider>
-      <AppNavigator />
+      <NavigationContainer>
+        <StatusBar barStyle="dark-content" />
+        <AppNavigator />
+      </NavigationContainer>
     </SafeAreaProvider>
   );
 };
@@ -59,13 +75,26 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#fff',
+    padding: 20,
   },
   loadingText: {
     marginTop: 20,
-    fontSize: 18,
+    fontSize: 16,
     color: '#333',
+    textAlign: 'center',
+  },
+  errorHint: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
   },
 });
 
-export default App;
+// Wrap the App component in an ErrorBoundary
+export default () => (
+  <ErrorBoundary fallback={<DatabaseErrorScreen />}>
+    <App />
+  </ErrorBoundary>
+);

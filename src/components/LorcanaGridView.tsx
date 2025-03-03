@@ -14,7 +14,7 @@ import {
     Image
 } from 'react-native';
 import FastImage from "@d11/react-native-fast-image";
-import type { LorcanaCardWithPrice } from '../types/lorcana';
+import type { LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 // Fix the Icon type with a proper type assertion to avoid type errors
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -23,14 +23,14 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     color: string;
 }>;
 import { getLorcanaCardPrice, getDB, addCardToLorcanaCollection, updateAllCardImages } from '../services/LorcanaService';
-import { getImageSource, handleImageLoadError, preloadImages, handleImageLoadSuccess, getImageLoadingStats, clearImageCache, checkAndFixAllImageUrls } from '../utils/imageUtils';
+import { getImageSource, handleImageLoadError, preloadImages, handleImageLoadSuccess, getImageLoadingStats, clearImageCache } from '../utils/imageUtils';
 
 interface LorcanaGridViewProps {
-    cards: LorcanaCardWithPrice[];
+    cards: PartialLorcanaCardWithPrice[];
     isLoading: boolean;
-    onCardPress: (card: LorcanaCardWithPrice) => void;
-    onDeleteCard: (card: LorcanaCardWithPrice) => void;
-    onCardsUpdate?: (updatedCards: LorcanaCardWithPrice[]) => void;
+    onCardPress: (card: PartialLorcanaCardWithPrice) => void;
+    onDeleteCard: (card: PartialLorcanaCardWithPrice) => void;
+    onCardsUpdate?: (updatedCards: PartialLorcanaCardWithPrice[]) => void;
 }
 
 type SortOption = 'name' | 'price' | 'number';
@@ -56,7 +56,7 @@ const CardItem = React.memo(({
     onPress,
     onLongPress
 }: { 
-    item: LorcanaCardWithPrice; 
+    item: PartialLorcanaCardWithPrice; 
     isCollected: boolean;
     onPress: () => void;
     onLongPress: () => void;
@@ -139,7 +139,7 @@ const CardDetailModal = React.memo(({
     visible, 
     onClose
 }: {
-    selectedCard: LorcanaCardWithPrice | null;
+    selectedCard: PartialLorcanaCardWithPrice | null;
     visible: boolean;
     onClose: () => void;
 }) => {
@@ -239,12 +239,12 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [showFilters, setShowFilters] = useState(false);
     const [sortBy, setSortBy] = useState<SortOption>('number');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-    const [selectedCard, setSelectedCard] = useState<LorcanaCardWithPrice | null>(null);
+    const [selectedCard, setSelectedCard] = useState<PartialLorcanaCardWithPrice | null>(null);
     const [updatingPrices, setUpdatingPrices] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(true);
     const [showVersionModal, setShowVersionModal] = useState(false);
-    const [availableVersions, setAvailableVersions] = useState<LorcanaCardWithPrice[]>([]);
+    const [availableVersions, setAvailableVersions] = useState<PartialLorcanaCardWithPrice[]>([]);
     // Add a ref to track cards that failed price lookup
     const failedPriceLookups = React.useRef<Set<string>>(new Set());
 
@@ -320,7 +320,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             // Filter out cards that already failed price lookup or have recent prices
             const cardsNeedingPrices = filteredCards().filter(card => 
                 (!card.prices?.usd || !card.last_updated || card.last_updated < twentyFourHoursAgo) && 
-                !failedPriceLookups.current.has(card.Unique_ID)
+                (card.Unique_ID ? !failedPriceLookups.current.has(card.Unique_ID) : true)
             );
             
             if (cardsNeedingPrices.length === 0) {
@@ -342,7 +342,9 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                         
                         if (!prices) {
                             // Add to failed lookups if no price was found
-                            failedPriceLookups.current.add(card.Unique_ID);
+                            if (card.Unique_ID) {
+                                failedPriceLookups.current.add(card.Unique_ID);
+                            }
                             return card;
                         }
 
@@ -369,7 +371,9 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                         };
                     } catch (error) {
                         // Add to failed lookups on error
-                        failedPriceLookups.current.add(card.Unique_ID);
+                        if (card.Unique_ID) {
+                            failedPriceLookups.current.add(card.Unique_ID);
+                        }
                         return card;
                     }
                 }
@@ -475,7 +479,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         }
     };
 
-    const handleLongPress = (card: LorcanaCardWithPrice) => {
+    const handleLongPress = (card: PartialLorcanaCardWithPrice) => {
         setSelectedCard(null); // Close the card details modal first
         // Fetch available versions for the card
         fetchAvailableVersions(card);
@@ -483,7 +487,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         setShowVersionModal(true);
     };
 
-    const fetchAvailableVersions = async (card: LorcanaCardWithPrice) => {
+    const fetchAvailableVersions = async (card: PartialLorcanaCardWithPrice) => {
         try {
             const db = await getDB();
             const [results] = await db.executeSql(
@@ -500,7 +504,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         }
     };
 
-    const handleVersionChange = async (newVersion: LorcanaCardWithPrice) => {
+    const handleVersionChange = async (newVersion: PartialLorcanaCardWithPrice) => {
         try {
             // Close the modal first
             setShowVersionModal(false);
@@ -565,38 +569,6 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             `Cooling down: ${stats.coolingDownImages}\n` +
             `Recent successful: ${stats.recentlySuccessfulImages}`,
             [
-                {
-                    text: 'Fix Image URLs',
-                    onPress: async () => {
-                        try {
-                            Alert.alert(
-                                'Fixing URLs',
-                                'Checking and fixing all image URLs in the database...'
-                            );
-                            
-                            // Run the fix process
-                            await checkAndFixAllImageUrls();
-                            
-                            // Show success message
-                            Alert.alert(
-                                'URL Fix Complete',
-                                'The image URLs have been fixed. The app will now reload the images with the correct URLs.',
-                                [
-                                    {
-                                        text: 'OK',
-                                        onPress: () => {
-                                            // Force reload cards
-                                            preloadCardImages();
-                                        }
-                                    }
-                                ]
-                            );
-                        } catch (error) {
-                            console.error('[LorcanaGridView] Error fixing URLs:', error);
-                            Alert.alert('Error', 'Failed to fix image URLs. Please try again.');
-                        }
-                    }
-                },
                 { 
                     text: 'Reset Cache',
                     onPress: async () => {
@@ -620,7 +592,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     
 
     // Replace the renderCard function with a wrapper that uses our component
-    const renderCard = ({ item }: { item: LorcanaCardWithPrice }) => {
+    const renderCard = ({ item }: { item: PartialLorcanaCardWithPrice }) => {
         // Force boolean evaluation to ensure consistent behavior
         const isCollected = !!item.collected;
         return (
@@ -885,7 +857,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     );
 
     // Function to add a card to the collection
-    const addToCollection = async (card: LorcanaCardWithPrice) => {
+    const addToCollection = async (card: PartialLorcanaCardWithPrice) => {
         try {
             // First, check if the card has a Set_ID to find the appropriate collection
             if (!card.Set_ID) {
@@ -950,7 +922,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             <FlatList
                 data={filteredCards()}
                 renderItem={renderCard}
-                keyExtractor={(item) => item.Unique_ID.toString()}
+                keyExtractor={(item) => (item.Unique_ID || Math.random().toString()).toString()}
                 numColumns={3}
                 contentContainerStyle={styles.flatListContent}
                 onEndReached={loadMoreCards}

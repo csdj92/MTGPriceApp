@@ -1,4 +1,5 @@
-import { databaseService, Collection } from './DatabaseService';
+import { databaseService } from './DatabaseService';
+import type { Collection } from './DatabaseService';
 
 // Cache validity period - 5 minutes
 const CACHE_VALIDITY_PERIOD = 5 * 60 * 1000;
@@ -9,7 +10,7 @@ interface SetCollection extends Collection {
     completionPercentage: number;
 }
 
-class CollectionCacheService {
+export class CollectionCacheService {
     private collectionsCache: {
         collections: Collection[];
         timestamp: number;
@@ -19,6 +20,10 @@ class CollectionCacheService {
         collections: SetCollection[];
         timestamp: number;
     } | null = null;
+
+    private cache: Map<string, any> = new Map();
+    private lastUpdate: number = 0;
+    private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
     /**
      * Get collections with caching
@@ -180,12 +185,18 @@ class CollectionCacheService {
             if (!this.isCacheValid()) {
                 console.log('[CollectionCacheService] Preloading regular collections');
                 tasks.push(
-                    databaseService.getCollections().then(collections => {
+                    databaseService.getCollections()
+                    .then(collections => {
                         this.collectionsCache = {
                             collections,
                             timestamp: Date.now()
                         };
                         console.log('[CollectionCacheService] Preloaded', collections.length, 'regular collections');
+                    })
+                    .catch(error => {
+                        console.error('[CollectionCacheService] Error preloading regular collections:', error);
+                        // Don't fail the entire operation, just log the error
+                        return [];
                     })
                 );
             }
@@ -194,12 +205,18 @@ class CollectionCacheService {
             if (!this.isSetCacheValid()) {
                 console.log('[CollectionCacheService] Preloading set collections');
                 tasks.push(
-                    databaseService.getSetCollections().then(collections => {
+                    databaseService.getSetCollections()
+                    .then(collections => {
                         this.setCollectionsCache = {
                             collections,
                             timestamp: Date.now()
                         };
                         console.log('[CollectionCacheService] Preloaded', collections.length, 'set collections');
+                    })
+                    .catch(error => {
+                        console.error('[CollectionCacheService] Error preloading set collections:', error);
+                        // Don't fail the entire operation, just log the error
+                        return [];
                     })
                 );
             }
@@ -208,6 +225,19 @@ class CollectionCacheService {
             await Promise.all(tasks);
         } catch (error) {
             console.error('[CollectionCacheService] Preloading error:', error);
+            // Don't throw the error up - just log it
+        }
+    }
+
+    async preloadCache(): Promise<void> {
+        try {
+            console.log('[CollectionCacheService] Starting cache preload');
+            // Preload collections
+            await this.preloadCollections();
+            console.log('[CollectionCacheService] Cache preload complete');
+        } catch (error) {
+            console.error('[CollectionCacheService] Error preloading cache:', error);
+            throw error;
         }
     }
 }

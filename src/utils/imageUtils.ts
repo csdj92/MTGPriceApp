@@ -371,7 +371,6 @@ export const updateAllImageUrlsInDatabase = async (db: any): Promise<number> => 
       
       if (!card.Image) continue;
       
-      console.log(`[ImageUtils] Checking URL for card ${card.Unique_ID}: ${card.Image}`);
       
       // Apply fixes based on our utility function
       const fixedUrl = getLorcanaImageUrl(card);
