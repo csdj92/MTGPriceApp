@@ -80,7 +80,10 @@ export interface ExtendedCard {
 }
 
 // Define the ScannedCard type using the ExtendedCard as a base
-export type ScannedCard = Omit<ExtendedCard, 'type'> & { type: 'MTG' | 'Lorcana' };
+export type ScannedCard = Omit<ExtendedCard, 'type'> & { 
+  type: 'MTG' | 'Lorcana';
+  bypassVariantSelection?: boolean; // Flag to bypass variant selection when true
+};
 
 export interface OcrResult {
     text: string;

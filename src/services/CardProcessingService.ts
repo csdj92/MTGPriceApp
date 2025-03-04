@@ -213,6 +213,15 @@ export const CardProcessingService = {
         searchQuery = `e:${setCode} number:${cardNumber}`;
         isEnhancedSearch = true;
         
+        // Update verification status to inform user we're using enhanced search
+        verificationEmitter.emit(EVENT_NAME, {
+          isVerifying: true,
+          card: null,
+          originalText: `${ocrText} (${setCode} #${cardNumber})`,  // Include set/number in status
+          verificationScore: 0.8,  // Show higher initial confidence
+          isVerified: null
+        } as VerificationStatus);
+        
         // Add user feedback about enhanced search
         if (Platform.OS === 'android') {
           ToastAndroid.show(`Enhanced search: ${setCode} #${cardNumber}`, ToastAndroid.SHORT);
@@ -252,8 +261,11 @@ export const CardProcessingService = {
       // Get the most likely card
       const card = foundCards[0];
       
-      // Verify the card using version checking
-      const { isVerified, score } = await this.verifyMTGCard(ocrText, card);
+      // For enhanced searches with exact set code and card number,
+      // we can have higher confidence in the match
+      let { isVerified, score } = isEnhancedSearch
+        ? { isVerified: true, score: 1.0 }  // Auto-verify with full score for enhanced searches
+        : await this.verifyMTGCard(ocrText, card);
       
       // Emit verification result
       verificationEmitter.emit(EVENT_NAME, {
@@ -285,7 +297,9 @@ export const CardProcessingService = {
         ...cardWithUuid,
         type: 'MTG',
         scannedAt: Date.now(),
-        imageUris: imageUris
+        imageUris: imageUris,
+        // Add flag to indicate this was found with exact setCode and cardNumber
+        bypassVariantSelection: isEnhancedSearch
       };
       
       Logger.debug(`Created scanned card with name: ${scannedCard.name}`);
@@ -350,6 +364,13 @@ export const CardProcessingService = {
         });
       }
       
+      // Special case: If card name is an exact match, give it a full score
+      // This handles cases where we've found a card by set code and collector number
+      if (ocrText.toLowerCase().trim() === card.name.toLowerCase().trim()) {
+        Logger.debug(`Perfect name match for "${card.name}", giving full verification score`);
+        return { isVerified: true, score: 1.0 };
+      }
+      
       // 1. Extract words from OCR text for comparison
       const ocrWords = ocrText.toLowerCase().split(/\s+/).filter(w => w.length > 2);
       
@@ -359,6 +380,12 @@ export const CardProcessingService = {
         ocrWords.some(ocrWord => ocrWord.includes(word) || word.includes(ocrWord))
       );
       const nameMatchPercentage = nameWords.length > 0 ? nameWordMatches.length / nameWords.length : 0;
+      
+      // If we have a perfect name match, give it a full score
+      if (nameMatchPercentage === 1.0) {
+        Logger.debug(`Perfect name match words for "${card.name}", giving full verification score`);
+        return { isVerified: true, score: 1.0 };
+      }
       
       // 3. Check for type line matches if available
       let typeMatchScore = 0;

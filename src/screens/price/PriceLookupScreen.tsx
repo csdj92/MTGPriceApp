@@ -245,11 +245,22 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         }
         
         // For MTG cards, check if there are different versions
-        if (scannedCard.type === 'MTG') {
+        // Skip variant checking if bypassVariantSelection flag is true (exact set code and number search)
+        if (scannedCard.type === 'MTG' && !scannedCard.bypassVariantSelection) {
             const hasVersions = await checkCardVersions(scannedCard as ExtendedCard);
             if (hasVersions) {
                 // Will be handled by version selector
                 return;
+            }
+        }
+        
+        // If bypassing variant selection, log it
+        if (scannedCard.bypassVariantSelection) {
+            Logger.debug(`Bypassing variant selection for ${scannedCard.name} (${scannedCard.setCode} #${scannedCard.collectorNumber})`);
+            
+            // Add user feedback
+            if (Platform.OS === 'android') {
+                ToastAndroid.show(`Added exact card: ${scannedCard.name} (${scannedCard.setCode} #${scannedCard.collectorNumber})`, ToastAndroid.SHORT);
             }
         }
         
