@@ -481,14 +481,24 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const renderCameraContent = () => (
         <View style={styles.cameraContainer}>
             <CardScanner
-                onTextDetected={(result) => {
-                    // Adapt the result to match OcrResult type if it's from the classifier
-                    const ocrResult: OcrResult = {
-                        text: result.text,
-                        mainName: result.text,
-                        subtype: '',
-                        isLorcana: isLorcanaScan
-                    };
+                onTextDetected={(result: any) => {
+                    // Adapt the result to match OcrResult type
+                    const ocrResult: OcrResult = useClassifier 
+                        ? {
+                            text: result.text,
+                            mainName: result.text,
+                            subtype: '',
+                            isLorcana: isLorcanaScan
+                        } 
+                        : {
+                            // For LiveOcr results, preserve all properties including setCode and cardNumber
+                            text: result.text,
+                            mainName: result.mainName || result.text,
+                            subtype: result.subtype || '',
+                            isLorcana: isLorcanaScan,
+                            setCode: result.setCode || null,
+                            cardNumber: result.cardNumber || null
+                        };
                     handleScan(ocrResult);
                 }}
                 onError={handleScanError}

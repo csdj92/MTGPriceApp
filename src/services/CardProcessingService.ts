@@ -138,6 +138,8 @@ export const CardProcessingService = {
         Original: ${result.text}
         Preprocessed: ${preprocessedText}
         isLorcana: ${result.isLorcana}
+        setCode: ${result.setCode || 'undefined'}
+        cardNumber: ${result.cardNumber || 'undefined'}
       `);
       
       // Update result with preprocessed text
@@ -154,7 +156,7 @@ export const CardProcessingService = {
         }
         return await this.processLorcanaOcrText(processedResult.mainName, processedResult.subtype ?? undefined);
       } else {
-        return await this.processMTGOcrText(processedResult.text);
+        return await this.processMTGOcrText(processedResult.text, processedResult.setCode, processedResult.cardNumber);
       }
     } catch (error) {
       Logger.error('Error processing OCR result:', error);
@@ -163,11 +165,22 @@ export const CardProcessingService = {
   },
   
   /**
-   * Process OCR text to identify MTG cards
+   * Process OCR text for MTG cards to find a matching card.
    */
-  async processMTGOcrText(ocrText: string): Promise<ScannedCard | null> {
+  async processMTGOcrText(ocrText: string, setCode?: string | null, cardNumber?: string | null): Promise<ScannedCard | null> {
     try {
-      // Emit verification starting
+      // Detailed input parameter logging
+      Logger.debug('=== MTG OCR Processing Input ===');
+      Logger.debug(`OCR Text: "${ocrText}"`);
+      Logger.debug(`OCR Text Type: ${typeof ocrText}`);
+      Logger.debug(`Set Code: "${setCode}" (${typeof setCode})`);
+      Logger.debug(`Card Number: "${cardNumber}" (${typeof cardNumber})`);
+      Logger.debug('================================');
+      
+      // Convert undefined to null for consistency
+      setCode = setCode === undefined ? null : setCode;
+      cardNumber = cardNumber === undefined ? null : cardNumber;
+      
       verificationEmitter.emit(EVENT_NAME, {
         isVerifying: true,
         card: null,
@@ -178,38 +191,47 @@ export const CardProcessingService = {
       
       // Check if the text has already been processed recently
       const normalizedText = ocrText.toLowerCase().trim();
-      const now = Date.now();
-      const recentScanKey = `${normalizedText}-${Math.floor(now / SCAN_COOLDOWN_MS)}`;
       
-      if (recentScans.has(recentScanKey)) {
-        Logger.debug(`Ignoring duplicate scan: ${ocrText}`);
-        
-        // Show popup for duplicate scan
-        if (Platform.OS === 'android') {
-          ToastAndroid.show('Card already scanned', ToastAndroid.SHORT);
-        }
-        
-        // Reset verification status
-        verificationEmitter.emit(EVENT_NAME, {
-          isVerifying: false,
-          card: null,
-          originalText: '',
-          verificationScore: 0,
-          isVerified: null
-        } as VerificationStatus);
-        
+      if (this.checkForDuplicate(normalizedText, Date.now())) {
+        Logger.debug(`Duplicate card detected: ${normalizedText}`);
         return null;
       }
       
-      // Add to recent scans and maintain max size
-      recentScans.add(recentScanKey);
-      if (recentScans.size > MAX_RECENT_SCANS) {
-        const oldestKey = Array.from(recentScans)[0];
-        recentScans.delete(oldestKey);
+      // Build search query - use set code and number if available
+      let searchQuery = ocrText.trim();
+      let isEnhancedSearch = false;
+      
+      // Only use setCode and cardNumber if both are non-null and valid
+      const validSetCode = setCode && setCode.trim().length > 0 && setCode !== "null" && setCode !== "undefined";
+      const validCardNumber = cardNumber && cardNumber.trim().length > 0 && cardNumber !== "null" && cardNumber !== "undefined";
+      
+      if (validSetCode && validCardNumber) {
+        // Log the exact setCode and cardNumber being used
+        Logger.debug(`Using exact search with set=${setCode} num=${cardNumber}`);
+        
+        // Format query to use exact set and collector number
+        searchQuery = `e:${setCode} number:${cardNumber}`;
+        isEnhancedSearch = true;
+        
+        // Add user feedback about enhanced search
+        if (Platform.OS === 'android') {
+          ToastAndroid.show(`Enhanced search: ${setCode} #${cardNumber}`, ToastAndroid.SHORT);
+        }
+      } else {
+        // Debug why enhanced search wasn't used
+        const missingInfo = !validSetCode && !validCardNumber 
+          ? 'Missing set code & number' 
+          : !validSetCode ? 'Missing set code' : 'Missing card number';
+        
+        Logger.debug(`Using basic search: ${missingInfo}`);
+        
+        if (__DEV__ && Platform.OS === 'android') {
+          ToastAndroid.show(`Basic search: ${missingInfo}`, ToastAndroid.SHORT);
+        }
       }
       
-      Logger.debug(`Searching for MTG card: ${ocrText}`);
-      const searchResponse = await scryfallService.searchCards(ocrText, 1);
+      Logger.debug(`Searching for MTG card: ${isEnhancedSearch ? 'ENHANCED SEARCH: ' : ''}${searchQuery}`);
+      const searchResponse = await scryfallService.searchCards(searchQuery, 1);
       const foundCards = searchResponse.data;
       
       if (foundCards.length === 0) {
@@ -262,7 +284,7 @@ export const CardProcessingService = {
       const scannedCard: ScannedCard = {
         ...cardWithUuid,
         type: 'MTG',
-        scannedAt: now,
+        scannedAt: Date.now(),
         imageUris: imageUris
       };
       

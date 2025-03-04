@@ -36,7 +36,7 @@ const liveOcrEmitter = LiveOcrModule ? new NativeEventEmitter(NativeModules.Live
 const liveImageClassifierEmitter = LiveImageClassifier ? new NativeEventEmitter(LiveImageClassifier) : null;
 
 interface CardScannerProps {
-  onTextDetected: (result: { text: string }) => void;
+  onTextDetected: (result: any) => void;
   onError: (error: Error) => void;
   scannedCards: ExtendedCard[];
   totalPrice: number;

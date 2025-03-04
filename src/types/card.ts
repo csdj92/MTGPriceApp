@@ -87,6 +87,8 @@ export interface OcrResult {
     mainName: string;
     subtype: string | null;
     isLorcana: boolean;
+    setCode?: string | null;
+    cardNumber?: string | null;
 }
 
 export interface LorcanaCard extends Card {

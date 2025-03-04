@@ -185,29 +185,87 @@ class ScryfallService {
 
     async searchCards(query: string, page: number = 1): Promise<{ data: ExtendedCard[], hasMore: boolean }> {
         try {
-            const encodedQuery = encodeURIComponent(query.trim());
-            if (!encodedQuery) return { data: [], hasMore: false };
+            console.log(`[ScryfallService] Original search query: "${query}"`);
+            let formattedQuery = query.trim();
+            
+            // Check if the query contains set code and collector number pattern
+            const setNumberMatch = formattedQuery.match(/^([A-Z0-9]{2,5})\s*(\d+)$/i);
+            if (setNumberMatch) {
+                const [fullMatch, setCode, collectorNumber] = setNumberMatch;
+                console.log(`[ScryfallService] Detected set code pattern:`, {
+                    fullMatch,
+                    setCode,
+                    collectorNumber
+                });
+                // Format according to Scryfall's syntax: e:set number:number
+                formattedQuery = `e:${setCode.toLowerCase()} number:${collectorNumber}`;
+                console.log(`[ScryfallService] Formatted set code query: "${formattedQuery}"`);
+            }
+            
+            // If it's an exact card name (starts with !), format it properly
+            if (formattedQuery.startsWith('!')) {
+                const exactName = formattedQuery.substring(1).trim();
+                console.log(`[ScryfallService] Detected exact name search: "${exactName}"`);
+                formattedQuery = `!"${exactName}"`;
+                console.log(`[ScryfallService] Formatted exact name query: "${formattedQuery}"`);
+            }
 
-            console.log(`[ScryfallService] Searching for: ${encodedQuery}, page: ${page}`);
-            const response = await fetch(
-                `https://api.scryfall.com/cards/search?q=${encodedQuery}&page=${page}`
-            );
+            const encodedQuery = encodeURIComponent(formattedQuery);
+            if (!encodedQuery) {
+                console.log('[ScryfallService] Empty query after encoding, returning empty result');
+                return { data: [], hasMore: false };
+            }
+
+            const searchUrl = `${SCRYFALL_API_BASE}/cards/search?q=${encodedQuery}&page=${page}`;
+            console.log(`[ScryfallService] Making API request:`, {
+                formattedQuery,
+                encodedQuery,
+                url: searchUrl,
+                page
+            });
+
+            const response = await fetch(searchUrl);
 
             if (!response.ok) {
                 const errorText = await response.text();
+                console.error('[ScryfallService] API error response:', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    errorText
+                });
                 if (response.status === 404) {
+                    console.log('[ScryfallService] No results found');
                     return { data: [], hasMore: false };
                 }
                 throw new Error(`Scryfall API error: ${response.status} - ${errorText}`);
             }
 
             const data = await response.json();
+            console.log(`[ScryfallService] Search results:`, {
+                totalCards: data.total_cards ?? 0,
+                hasMore: data.has_more || false,
+                resultsCount: data.data?.length ?? 0
+            });
+
+            const transformedData = data.data.map(this.transformScryfallCard);
+            console.log(`[ScryfallService] First result:`, transformedData[0] ? {
+                name: transformedData[0].name,
+                setCode: transformedData[0].setCode,
+                collectorNumber: transformedData[0].collectorNumber
+            } : 'No results');
+
             return {
-                data: data.data.map(this.transformScryfallCard),
+                data: transformedData,
                 hasMore: data.has_more || false
             };
         } catch (error) {
             console.error('[ScryfallService] Search error:', error);
+            if (error instanceof Error) {
+                console.error('[ScryfallService] Error details:', {
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
             throw error;
         }
     }
