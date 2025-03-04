@@ -340,6 +340,30 @@ class ScryfallService {
             return null;
         }
     }
+
+    /**
+     * Get different versions/printings of a card by name
+     * @param cardName The exact card name to search for
+     * @returns Array of different card versions/printings
+     */
+    async getCardVersions(cardName: string): Promise<ExtendedCard[]> {
+        try {
+            const encodedName = encodeURIComponent(cardName);
+            const url = `${SCRYFALL_API_BASE}/cards/search?q=!"${encodedName}" unique:prints`;
+            
+            const response = await this.fetchWithThrottle(url);
+            
+            if (!response.data || !Array.isArray(response.data)) {
+                return [];
+            }
+            
+            // Transform the Scryfall cards to our ExtendedCard format
+            return response.data.map(this.transformScryfallCard);
+        } catch (error) {
+            console.error('Error fetching card versions:', error);
+            return [];
+        }
+    }
 }
 
 export const scryfallService = new ScryfallService(); 

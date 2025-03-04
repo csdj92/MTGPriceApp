@@ -76,7 +76,11 @@ export interface ExtendedCard {
     cmc: number;
     flavorText?: string;
     frameEffects: string[];
+    isOriginalScan?: boolean;
 }
+
+// Define the ScannedCard type using the ExtendedCard as a base
+export type ScannedCard = Omit<ExtendedCard, 'type'> & { type: 'MTG' | 'Lorcana' };
 
 export interface OcrResult {
     text: string;

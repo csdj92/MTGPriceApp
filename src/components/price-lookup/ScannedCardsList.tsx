@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Platform
 } from 'react-native';
-import { ExtendedCard } from '../../types/card';
+import { ExtendedCard, ScannedCard } from '../../types/card';
 import { LorcanaCard } from '../../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Logger } from '../../utils/logger';
@@ -17,8 +17,6 @@ import { getLorcanaImageUrl, getImageSource, handleImageLoadError, handleImageLo
 import FastImage from '@d11/react-native-fast-image';
 
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
-
-export type ScannedCard = Omit<ExtendedCard, 'type'> & { type: 'MTG' | 'Lorcana' };
 
 export interface ScannedCardsListProps {
   cards: ScannedCard[];

@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ActivityIndicator, ScrollView, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { View, Text, ActivityIndicator, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import FastImage from "@d11/react-native-fast-image";
 import { useTheme } from '../../context/ThemeContext';
 import { ExtendedCard } from '../../types/card';
 import { databaseService } from '../../services/DatabaseService';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import { getImageSource, handleImageLoadSuccess, handleImageLoadError } from '../../utils/imageUtils';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<any>;
 
 interface VariationsTabProps {
     card: ExtendedCard;
     onVersionChange: (card: ExtendedCard) => void;
+    highlightOriginalScan?: boolean;
+    preloadedVariations?: ExtendedCard[];
 }
 
 // Function to get best price for a card
@@ -53,31 +56,51 @@ const getFormattedPrice = (price: number): string =>
         maximumFractionDigits: 2
     }).format(price);
 
-const VariationsTab: React.FC<VariationsTabProps> = ({ card, onVersionChange }) => {
+const VariationsTab: React.FC<VariationsTabProps> = ({ 
+    card, 
+    onVersionChange,
+    highlightOriginalScan = false,
+    preloadedVariations
+}) => {
     const [variations, setVariations] = useState<ExtendedCard[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!preloadedVariations);
+    const [currentCard, setCurrentCard] = useState<ExtendedCard | null>(card);
     const { theme, isDark } = useTheme();
 
+    // Function to load variations
     useEffect(() => {
-        const loadVariations = async () => {
-            setLoading(true);
-            try {
-                // Use DatabaseService directly to get variants
-                const fetchedVariations = await databaseService.getCardVariants(card.name);
-                // Filter out the current card from variations
-                setVariations(fetchedVariations.filter(v => v.uuid !== card.uuid));
-            } catch (error) {
-                // Use console.debug instead of console.error to avoid issues
-                if (__DEV__) {
-                    console.debug('Error loading variations:', error);
-                }
-            } finally {
-                setLoading(false);
-            }
-        };
+        if (preloadedVariations) {
+            // Use preloaded variations if provided
+            setVariations(preloadedVariations);
+            setLoading(false);
+        } else {
+            // Otherwise load them as before
+            loadVariations();
+        }
+    }, [preloadedVariations]); // Only reload if preloadedVariations changes
 
-        loadVariations();
-    }, [card]);
+    const loadVariations = async () => {
+        try {
+            setLoading(true);
+            
+            // Only load variations if preloadedVariations isn't provided
+            if (!preloadedVariations) {
+                // Original loading logic
+                const variantCards = await databaseService.getCardVariants(card.name);
+                setVariations(variantCards);
+            }
+            
+            setLoading(false);
+        } catch (error) {
+            console.error('Error loading variants:', error);
+            setLoading(false);
+        }
+    };
+
+    const handleVersionSelect = (variant: ExtendedCard) => {
+        setCurrentCard(variant);
+        onVersionChange(variant);
+    };
 
     if (loading) {
         return (
@@ -117,6 +140,16 @@ const VariationsTab: React.FC<VariationsTabProps> = ({ card, onVersionChange }) 
                 {variations.map((variant, index) => {
                     const normalPrice = getBestPrice(variant.prices, false);
                     const foilPrice = getBestPrice(variant.prices, true);
+                    // Use imageUtils for the image URL
+                    const imageUri = variant.imageUris?.small || variant.imageUrl || '';
+                    const imageSource = getImageSource(imageUri) || { 
+                        uri: 'https://via.placeholder.com/488x680/333333/FFFFFF?text=' + encodeURIComponent(variant.name || '?'),
+                        priority: FastImage.priority.high,
+                        cache: FastImage.cacheControl.immutable
+                    };
+                    
+                    const isSelected = card?.uuid === variant.uuid;
+                    const isOriginalScan = highlightOriginalScan && variant.isOriginalScan;
                     
                     return (
                         <TouchableOpacity
@@ -126,21 +159,21 @@ const VariationsTab: React.FC<VariationsTabProps> = ({ card, onVersionChange }) 
                                 { 
                                     backgroundColor: theme.surface,
                                     borderColor: theme.border,
+                                    ...(isSelected && styles.selectedVariation),
+                                    ...(isOriginalScan && styles.originalScanVariation)
                                 }
                             ]}
-                            onPress={() => onVersionChange(variant)}
+                            onPress={() => handleVersionSelect(variant)}
                             activeOpacity={0.7}
                         >
                             <View style={styles.cardContainer}>
                                 <View style={styles.imageWrapper}>
                                     <FastImage
-                                        source={{ 
-                                            uri: variant.imageUris?.small || variant.imageUrl || '',
-                                            priority: FastImage.priority.high,
-                                            cache: FastImage.cacheControl.immutable
-                                        }}
+                                        source={imageSource}
                                         style={styles.cardImage}
                                         resizeMode={FastImage.resizeMode.contain}
+                                        onLoad={() => handleImageLoadSuccess(imageUri, { cardName: variant.name })}
+                                        onError={() => handleImageLoadError(imageUri, variant.name)}
                                     />
                                 </View>
                                 
@@ -189,6 +222,14 @@ const VariationsTab: React.FC<VariationsTabProps> = ({ card, onVersionChange }) 
                                             </Text>
                                         )}
                                     </View>
+                                    
+                                    {isOriginalScan && (
+                                        <View style={styles.originalScanBadge}>
+                                            <Text style={styles.originalScanText}>
+                                                Original Scan
+                                            </Text>
+                                        </View>
+                                    )}
                                 </View>
                                 
                                 <Icon name="chevron-right" size={24} color={theme.textSecondary} style={styles.rightIcon} />
@@ -340,6 +381,26 @@ const styles = StyleSheet.create({
     rightIcon: {
         alignSelf: 'center',
         marginLeft: 8,
+    },
+    selectedVariation: {
+        borderColor: '#4CAF50',
+        borderWidth: 2,
+    },
+    originalScanVariation: {
+        borderColor: '#4CAF50',
+        borderWidth: 2,
+    },
+    originalScanBadge: {
+        backgroundColor: '#4CAF50',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 4,
+        marginTop: 4,
+    },
+    originalScanText: {
+        color: 'white',
+        fontSize: 10,
+        fontWeight: 'bold',
     },
 });
 
