@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -15,6 +15,9 @@ import {
   Modal,
   ScrollView,
   SafeAreaView,
+  Alert,
+  ActivityIndicator,
+  FlatList,
 } from 'react-native';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { ExtendedCard, OcrResult } from '../types/card';
@@ -40,6 +43,10 @@ interface CardScannerProps {
   onCardPress?: (card: ExtendedCard) => void;
   isPaused?: boolean;
   useClassifier?: boolean;
+  cardVariations?: ExtendedCard[];
+  onVariationSelect?: (card: ExtendedCard) => void;
+  selectedVariation?: ExtendedCard | null;
+  onConfirmVariation?: () => void;
 }
 
 const CardScanner: React.FC<CardScannerProps> = ({
@@ -50,6 +57,10 @@ const CardScanner: React.FC<CardScannerProps> = ({
   onCardPress,
   isPaused = false,
   useClassifier = false,
+  cardVariations = [],
+  onVariationSelect,
+  selectedVariation = null,
+  onConfirmVariation,
 }) => {
   const [hasPermission, setHasPermission] = useState(false);
   const [isActive, setIsActive] = useState(false);
@@ -57,6 +68,8 @@ const CardScanner: React.FC<CardScannerProps> = ({
   const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
   const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
   const [cardModalVisible, setCardModalVisible] = useState(false);
+  const [isRecentCardsCollapsed, setIsRecentCardsCollapsed] = useState(false);
+  const [showingVariations, setShowingVariations] = useState(false);
 
   const emitter = useClassifier ? liveImageClassifierEmitter : liveOcrEmitter;
   const eventName = useClassifier ? 'LiveImageClassification' : 'LiveOcrResult';
@@ -194,92 +207,216 @@ const CardScanner: React.FC<CardScannerProps> = ({
     setTimeout(() => setSelectedCard(null), 300); // Clear after animation
   }, []);
 
+  // Toggle recent cards collapsed state
+  const toggleRecentCardsCollapse = useCallback(() => {
+    // Only collapse if we have variations to show
+    if (cardVariations?.length > 0) {
+      setIsRecentCardsCollapsed(!isRecentCardsCollapsed);
+      setShowingVariations(!showingVariations);
+    }
+  }, [isRecentCardsCollapsed, cardVariations, showingVariations]);
+
+  useEffect(() => {
+    // Show variations if they are available
+    if (cardVariations?.length > 0) {
+      setIsRecentCardsCollapsed(true);
+      setShowingVariations(true);
+    } else {
+      setIsRecentCardsCollapsed(false);
+      setShowingVariations(false);
+    }
+  }, [cardVariations]);
+
   // Render the counter bubble with most recent card
   const renderScannedCardsWidget = useCallback(() => {
-    if (!scannedCards || scannedCards.length === 0) {
+    // Always render the container if we have variations to show, even if no scanned cards yet
+    if ((!scannedCards || scannedCards.length === 0) && !cardVariations?.length) {
       return null;
     }
 
     // We'll show at most the 3 most recent cards
-    const recentCards = scannedCards.slice(0, 3);
+    const recentCards = scannedCards?.slice(0, 3) || [];
     
     return (
       <>
-        {/* Stats bubble - top right */}
-        <View style={styles.statsBubbleContainer}>
-          <View style={styles.statsBubble}>
-            <Text style={styles.statsCountText}>
-              {scannedCards.length}
-            </Text>
-            <Text style={styles.statsPriceText}>
-              ${totalPrice.toFixed(2)}
-            </Text>
+        {/* Stats bubble - top right - only show if there are scanned cards */}
+        {scannedCards && scannedCards.length > 0 && (
+          <View style={styles.statsBubbleContainer}>
+            <View style={styles.statsBubble}>
+              <Text style={styles.statsCountText}>
+                {scannedCards.length}
+              </Text>
+              <Text style={styles.statsPriceText}>
+                ${totalPrice.toFixed(2)}
+              </Text>
+            </View>
           </View>
-        </View>
+        )}
 
-        {/* Recently scanned cards strip - bottom */}
-        <View style={styles.recentCardsContainer}>
-          <View style={styles.recentCardsHeader}>
+        {/* Bottom container for either recent cards or variations */}
+        <View style={styles.bottomContainer}>
+          {/* Header section with toggle ability */}
+          <TouchableOpacity 
+            style={styles.recentCardsHeader} 
+            onPress={toggleRecentCardsCollapse}
+            disabled={!cardVariations || cardVariations.length === 0}
+          >
             <Text style={styles.recentCardsHeaderText}>
-              Recently Scanned
+              {showingVariations ? 'Select Version' : 'Recently Scanned'}
             </Text>
-            {scannedCards.length > 3 && (
+            {!showingVariations && scannedCards && scannedCards.length > 3 && (
               <Text style={styles.seeMoreText}>
                 +{scannedCards.length - 3} more
               </Text>
             )}
-          </View>
+            {cardVariations?.length > 0 && (
+              <Icon 
+                name={isRecentCardsCollapsed ? 'chevron-up' : 'chevron-down'} 
+                size={20} 
+                color="#fff" 
+                style={styles.collapseIcon}
+              />
+            )}
+          </TouchableOpacity>
           
-          <View style={styles.cardsStrip}>
-            {recentCards.map((card, index) => {
-              // Get appropriate image URI using our helper function
-              let imageUri = null;
-              
-              // Check if it's a Lorcana card
-              if (card.type === 'Lorcana') {
-                // For Lorcana cards, use the imported function without specifying size
-                imageUri = getLorcanaImageUrl(card);
-              } else {
-                // For MTG cards - use existing logic
-                imageUri = card.imageUris?.normal || 
-                           card.imageUris?.small || 
-                           card.imageUrl || null;
-              }
-              
-              // Log the image URI for debugging
-              if (__DEV__) {
-                console.log(`[CardScanner] Card ${index} (${card.name}): Using image URI: ${imageUri || 'none'}`);
-              }
+          {/* Recently scanned cards content */}
+          {!isRecentCardsCollapsed && scannedCards && scannedCards.length > 0 && (
+            <View style={styles.cardsStrip}>
+              {recentCards.map((card, index) => {
+                // Get appropriate image URI using our helper function
+                let imageUri = null;
                 
-              return (
-                <TouchableOpacity
-                  key={`${card.id || card.name}-${index}`}
-                  style={styles.cardPreviewContainer}
-                  onPress={() => handleCardPress(card)}
-                  activeOpacity={0.7}
-                >
-                  <CardImage 
-                    uri={imageUri} 
-                    name={card.name}
-                    previewMode={true}
-                  />
+                // Check if it's a Lorcana card
+                if (card.type === 'Lorcana') {
+                  // For Lorcana cards, use the imported function without specifying size
+                  imageUri = getLorcanaImageUrl(card);
+                } else {
+                  // For MTG cards - use existing logic
+                  imageUri = card.imageUris?.normal || 
+                             card.imageUris?.small || 
+                             card.imageUrl || null;
+                }
+                
+                // Log the image URI for debugging
+                if (__DEV__) {
+                  console.log(`[CardScanner] Card ${index} (${card.name}): Using image URI: ${imageUri || 'none'}`);
+                }
                   
-                  <View style={styles.cardPreviewInfo}>
-                    <Text style={styles.cardPreviewName} numberOfLines={1}>
-                      {card.name}
-                    </Text>
-                    <Text style={styles.cardPreviewPrice}>
-                      ${card.prices?.usd ? parseFloat(card.prices.usd).toFixed(2) : '0.00'}
-                    </Text>
-                  </View>
+                return (
+                  <TouchableOpacity
+                    key={`${card.id || card.name}-${index}`}
+                    style={styles.cardPreviewContainer}
+                    onPress={() => handleCardPress(card)}
+                    activeOpacity={0.7}
+                  >
+                    <CardImage 
+                      uri={imageUri} 
+                      name={card.name}
+                      previewMode={true}
+                    />
+                    
+                    <View style={styles.cardPreviewInfo}>
+                      <Text style={styles.cardPreviewName} numberOfLines={1}>
+                        {card.name}
+                      </Text>
+                      <Text style={styles.cardPreviewPrice}>
+                        ${card.prices?.usd ? parseFloat(card.prices.usd).toFixed(2) : '0.00'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Variations selection */}
+          {showingVariations && cardVariations?.length > 0 && (
+            <View style={styles.variationsContainer}>
+              <View style={styles.variationsListContainer}>
+                <FlatList
+                  data={cardVariations}
+                  horizontal
+                  showsHorizontalScrollIndicator={true}
+                  keyExtractor={(item, index) => `variation-${item.id || item.name}-${index}`}
+                  renderItem={({ item }) => {
+                    const isSelected = selectedVariation?.id === item.id;
+                    const isOriginalScan = item.isOriginalScan;
+                    
+                    // Get appropriate image URI 
+                    const imageUri = item.imageUris?.small || item.imageUrl || null;
+                    
+                    return (
+                      <TouchableOpacity
+                        style={[
+                          styles.variationItem,
+                          isSelected && styles.selectedVariation,
+                          isOriginalScan && styles.originalScanVariation
+                        ]}
+                        onPress={() => onVariationSelect && onVariationSelect(item)}
+                      >
+                        <View style={styles.variationImageWrapper}>
+                          <CardImage
+                            uri={imageUri}
+                            name={item.name}
+                            previewMode={false}
+                          />
+                          {isOriginalScan && (
+                            <View style={styles.originalScanBadge}>
+                              <Text style={styles.originalScanText}>Scan</Text>
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.variationDetails}>
+                          <Text style={styles.variationSetName} numberOfLines={1}>
+                            {item.setName || 'Unknown Set'}
+                          </Text>
+                          <Text style={styles.variationPrice}>
+                            ${item.prices?.usd ? parseFloat(item.prices.usd).toFixed(2) : '0.00'}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  }}
+                  style={styles.variationsList}
+                />
+              </View>
+              
+              {/* Always show the confirm button when variations are displayed */}
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity 
+                  style={[
+                    styles.confirmButton,
+                    !selectedVariation && styles.confirmButtonDisabled
+                  ]} 
+                  onPress={() => {
+                    if (onConfirmVariation && selectedVariation) {
+                      onConfirmVariation();
+                    }
+                  }}
+                  disabled={!selectedVariation}
+                >
+                  <Text style={styles.confirmButtonText}>
+                    {selectedVariation ? 'Confirm Selection' : 'Select a Card Version'}
+                  </Text>
                 </TouchableOpacity>
-              );
-            })}
-          </View>
+              </View>
+            </View>
+          )}
         </View>
       </>
     );
-  }, [scannedCards, totalPrice, handleCardPress]);
+  }, [
+    scannedCards, 
+    totalPrice, 
+    handleCardPress, 
+    isRecentCardsCollapsed, 
+    showingVariations, 
+    cardVariations, 
+    selectedVariation, 
+    onVariationSelect, 
+    onConfirmVariation,
+    toggleRecentCardsCollapse
+  ]);
 
   // Helper component for card images with error handling
   const CardImage = useCallback(({ uri, name, previewMode = false }: { uri: string | null, name: string, previewMode?: boolean }) => {
@@ -309,56 +446,44 @@ const CardScanner: React.FC<CardScannerProps> = ({
     };
     
     const handleError = (e: any) => {
-      console.log(`[CardScanner] Failed to load image for card: ${name} ${e.nativeEvent?.error || 'undefined'}`);
-      console.log(`[CardScanner] Failed image URI: ${uri}`);
-      setIsLoading(false);
       setHasError(true);
-      // Track the failure for retry management
+      setIsLoading(false);
+      console.error(`[CardImage] Error loading image for ${name}:`, e);
       if (uri) {
         handleImageLoadError(uri, name);
       }
     };
     
-    if (!isValidUri || hasError) {
-      // Show placeholder for missing or failed images
-      return (
-        <View style={previewMode ? styles.cardPreviewPlaceholder : styles.cardImagePlaceholder}>
-          <Text style={previewMode ? styles.cardPlaceholderText : styles.cardImagePlaceholderText}>
-            {name ? name.substring(0, 1).toUpperCase() : "?"}
-          </Text>
-          {!previewMode && (
-            <Text style={styles.noImageText}>No Image Available</Text>
-          )}
-        </View>
-      );
-    }
-    
+    // Default height and width for the image container
+    const containerStyle = previewMode
+      ? styles.imagePreviewContainer
+      : styles.imageFullContainer;
+        
+    const imageStyle = previewMode
+      ? styles.imagePreview
+      : styles.imageFull;
+      
     return (
-      <View style={previewMode ? {height: 80, width: '100%'} : {height: 336, width: 240}}>
-        <FastImage 
-          source={getImageSource(uri) || {
-            uri,
-            priority: FastImage.priority.high,
-            cache: FastImage.cacheControl.immutable,
-            headers: {
-              'User-Agent': 'MTGPriceApp/1.0',
-              'Accept': 'image/*,image/jpeg,image/png,image/avif',
-              'Cache-Control': 'max-age=31536000, immutable'
-            }
-          }}
-          style={previewMode ? styles.cardPreviewImage : styles.cardDetailImage} 
-          resizeMode={previewMode ? FastImage.resizeMode.cover : FastImage.resizeMode.contain}
-          onLoad={handleLoad}
-          onError={() => handleError({ nativeEvent: { error: 'FastImage error' } })}
-        />
-        {isLoading && (
-          <View style={[
-            previewMode ? styles.cardPreviewPlaceholder : styles.cardImagePlaceholder,
-            {position: 'absolute', top: 0, left: 0, right: 0, bottom: 0}
-          ]}>
-            <Text style={previewMode ? styles.cardPlaceholderText : styles.cardImagePlaceholderText}>
-              {name ? name.substring(0, 1).toUpperCase() : "?"}
-            </Text>
+      <View style={containerStyle}>
+        {isValidUri ? (
+          <>
+            <FastImage
+              source={{ uri, priority: FastImage.priority.high }}
+              style={imageStyle}
+              resizeMode={previewMode ? FastImage.resizeMode.cover : FastImage.resizeMode.contain}
+              onLoad={handleLoad}
+              onError={() => handleError('Image loading error')}
+            />
+            {isLoading && (
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="small" color="#fff" />
+              </View>
+            )}
+          </>
+        ) : (
+          <View style={[imageStyle, styles.placeholderContainer]}>
+            <Icon name="image-off" size={24} color="#777" />
+            <Text style={styles.placeholderText}>{name}</Text>
           </View>
         )}
       </View>
@@ -615,9 +740,20 @@ const CardScanner: React.FC<CardScannerProps> = ({
           isActive={isActive && !isPaused}
           type={useClassifier ? 'classifier' : 'ocr'}
         />
-        {isPaused && (
+        {isPaused && !showingVariations && (
           <View style={styles.pausedOverlay}>
             <Text style={styles.pausedText}>Camera Paused</Text>
+          </View>
+        )}
+        {isPaused && showingVariations && (
+          <View style={styles.pausedOverlayWithVariations}>
+            <Text style={styles.pausedText}>Please select a card version</Text>
+            <Icon 
+              name="arrow-down-bold" 
+              size={24} 
+              color="#fff" 
+              style={styles.pausedIcon}
+            />
           </View>
         )}
       </View>
@@ -634,14 +770,13 @@ const CardScanner: React.FC<CardScannerProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'black',
+    position: 'relative',
   },
   previewContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
+    position: 'relative',
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   text: {
     color: 'white',
@@ -695,12 +830,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    marginBottom: 8,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   recentCardsHeaderText: {
-    color: 'white',
-    fontSize: 14,
+    color: '#fff',
     fontWeight: 'bold',
+    fontSize: 16,
   },
   seeMoreText: {
     color: 'rgba(255, 255, 255, 0.7)',
@@ -722,7 +860,8 @@ const styles = StyleSheet.create({
   },
   cardPreviewImage: {
     width: '100%',
-    height: 80,
+    height: 110,
+    top:10,
     backgroundColor: '#333',
   },
   cardPreviewPlaceholder: {
@@ -758,12 +897,29 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
+    zIndex: 5,
+  },
+  pausedOverlayWithVariations: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 250,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 5,
   },
   pausedText: {
-    color: 'white',
-    fontSize: 24,
+    color: '#fff',
+    fontSize: 18,
     fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  pausedIcon: {
+    marginTop: 8,
+    opacity: 0.8,
   },
   
   // Modal styles
@@ -894,6 +1050,173 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#ccc',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  bottomContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    maxHeight: 375,
+    elevation: 20,
+    zIndex: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  collapseIcon: {
+    marginLeft: 8,
+  },
+  variationsContainer: {
+    padding: 12,
+    paddingBottom: 16,
+    display: 'flex',
+    flexDirection: 'column',
+    height: 'auto',
+  },
+  variationsListContainer: {
+    height: 220,
+  },
+  variationsList: {
+    flexGrow: 0,
+  },
+  buttonContainer: {
+    marginTop: 10,
+    paddingBottom: 10,
+    width: '100%',
+  },
+  variationItem: {
+    width: 140,
+    height: 245,
+    marginRight: 12,
+    backgroundColor: '#333',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+  },
+  selectedVariation: {
+    borderColor: '#4CAF50',
+  },
+  originalScanVariation: {
+    borderColor: '#2196F3',
+  },
+  variationImageWrapper: {
+    height: 195,
+    width: '100%',
+    position: 'relative',
+    backgroundColor: '#222',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  variationDetails: {
+    padding: 6,
+  },
+  variationSetName: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  variationPrice: {
+    color: '#4CAF50',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  originalScanBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#2196F3',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderBottomLeftRadius: 4,
+  },
+  originalScanText: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: 'bold',
+  },
+  confirmButton: {
+    backgroundColor: '#4CAF50',
+    padding: 16,
+    paddingVertical: 18,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 12,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+    height: 60,
+  },
+  confirmButtonDisabled: {
+    backgroundColor: '#757575',
+    opacity: 0.8,
+  },
+  confirmButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+    letterSpacing: 0.5,
+    textAlign: 'center',
+  },
+  imagePreviewContainer: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#333',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  imageFullContainer: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#333',
+    borderRadius: 4,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imagePreview: {
+    width: '100%',
+    height: '100%',
+  },
+  imageFull: {
+    width: '90%', // Slightly smaller to fit within container
+    height: '100%',
+    borderRadius: 4,
+  },
+  placeholderContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#222',
+  },
+  placeholderText: {
+    color: '#777',
+    fontSize: 14,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

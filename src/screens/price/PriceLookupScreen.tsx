@@ -494,8 +494,13 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 onError={handleScanError}
                 scannedCards={scannedCards}
                 totalPrice={totalPrice}
+                onCardPress={handleCardPress}
                 isPaused={isScanningPaused}
-                useClassifier={useClassifier}
+                useClassifier={isLorcanaScan}
+                cardVariations={showVersionSelector ? cardVersions : []}
+                onVariationSelect={setSelectedVersion}
+                selectedVariation={selectedVersion}
+                onConfirmVariation={handleVersionConfirm}
             />
             
             {/* Card Version Checker */}
@@ -662,6 +667,32 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         setSelectedVersion(selectedCard);
     };
 
+    // Effect to handle scanning pause state updates
+    useEffect(() => {
+        // When version selector is shown, make sure camera is paused
+        if (showVersionSelector) {
+            setIsScanningPaused(true);
+            // Show toast to let user know they need to select a version
+            if (Platform.OS === 'android' && cardVersions.length > 0) {
+                ToastAndroid.show('Please select a card version', ToastAndroid.SHORT);
+            }
+        }
+    }, [showVersionSelector, cardVersions]);
+
+    // Hide verification UI when variations are shown
+    useEffect(() => {
+        if (showVersionSelector && verificationStatus.isVerifying) {
+            // Reset verification status when showing versions
+            setVerificationStatus({
+                isVerifying: false,
+                card: null,
+                originalText: '',
+                verificationScore: 0,
+                isVerified: null
+            });
+        }
+    }, [showVersionSelector, verificationStatus.isVerifying]);
+
     const checkCardVersions = async (card: ExtendedCard) => {
         try {
             // Only check for versions for MTG cards
@@ -694,6 +725,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     }
                     
                     if (versions.length > 1) {
+                        Logger.debug(`Found ${versions.length} versions of card: ${card.name}`);
                         setCardVersions(versions);
                         setSelectedVersion(card); // Start with the original card selected
                         setIsScanningPaused(true);
@@ -729,59 +761,19 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         
         // Hide the selector and resume scanning
         setShowVersionSelector(false);
+        setCardVersions([]);
+        setSelectedVersion(null);
         setIsScanningPaused(false);
     };
 
-    const renderVersionSelectorModal = () => {
-        return (
-            <Modal
-                visible={showVersionSelector}
-                transparent={false}
-                onRequestClose={() => {
-                    setShowVersionSelector(false);
-                    setIsScanningPaused(false);
-                }}
-                animationType="slide"
-            >
-                <SafeAreaView style={styles.modalContainer}>
-                    <View style={styles.modalHeader}>
-                        <TouchableOpacity 
-                            onPress={() => {
-                                setShowVersionSelector(false);
-                                setIsScanningPaused(false);
-                            }} 
-                            style={styles.closeButton}
-                        >
-                            <Icon name="close" size={24} color="#fff" />
-                        </TouchableOpacity>
-                        <Text style={styles.modalTitle}>Select Card Version</Text>
-                    </View>
-                    
-                    {selectedVersion && (
-                        <View style={styles.versionSelectorContainer}>
-                            <Text style={styles.versionSelectorHelp}>
-                                We detected "{selectedVersion.name}". Please select the correct version from below.
-                            </Text>
-                            
-                            <VariationsTab 
-                                card={selectedVersion}
-                                onVersionChange={handleVersionChange}
-                                highlightOriginalScan={true}
-                                preloadedVariations={cardVersions} // Pass all versions to prevent reloading
-                            />
-                            
-                            <TouchableOpacity 
-                                style={styles.confirmButton}
-                                onPress={handleVersionConfirm}
-                            >
-                                <Text style={styles.confirmButtonText}>Confirm Selection</Text>
-                            </TouchableOpacity>
-                        </View>
-                    )}
-                </SafeAreaView>
-            </Modal>
-        );
-    };
+    // Clear versions when camera is deactivated
+    useEffect(() => {
+        if (!isCameraActive) {
+            setCardVersions([]);
+            setSelectedVersion(null);
+            setShowVersionSelector(false);
+        }
+    }, [isCameraActive]);
 
     return (
         <SafeAreaView style={styles.container}>
@@ -993,8 +985,6 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     }, 100);
                 }}
             />
-
-            {renderVersionSelectorModal()}
         </SafeAreaView>
     );
 };

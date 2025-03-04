@@ -184,6 +184,11 @@ export const CardProcessingService = {
       if (recentScans.has(recentScanKey)) {
         Logger.debug(`Ignoring duplicate scan: ${ocrText}`);
         
+        // Show popup for duplicate scan
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Card already scanned', ToastAndroid.SHORT);
+        }
+        
         // Reset verification status
         verificationEmitter.emit(EVENT_NAME, {
           isVerifying: false,
@@ -408,6 +413,11 @@ export const CardProcessingService = {
       
       if (recentScans.has(recentScanKey)) {
         Logger.debug(`Ignoring duplicate Lorcana scan: ${mainName}`);
+        
+        // Show popup for duplicate scan
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Card already scanned', ToastAndroid.SHORT);
+        }
         
         // Reset verification status
         verificationEmitter.emit(EVENT_NAME, {
