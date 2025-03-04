@@ -18,6 +18,9 @@ import {
   Alert,
   ActivityIndicator,
   FlatList,
+  Animated,
+  Switch,
+  BackHandler,
 } from 'react-native';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { ExtendedCard, OcrResult } from '../types/card';
@@ -281,7 +284,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
           
           {/* Recently scanned cards content */}
           {!isRecentCardsCollapsed && scannedCards && scannedCards.length > 0 && (
-            <View style={styles.cardsStrip}>
+            <ScrollView contentContainerStyle={styles.cardsStrip}>
               {recentCards.map((card, index) => {
                 // Get appropriate image URI using our helper function
                 let imageUri = null;
@@ -326,7 +329,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </ScrollView>
           )}
 
           {/* Variations selection */}
@@ -821,7 +824,7 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 5,
     backgroundColor: 'rgba(0, 0, 0, 0.75)',
-    paddingVertical: 12,
+    paddingVertical: 0,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.2)',
   },
@@ -847,21 +850,25 @@ const styles = StyleSheet.create({
   cardsStrip: {
     flexDirection: 'row',
     paddingHorizontal: 12,
-    paddingBottom: 8,
+    paddingBottom: 12,
+    paddingTop: 10,
+    flexWrap: 'wrap', // Enable wrapping to multiple rows if needed
+    justifyContent: 'flex-start', // Start from left
   },
   cardPreviewContainer: {
-    width: 110,
+    width: 120,
     marginHorizontal: 4,
+    marginBottom: 8,
     borderRadius: 8,
     overflow: 'hidden',
     backgroundColor: 'rgba(50, 50, 50, 0.8)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
+    height: 170,
   },
   cardPreviewImage: {
     width: '100%',
-    height: 110,
-    top:10,
+    height: 85,
     backgroundColor: '#333',
   },
   cardPreviewPlaceholder: {
@@ -877,17 +884,17 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   cardPreviewInfo: {
-    padding: 8,
+    padding: 6,
   },
   cardPreviewName: {
     color: 'white',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     marginBottom: 2,
   },
   cardPreviewPrice: {
     color: '#4FC3F7',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
   },
   
@@ -1059,13 +1066,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.95)',
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
-    maxHeight: 375,
+    maxHeight: '40%',
     elevation: 20,
     zIndex: 25,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+    overflow: 'hidden',
   },
   collapseIcon: {
     marginLeft: 8,

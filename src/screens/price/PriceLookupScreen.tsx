@@ -338,6 +338,9 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         const cardName = 'name' in card ? card.name : (card.Name || 'Unknown Card');
         Logger.debug(`Card selected: ${cardName}`);
         
+        // Pause camera scanning when a card is selected
+        setIsScanningPaused(true);
+        
         if ('Unique_ID' in card) {
             // Handle Lorcana card
             setSelectedCard(card as LorcanaCard);
@@ -457,6 +460,9 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleCardCollection = (card: any) => {
+        // Pause camera when long-pressing a card for collection management
+        setIsScanningPaused(true);
+        
         // Check if it's a Lorcana card or MTG card
         if ('Unique_ID' in card) {
             handleAddToLorcanaCollection(card as LorcanaCardType);
