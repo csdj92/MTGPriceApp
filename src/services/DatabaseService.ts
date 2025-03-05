@@ -7,6 +7,8 @@ import { InitialSchemaMigration } from '../database/migrations/001_InitialSchema
 import { DataMerger } from '../database/DataMerger';
 import { InteractionManager } from 'react-native';
 import { AllPrintingsJsonDatabase } from './database/AllPrintingsJsonDatabase';
+import { ToastAndroid } from 'react-native';
+import DatabaseInitializer from './DatabaseInitializer';
 
 SQLite.enablePromise(true);
 SQLite.DEBUG(false);
@@ -770,34 +772,26 @@ export default class DatabaseService {
     }
     //mtg.db get collections
     async getCollections(): Promise<Collection[]> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
-
-        console.time('getCollections');
         try {
-            // Use a single optimized query to get both collection info and total values in one go
-            const results = await this.db!.executeSql(`
-                SELECT 
-                    c.id,
-                    c.name,
-                    c.description,
-                    c.created_at,
-                    c.updated_at,
-                    COUNT(DISTINCT cc.card_uuid) as card_count,
-                    COALESCE(SUM(
-                        CASE 
-                            WHEN JSON_VALID(cache.card_data) 
-                            THEN CAST(JSON_EXTRACT(cache.card_data, '$.prices.usd') AS REAL)
-                            ELSE 0 
-                        END
-                    ), 0) as total_value
-                FROM collections c
-                LEFT JOIN collection_cards cc ON c.id = cc.collection_id
-                LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
-                GROUP BY c.id
-                ORDER BY c.updated_at DESC
-            `);
+            ToastAndroid.show('Getting collections from database...', ToastAndroid.SHORT);
+            
+            if (!this.db) {
+                ToastAndroid.show('Database not initialized, initializing now...', ToastAndroid.SHORT);
+                await DatabaseInitializer.initializeAllDatabases();
+                if (!this.db) {
+                    ToastAndroid.show('Failed to initialize database!', ToastAndroid.LONG);
+                    throw new Error('Database initialization failed');
+                }
+            }
+
+            const results = await this.db.executeSql(
+                'SELECT * FROM collections ORDER BY name'
+            );
+
+            if (!results || !results[0] || !results[0].rows) {
+                ToastAndroid.show('No results from database query', ToastAndroid.LONG);
+                return [];
+            }
 
             const collections: Collection[] = [];
             for (let i = 0; i < results[0].rows.length; i++) {
@@ -808,24 +802,17 @@ export default class DatabaseService {
                     description: row.description,
                     createdAt: row.created_at,
                     updatedAt: row.updated_at,
-                    totalValue: row.total_value || 0,
-                    cardCount: row.card_count || 0
+                    totalValue: parseFloat(row.total_value || '0'),
+                    cardCount: parseInt(row.card_count || '0', 10)
                 });
             }
 
-            console.log(`Loaded ${collections.length} collections`);
+            ToastAndroid.show(`Retrieved ${collections.length} collections`, ToastAndroid.SHORT);
             return collections;
         } catch (error) {
+            ToastAndroid.show(`Error in getCollections: ${error}`, ToastAndroid.LONG);
             console.error('Error getting collections:', error);
-            if (error instanceof Error) {
-                console.error('Error details:', {
-                    message: error.message,
-                    stack: error.stack
-                });
-            }
-            return [];
-        } finally {
-            console.timeEnd('getCollections');
+            throw error;
         }
     }
     //mtg.db save collection cache
@@ -936,11 +923,14 @@ export default class DatabaseService {
     //mtg.db get collection cards
     async getCollectionCards(collectionId: string, page = 1, pageSize = 20): Promise<ExtendedCard[]> {
         if (!this.db) {
+            ToastAndroid.show('Initializing database...', ToastAndroid.SHORT);
             await this.initDatabase();
         }
 
         try {
             const offset = (page - 1) * pageSize;
+            ToastAndroid.show(`Fetching cards: page ${page}, offset ${offset}`, ToastAndroid.SHORT);
+            
             const results = await this.db!.executeSql(
                 `SELECT cache.card_data
                  FROM collection_cards cc
@@ -955,11 +945,13 @@ export default class DatabaseService {
                 const row = results[0].rows.item(i);
                 cards.push(JSON.parse(row.card_data));
             }
-
+            
+            ToastAndroid.show(`Found ${cards.length} cards`, ToastAndroid.SHORT);
             return cards;
         } catch (error) {
+            ToastAndroid.show(`Error fetching cards: ${error}`, ToastAndroid.LONG);
             console.error('Error getting collection cards:', error);
-            return [];
+            throw error;
         }
     }
     //mtg.db add card to collection

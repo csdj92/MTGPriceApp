@@ -13,6 +13,7 @@ import ErrorBoundary from './src/components/ErrorBoundary';
 import DatabaseErrorScreen from './src/components/DatabaseErrorScreen';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import AppStartup from './src/services/AppStartup';
+import DatabaseInitializer from './src/services/DatabaseInitializer';
 
 const AppContent = () => {
   const [isInitialized, setIsInitialized] = useState(false);
@@ -36,6 +37,7 @@ const AppContent = () => {
         // Use AppStartup service to initialize all services including databases
         const appStartup = AppStartup.getInstance();
         await appStartup.initialize();
+        await DatabaseInitializer.initializeAllDatabases();
         
         // Preload cache
         await collectionCacheService.preloadCache();

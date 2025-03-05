@@ -434,6 +434,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         
         // Set the native module to Lorcana scan mode
         CameraService.setLorcanaScanMode(true);
+        setUseClassifier(false); // Use OCR instead of classifier for Lorcana cards
     };
 
     const handleClearLorcanaDB = async () => {
@@ -523,7 +524,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 totalPrice={totalPrice}
                 onCardPress={handleCardPress}
                 isPaused={isScanningPaused}
-                useClassifier={isLorcanaScan}
+                useClassifier={false}
                 cardVariations={showVersionSelector ? cardVersions : []}
                 onVariationSelect={setSelectedVersion}
                 selectedVariation={selectedVersion}

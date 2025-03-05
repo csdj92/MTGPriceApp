@@ -1,5 +1,6 @@
 import SQLite from 'react-native-sqlite-storage';
 import { DatabaseManager } from '../database/DatabaseManager';
+import DatabaseInitializer from '../DatabaseInitializer';
 
 // Define interfaces for price data
 export interface PriceData {
@@ -65,8 +66,8 @@ export class PriceService {
     /**
      * Create tables required for price data
      */
-    async createPriceTables(): Promise<void> {
-        const db = this.dbManager.getAppDatabase();
+      async createPriceTables(): Promise<void> {
+        const db = this.dbManager.getMTGJsonDatabase();
         if (!db) {
             throw new Error('Database not initialized');
         }
@@ -186,7 +187,7 @@ export class PriceService {
         batch: [string, PriceData][],
         timestamp: number
     ): Promise<void> {
-        const db = this.dbManager.getAppDatabase();
+        const db = this.dbManager.getMTGJsonDatabase();
         if (!db) {
             throw new Error('Database not initialized');
         }

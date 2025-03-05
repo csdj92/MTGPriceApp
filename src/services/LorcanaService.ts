@@ -280,7 +280,7 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
         // First try using Unique_ID if available (prioritize this for enchanted cards)
         const isEnchanted = card.Rarity === 'Enchanted';
         
-        if (card.Unique_ID) {
+        if (card.Unique_ID && isEnchanted) {
             const enchantedUrl = `https://api.lorcast.com/v0/cards/${card.Unique_ID}`;
             console.log(`[LorcanaService] Trying unique ID search: ${enchantedUrl}`);
             

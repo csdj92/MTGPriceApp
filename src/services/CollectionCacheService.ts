@@ -1,3 +1,4 @@
+import { ToastAndroid } from 'react-native';
 import { databaseService } from './DatabaseService';
 import type { Collection } from './DatabaseService';
 
@@ -34,10 +35,14 @@ export class CollectionCacheService {
         // Use cache if valid and not forcing refresh
         if (this.isCacheValid() && !forceRefresh) {
             console.log('[CollectionCacheService] Using cached collections data');
+            //show toast
+            ToastAndroid.show('Using cached collections data', ToastAndroid.SHORT);
             return this.collectionsCache!.collections;
         }
         
         console.log('[CollectionCacheService] Loading collections from database');
+        //show toast
+        ToastAndroid.show('Loading collections from database', ToastAndroid.SHORT);
         try {
             const loadedCollections = await databaseService.getCollections();
             

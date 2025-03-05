@@ -1,4 +1,3 @@
-import DatabaseInitializer from '../DatabaseInitializer';
 import SQLite from 'react-native-sqlite-storage';   
 import RNFS from 'react-native-fs';
 import { InteractionManager } from 'react-native';
@@ -6,8 +5,6 @@ import { DataMerger } from '../../database/DataMerger';
 import { MigrationManager } from '../../database/migrations/MigrationManager';
 import { SetInfo } from '../../types/database';
 import type { ExtendedCard } from '../../types/card';
-import DatabaseService, { databaseService } from '../DatabaseService';
-    
 
 export class AllPrintingsJsonDatabase {
     private static instance: AllPrintingsJsonDatabase;
@@ -51,6 +48,13 @@ export class AllPrintingsJsonDatabase {
 
         try {
             console.log('[AllPrintingsJsonDatabase] Initializing database connection');
+            
+            // Check if database exists
+            const exists = await this.databaseExists();
+            if (!exists) {
+                console.log('[AllPrintingsJsonDatabase] Database does not exist, downloading...');
+                await this.downloadMTGJsonDatabase();
+            }
             
             // Open database directly with correct configuration
             this.db = await SQLite.openDatabase({
@@ -135,7 +139,7 @@ export class AllPrintingsJsonDatabase {
             if (this.db) {
                 await this.db.executeSql('ROLLBACK');
             }
-            console.error('[DatabaseService] Error saving card rulings:', error);
+            console.error('[AllPrintingsJsonDatabase] Error saving card rulings:', error);
             throw error;
         }
     }
@@ -354,7 +358,7 @@ export class AllPrintingsJsonDatabase {
 
             return cards;
         } catch (error) {
-            console.error('[DatabaseService] Error getting cards by set:', {
+            console.error('[AllPrintingsJsonDatabase] Error getting cards by set:', {
                 message: error instanceof Error ? error.message : 'Unknown error',
                 stack: error instanceof Error ? error.stack : undefined,
                 setCode,
@@ -446,7 +450,7 @@ export class AllPrintingsJsonDatabase {
 
             return cards;
         } catch (error) {
-            console.error('[DatabaseService] Error getting most expensive cards:', {
+            console.error('[AllPrintingsJsonDatabase] Error getting most expensive cards:', {
                 message: error instanceof Error ? error.message : 'Unknown error',
                 stack: error instanceof Error ? error.stack : undefined,
                 pageSize,
@@ -510,7 +514,7 @@ export class AllPrintingsJsonDatabase {
 
             return sets;
         } catch (error) {
-            console.error('[DatabaseService] Error getting set list:', error);
+            console.error('[AllPrintingsJsonDatabase] Error getting set list:', error);
             // Return cached data even if expired in case of error
             if (this.setListCache) {
                 return this.setListCache;
@@ -519,131 +523,13 @@ export class AllPrintingsJsonDatabase {
         }
     }
 
-    // async getSetCollections(): Promise<(Collection & SetCollectionStats)[]> {
-    //     try {
-    //         console.log('[DatabaseService] Starting to get set collections...');
-
-    //         // Ensure main database is initialized
-    //         if (!this.db) {
-    //             console.log('[DatabaseService] Main database not initialized, initializing...');
-    //             await this.initDatabase();
-    //             if (!this.db) {
-    //                 throw new Error('Failed to initialize main database');
-    //             }
-    //         }
-
-    //         // Ensure MTGJson database is initialized
-    //         if (!this.db) {
-    //             console.log('[DatabaseService] MTGJson database not initialized, initializing...');
-    //             await this.initialize();
-    //             if (!this.db) {
-    //                 throw new Error('Failed to initialize MTGJson database');
-    //             }
-    //         }        
-
-    //         // Ensure cache is populated
-    //         await this.ensureCollectionCachePopulated();
-
-    //         console.log('[DatabaseService] Getting set-based collections...');
-    //         // Get all collections that are set-based (name starts with 'Set: ')
-    //         const [collections] = await this.db.executeSql(
-    //             `SELECT * FROM collections WHERE name LIKE 'Set: %' ORDER BY name`
-    //         );
-
-    //         console.log(`[DatabaseService] Found ${collections.rows.length} set collections`);
-
-    //         const setCollections: (Collection & SetCollectionStats)[] = [];
-
-    //         for (let i = 0; i < collections.rows.length; i++) {
-    //             const collection = collections.rows.item(i);
-                
-    //             // Extract set code from description which is in format "Collection for [setName] ([setCode])"
-    //             const setCodeMatch = collection.description?.match(/\(([^)]+)\)$/);
-    //             const setCode = setCodeMatch ? setCodeMatch[1] : '';
-
-    //             console.log(`[DatabaseService] Processing set collection: ${collection.name} (${setCode})`);
-
-    //             try {
-    //                 // Get total unique cards in set from MTGJson database, grouping by collector number
-    //                 const [totalResult] = await this.db!.executeSql(`
-    //                     WITH CardGroups AS (
-    //                         SELECT 
-    //                             number,
-    //                             MIN(CASE WHEN side = 'a' THEN uuid ELSE NULL END) as front_uuid,
-    //                             MIN(CASE WHEN side != 'a' OR side IS NULL THEN uuid ELSE NULL END) as back_uuid
-    //                         FROM cards 
-    //                         WHERE setCode = ?
-    //                         GROUP BY number
-    //                     )
-    //                     SELECT COUNT(*) as total 
-    //                     FROM CardGroups
-    //                 `, [setCode]);
-                    
-    //                 const totalCards = totalResult.rows.item(0).total;
-
-    //                 // Get collected cards count and total value
-    //                 const [collectedResult] = await this.db.executeSql(
-    //                     `SELECT 
-    //                         COUNT(*) as collected,
-    //                         SUM(CASE 
-    //                             WHEN JSON_VALID(cache.card_data) 
-    //                             THEN CAST(JSON_EXTRACT(cache.card_data, '$.prices.usd') AS REAL)
-    //                             ELSE 0 
-    //                         END) as total_value
-    //                     FROM collection_cards cc
-    //                     LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
-    //                     WHERE cc.collection_id = ?`,
-    //                     [collection.id]
-    //                 );
-    //                 const collectedCards = collectedResult.rows.item(0).collected;
-    //                 const totalValue = collectedResult.rows.item(0).total_value || 0;
-
-
-    //                 // Calculate completion percentage
-    //                 const completionPercentage = totalCards > 0 ? (collectedCards / totalCards) * 100 : 0;
-
-    //                 setCollections.push({
-    //                     ...collection,
-    //                     totalCards,
-    //                     collectedCards,
-    //                     completionPercentage,
-    //                     totalValue
-    //                 });
-    //             } catch (collectionError) {
-    //                 console.error(`[DatabaseService] Error processing collection ${collection.name}:`, collectionError);
-    //                 // Continue with next collection instead of failing completely
-    //                 setCollections.push({
-    //                     ...collection,
-    //                     totalCards: 0,
-    //                     collectedCards: 0,
-    //                     completionPercentage: 0,
-    //                     totalValue: 0
-    //                 });
-    //             }
-    //         }
-
-    //         console.log(`[DatabaseService] Successfully retrieved ${setCollections.length} set collections`);
-    //         return setCollections;
-    //     } catch (error) {
-    //         console.error('[DatabaseService] Error getting set collections:', error);
-    //         if (error instanceof Error) {
-    //             console.error('[DatabaseService] Error details:', {
-    //                 message: error.message,
-    //                 stack: error.stack
-    //             });
-    //         }
-    //         // Return empty array instead of throwing to prevent UI crashes
-    //         return [];
-    //     }
-    // }
-
     async reinitializePrices(): Promise<void> {
         try {
-            console.log('[DatabaseService] Starting price database reinitialization...');
+            console.log('[AllPrintingsJsonDatabase] Starting price database reinitialization...');
 
             // Ensure MTGJson database is initialized
             if (!this.db) {
-                console.log('[DatabaseService] MTGJson database not initialized, initializing...');
+                console.log('[AllPrintingsJsonDatabase] MTGJson database not initialized, initializing...');
                 await this.initialize();
                 if (!this.db) {
                     throw new Error('Failed to initialize MTGJson database');
@@ -653,24 +539,88 @@ export class AllPrintingsJsonDatabase {
             // Use the safe operation pattern
             try {
                 // Drop existing price-related tables
-                console.log('[DatabaseService] Dropping existing price tables...');
-                await this.safeMTGJsonOperation(async (db) => {
-                    await db.executeSql('DROP TABLE IF EXISTS price_history');
-                    await db.executeSql('DROP TABLE IF EXISTS prices');
-                    await db.executeSql('DROP TABLE IF EXISTS app_settings');
-                });
-
+               
                 // Recreate tables
-                console.log('[DatabaseService] Recreating price tables...');
+                console.log('[AllPrintingsJsonDatabase] Recreating price tables...');
                 await this.safeMTGJsonOperation(async (db) => {
                     // Use a transaction for the price tables creation
-                    await db.transaction(transaction => {
-                        DatabaseInitializer.createPriceTables(transaction);
+                    await db.transaction(async (tx) => {
+                        // Current prices table
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS current_prices (
+                                uuid TEXT PRIMARY KEY NOT NULL,
+                                normal_price REAL DEFAULT 0,
+                                foil_price REAL DEFAULT 0,
+                                tcg_normal_price REAL DEFAULT 0,
+                                tcg_foil_price REAL DEFAULT 0,
+                                cardmarket_normal_price REAL DEFAULT 0,
+                                cardmarket_foil_price REAL DEFAULT 0,
+                                cardkingdom_normal_price REAL DEFAULT 0,
+                                cardkingdom_foil_price REAL DEFAULT 0,
+                                cardsphere_normal_price REAL DEFAULT 0,
+                                cardsphere_foil_price REAL DEFAULT 0,
+                                cardhoarder_normal_price REAL DEFAULT 0,
+                                cardhoarder_foil_price REAL DEFAULT 0,
+                                last_updated INTEGER NOT NULL
+                            );
+                        `);
+
+                        // Price history table
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS price_history (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                uuid TEXT NOT NULL,
+                                timestamp INTEGER NOT NULL,
+                                normal_price REAL DEFAULT 0,
+                                foil_price REAL DEFAULT 0,
+                                tcg_normal_price REAL DEFAULT 0,
+                                tcg_foil_price REAL DEFAULT 0,
+                                cardmarket_normal_price REAL DEFAULT 0,
+                                cardmarket_foil_price REAL DEFAULT 0,
+                                cardkingdom_normal_price REAL DEFAULT 0,
+                                cardkingdom_foil_price REAL DEFAULT 0,
+                                cardsphere_normal_price REAL DEFAULT 0,
+                                cardsphere_foil_price REAL DEFAULT 0,
+                                cardhoarder_normal_price REAL DEFAULT 0,
+                                cardhoarder_foil_price REAL DEFAULT 0
+                            );
+                        `);
+
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS prices (
+                                uuid TEXT PRIMARY KEY NOT NULL,
+                                normal_price REAL DEFAULT 0,
+                                foil_price REAL DEFAULT 0,
+                                tcg_normal_price REAL DEFAULT 0,
+                                tcg_foil_price REAL DEFAULT 0,
+                                cardmarket_normal_price REAL DEFAULT 0,
+                                cardmarket_foil_price REAL DEFAULT 0,
+                                cardkingdom_normal_price REAL DEFAULT 0,
+                                cardkingdom_foil_price REAL DEFAULT 0,
+                                cardsphere_normal_price REAL DEFAULT 0,
+                                cardsphere_foil_price REAL DEFAULT 0,
+                                cardhoarder_normal_price REAL DEFAULT 0,
+                                cardhoarder_foil_price REAL DEFAULT 0,
+                                last_updated INTEGER NOT NULL
+                            );
+                        `);
+
+                        // Last price update timestamp table
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS price_update_timestamp (
+                                id INTEGER PRIMARY KEY CHECK (id = 1),
+                                last_update INTEGER NOT NULL
+                            );
+                        `);
+
+                        // Create indices for price tables
+                        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_uuid ON price_history(uuid);');
+                        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);');
                     });
                 });
             } catch (error) {
                 // If we get here, attempt recovery
-                console.error('[DatabaseService] Error during price reinitialization, attempting recovery:', error);
+                console.error('[AllPrintingsJsonDatabase] Error during price reinitialization, attempting recovery:', error);
                 // Try to reopen the database
                 await this.reopenMTGJsonDatabase();
                 
@@ -681,19 +631,70 @@ export class AllPrintingsJsonDatabase {
                     await db.executeSql('DROP TABLE IF EXISTS app_settings');
                 });
                 
-                // Use a transaction via DatabaseInitializer
+                // Use a transaction to recreate tables
                 await this.safeMTGJsonOperation(async (db) => {
-                    await db.transaction(transaction => {
-                        DatabaseInitializer.createPriceTables(transaction);
+                    await db.transaction(async (tx) => {
+                        // Current prices table
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS current_prices (
+                                uuid TEXT PRIMARY KEY NOT NULL,
+                                normal_price REAL DEFAULT 0,
+                                foil_price REAL DEFAULT 0,
+                                tcg_normal_price REAL DEFAULT 0,
+                                tcg_foil_price REAL DEFAULT 0,
+                                cardmarket_normal_price REAL DEFAULT 0,
+                                cardmarket_foil_price REAL DEFAULT 0,
+                                cardkingdom_normal_price REAL DEFAULT 0,
+                                cardkingdom_foil_price REAL DEFAULT 0,
+                                cardsphere_normal_price REAL DEFAULT 0,
+                                cardsphere_foil_price REAL DEFAULT 0,
+                                cardhoarder_normal_price REAL DEFAULT 0,
+                                cardhoarder_foil_price REAL DEFAULT 0,
+                                last_updated INTEGER NOT NULL
+                            );
+                        `);
+
+                        // Price history table
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS price_history (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                uuid TEXT NOT NULL,
+                                timestamp INTEGER NOT NULL,
+                                normal_price REAL DEFAULT 0,
+                                foil_price REAL DEFAULT 0,
+                                tcg_normal_price REAL DEFAULT 0,
+                                tcg_foil_price REAL DEFAULT 0,
+                                cardmarket_normal_price REAL DEFAULT 0,
+                                cardmarket_foil_price REAL DEFAULT 0,
+                                cardkingdom_normal_price REAL DEFAULT 0,
+                                cardkingdom_foil_price REAL DEFAULT 0,
+                                cardsphere_normal_price REAL DEFAULT 0,
+                                cardsphere_foil_price REAL DEFAULT 0,
+                                cardhoarder_normal_price REAL DEFAULT 0,
+                                cardhoarder_foil_price REAL DEFAULT 0
+                            );
+                        `);
+
+                        // Last price update timestamp table
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS price_update_timestamp (
+                                id INTEGER PRIMARY KEY CHECK (id = 1),
+                                last_update INTEGER NOT NULL
+                            );
+                        `);
+
+                        // Create indices for price tables
+                        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_uuid ON price_history(uuid);');
+                        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);');
                     });
                 });
             }
 
-            console.log('[DatabaseService] Price database successfully reinitialized');
+            console.log('[AllPrintingsJsonDatabase] Price database successfully reinitialized');
         } catch (error) {
-            console.error('[DatabaseService] Failed to reinitialize price database:', error);
+            console.error('[AllPrintingsJsonDatabase] Failed to reinitialize price database:', error);
             if (error instanceof Error) {
-                console.error('[DatabaseService] Error details:', {
+                console.error('[AllPrintingsJsonDatabase] Error details:', {
                     message: error.message,
                     stack: error.stack
                 });
@@ -702,11 +703,10 @@ export class AllPrintingsJsonDatabase {
         }
     }
 
-      
-async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
+    async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
         try {
             if (!this.db) {
-                console.error('[DatabaseService] Database not initialized');
+                console.log('[AllPrintingsJsonDatabase] Database not initialized');
                 return [];
             }
             
@@ -740,7 +740,7 @@ async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
                             resolve(foundCards);
                         },
                         (_, error) => {
-                            console.error(`[DatabaseService] Error fetching cards by name: ${error}`);
+                            console.error(`[AllPrintingsJsonDatabase] Error fetching cards by name: ${error}`);
                             reject(error);
                             return true;
                         }
@@ -841,7 +841,7 @@ async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
                 return extendedCard;
             });
         } catch (error) {
-            console.error(`[DatabaseService] Error getting card variants: ${error}`);
+            console.error(`[AllPrintingsJsonDatabase] Error getting card variants: ${error}`);
             return [];
         }
     }
@@ -885,34 +885,13 @@ async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
                 throw new Error('MTGJson database appears to be empty or corrupted');
             }
             
-            console.log('[DatabaseService] Successfully reopened MTGJson database');
+            console.log('[AllPrintingsJsonDatabase] Successfully reopened MTGJson database');
             return this.db;
         } catch (error) {
-            console.error('[DatabaseService] Error reopening MTGJson database:', error);
-            
-            // If we can't reopen, try to recover by redownloading
-            console.log('[DatabaseService] Attempting recovery by redownloading database...');
-            
-            // Delete corrupt database file if it exists
-            if (await RNFS.exists(mtgJsonPath)) {
-                try {
-                    await RNFS.unlink(mtgJsonPath);
-                    console.log('[DatabaseService] Deleted corrupt database file');
-                } catch (unlinkError) {
-                    console.error('[DatabaseService] Failed to delete corrupt database:', unlinkError);
-                }
-            }
-            
-            // Download a fresh copy
-            const dbService = new DatabaseService();
-            const success = await dbService.downloadMTGJsonDatabase();
-            if (!success || !this.db) {
-                throw new Error('Failed to recover MTGJson database');
-            }
-            
-            return this.db;
+            console.error('[AllPrintingsJsonDatabase] Error reopening MTGJson database:', error);
+            throw error;
         }
-    };  
+    }
 
     async safeMTGJsonOperation<T>(operation: (db: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
         try {
@@ -925,375 +904,13 @@ async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
             if (error instanceof Error && 
                 (error.message.includes('already-closed') || 
                  error.message.includes('attempt to re-open an already-closed object'))) {
-                console.log('[DatabaseService] Handling database closed error, reopening and retrying...');
+                console.log('[AllPrintingsJsonDatabase] Handling database closed error, reopening and retrying...');
                 this.db = await this.reopenMTGJsonDatabase();
                 return await operation(this.db);
             }
             throw error;
         }
     };
-
-    // async getSetMissingCards(setCode: string): Promise<ExtendedCard[]> {
-    //     if (!this.db) {
-    //         await this.initialize();
-    //         if (!this.db) {
-    //             console.error('[DatabaseService] Failed to initialize database');
-    //             return [];
-    //         }
-    //     }
-        
-    //     try {
-    //         // First get the collection ID for this set
-    //         let collectionId: string;
-             
-    //         // Try to find collection by set code first
-    //         const [codeResult] = await this.db.executeSql(
-    //             "SELECT id FROM collections WHERE name = ?",
-    //             [`Set: ${setCode}`]
-    //         );
-
-    //         if (codeResult.rows.length > 0) {
-    //             collectionId = codeResult.rows.item(0).id;
-    //         } else {
-    //             // Try to find by set name from MTGJson database
-    //             const setName = await this.safeMTGJsonOperation(async (db) => {
-    //                 const [setResult] = await db.executeSql(
-    //                     "SELECT name FROM sets WHERE code = ?",
-    //                     [setCode.toUpperCase()]
-    //                 );
-    //                 return setResult.rows.length > 0 ? setResult.rows.item(0).name : null;
-    //             });
-
-    //             if (setName) {
-    //                 const [nameResult] = await this.db.executeSql(
-    //                     "SELECT id FROM collections WHERE name = ?",
-    //                     [`Set: ${setName}`]
-    //                 );
-    //                 if (nameResult.rows.length === 0) {
-    //                     return [];
-    //                 }
-    //                 collectionId = nameResult.rows.item(0).id;
-    //             } else {
-    //                 return [];
-    //             }
-    //         }
-            
-    //         // Get cards from MTGJson database
-    //         const cards = await this.safeMTGJsonOperation(async (db) => {
-    //             // Get cards and prices from MTGJson database
-    //             const [results] = await db.executeSql(`
-    //                 SELECT 
-    //                     c.uuid,
-    //                     c.name,
-    //                     c.setCode,
-    //                     c.number,
-    //                     c.rarity,
-    //                     c.type,
-    //                     c.manaCost,
-    //                     c.text,
-    //                     c.side,
-    //                     s.name as setName,
-    //                     COALESCE(p.normal_price, 0) as normal_price,
-    //                     COALESCE(p.foil_price, 0) as foil_price,
-    //                     COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
-    //                     COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
-    //                     COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
-    //                     COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price,
-    //                     p.last_updated
-    //                 FROM cards c
-    //                 LEFT JOIN prices p ON c.uuid = p.uuid
-    //                 LEFT JOIN sets s ON c.setCode = s.code
-    //                 WHERE UPPER(c.setCode) = ?
-    //                 ORDER BY c.number ASC, c.side ASC
-    //             `, [setCode.toUpperCase()]);
-
-    //             if (!this.db) {
-    //                 throw new Error('Database connection lost during operation');
-    //             }
-
-    //             // Get collection data from main database for this specific collection
-    //             const [collectedCards] = await this.db.executeSql(`
-    //                 SELECT cc.card_uuid, cc.quantity 
-    //                 FROM collection_cards cc
-    //                 WHERE cc.collection_id = ?
-    //             `, [collectionId]);
-
-    //             // Create a Map of collected card UUIDs to their quantities for faster lookup
-    //             const collectedMap = new Map(
-    //                 Array.from({ length: collectedCards.rows.length }, 
-    //                     (_, i) => [collectedCards.rows.item(i).card_uuid, collectedCards.rows.item(i).quantity])
-    //             );
-
-    //             // Group cards by collector number to handle double-sided cards
-    //             const cardsByNumber = new Map<string, any>();
-                
-    //             results.rows.raw().forEach(card => {
-    //                 const existingCard = cardsByNumber.get(card.number);
-    //                 if (!existingCard || (card.side === 'a' && existingCard.side !== 'a')) {
-    //                     // Use side 'a' if available, otherwise use the first side we find
-    //                     cardsByNumber.set(card.number, card);
-    //                 }
-    //             });
-
-    //             // Map the results to ExtendedCard format
-    //             return Array.from(cardsByNumber.values()).map(card => {
-    //                 // Get the highest normal and foil prices
-    //                 const normalPrices = [
-    //                     card.normal_price,
-    //                     card.tcg_normal_price,
-    //                     card.cardmarket_normal_price
-    //                 ].filter(price => price !== null && price !== undefined && !isNaN(price));
-
-    //                 const foilPrices = [
-    //                     card.foil_price,
-    //                     card.tcg_foil_price,
-    //                     card.cardmarket_foil_price
-    //                 ].filter(price => price !== null && price !== undefined && !isNaN(price));
-
-    //                 const highestNormal = normalPrices.length > 0 ? Math.max(...normalPrices) : 0;
-    //                 const highestFoil = foilPrices.length > 0 ? Math.max(...foilPrices) : 0;
-
-    //                 const quantity = collectedMap.get(card.uuid) || 0;
-
-    //                 return {
-    //                     id: card.uuid,
-    //                     uuid: card.uuid,
-    //                     name: card.name,
-    //                     setCode: card.setCode,
-    //                     setName: card.setName,
-    //                     collectorNumber: card.number.replace(/[^a-zA-Z0-9]/g, ''), // Clean special characters
-    //                     type: card.type,
-    //                     manaCost: card.manaCost,
-    //                     text: card.text,
-    //                     rarity: card.rarity,
-    //                     imageUris: {
-    //                         small: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=small`,
-    //                         normal: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=normal`,
-    //                         large: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=large`,
-    //                         art_crop: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=art_crop`
-    //                     },
-    //                     prices: {
-    //                         usd: highestNormal > 0 ? highestNormal.toString() : null,
-    //                         usdFoil: highestFoil > 0 ? highestFoil.toString() : null,
-    //                         normal: highestNormal,
-    //                         foil: highestFoil,
-    //                         tcgplayer: {
-    //                             normal: parseFloat(card.tcg_normal_price) || 0,
-    //                             foil: parseFloat(card.tcg_foil_price) || 0
-    //                         },
-    //                         cardmarket: {
-    //                             normal: parseFloat(card.cardmarket_normal_price) || 0,
-    //                             foil: parseFloat(card.cardmarket_foil_price) || 0
-    //                         }
-    //                     },
-    //                     purchaseUrls: {},
-    //                     legalities: {},
-    //                     collected: quantity > 0,
-    //                     quantity: quantity,
-    //                     hasNonFoil: Boolean(card.normal_price || card.tcg_normal_price || card.cardmarket_normal_price),
-    //                     hasFoil: Boolean(card.foil_price || card.tcg_foil_price || card.cardmarket_foil_price),
-    //                     colorIdentity: [],
-    //                     keywords: [],
-    //                     cmc: 0,
-    //                     frameEffects: []
-    //                 };
-    //             });
-    //         });
-            
-    //         return cards;
-    //     } catch (error) {
-    //         console.error(`[DatabaseService] Error getting missing cards: ${error}`);
-    //         return [];
-    //     }
-    // }
-
-    // async getSetCardsForCollection(setCode: string, collectionId: string): Promise<ExtendedCard[]> {
-    //     if (!this.db) {
-    //         await this.initialize();
-    //         if (!this.db) {
-    //             console.error('[DatabaseService] Failed to initialize database');
-    //             return [];
-    //         }
-    //     }
-        
-    //     try {
-    //         // Get cards from MTGJson database
-    //         const cards = await this.safeMTGJsonOperation(async (db) => {
-    //             const [results] = await db.executeSql(`
-    //                 SELECT 
-    //                     c.uuid,
-    //                     c.name,
-    //                     c.setCode,
-    //                     c.number,
-    //                     c.rarity,
-    //                     c.type,
-    //                     c.manaCost,
-    //                     c.text,
-    //                     c.side,
-    //                     s.name as setName,
-    //                     COALESCE(p.normal_price, 0) as normal_price,
-    //                     COALESCE(p.foil_price, 0) as foil_price,
-    //                     COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
-    //                     COALESCE(p.tcg_foil_price, 0) as tcg_foil_price
-    //                 FROM cards c
-    //                 LEFT JOIN prices p ON c.uuid = p.uuid
-    //                 LEFT JOIN sets s ON c.setCode = s.code
-    //                 WHERE UPPER(c.setCode) = ?
-    //                 ORDER BY c.number ASC, c.side ASC
-    //             `, [setCode.toUpperCase()]);
-                
-    //             if (!this.db) {
-    //                 throw new Error('Database connection lost during operation');
-    //             }
-                
-    //             // Get collection cards
-    //             const mtgDb = await DatabaseInitializer.getDatabase('mtg');
-    //             const [collectionCards] = await mtgDb.executeSql(`
-    //                 SELECT card_uuid, quantity
-    //                 FROM collection_cards
-    //                 WHERE collection_id = ?
-    //             `, [collectionId]);
-                
-    //             // Create a map for quick lookup
-    //             const collectionMap = new Map();
-    //             for (let i = 0; i < collectionCards.rows.length; i++) {
-    //                 const item = collectionCards.rows.item(i);
-    //                 collectionMap.set(item.card_uuid, item.quantity);
-    //             }
-                
-    //             // Process the results
-    //             const cardsByNumber = new Map();
-    //             for (let i = 0; i < results.rows.length; i++) {
-    //                 const card = results.rows.item(i);
-    //                 // Prefer side 'a' cards
-    //                 if (!cardsByNumber.has(card.number) || 
-    //                     (card.side === 'a' && cardsByNumber.get(card.number).side !== 'a')) {
-    //                     cardsByNumber.set(card.number, card);
-    //                 }
-    //             }
-                
-    //             // Convert to ExtendedCard format
-    //             return Array.from(cardsByNumber.values()).map(card => {
-    //                 const quantity = collectionMap.get(card.uuid) || 0;
-    //                 const normalPrice = parseFloat(card.normal_price) || 
-    //                                    parseFloat(card.tcg_normal_price) || 0;
-    //                 const foilPrice = parseFloat(card.foil_price) || 
-    //                                  parseFloat(card.tcg_foil_price) || 0;
-                    
-    //                 return {
-    //                     id: card.uuid,
-    //                     uuid: card.uuid,
-    //                     name: card.name,
-    //                     setCode: card.setCode,
-    //                     setName: card.setName,
-    //                     collectorNumber: card.number,
-    //                     type: card.type,
-    //                     manaCost: card.manaCost,
-    //                     text: card.text,
-    //                     rarity: card.rarity,
-    //                     imageUris: {
-    //                         small: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=small`,
-    //                         normal: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=normal`,
-    //                         large: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=large`,
-    //                         art_crop: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=art_crop`
-    //                     },
-    //                     prices: {
-    //                         usd: normalPrice > 0 ? normalPrice.toString() : null,
-    //                         usdFoil: foilPrice > 0 ? foilPrice.toString() : null,
-    //                         normal: normalPrice,
-    //                         foil: foilPrice,
-    //                         tcgplayer: {
-    //                             normal: parseFloat(card.tcg_normal_price) || 0,
-    //                             foil: parseFloat(card.tcg_foil_price) || 0
-    //                         },
-    //                         cardmarket: {
-    //                             normal: 0,
-    //                             foil: 0
-    //                         }
-    //                     },
-    //                     purchaseUrls: {},
-    //                     legalities: {},
-    //                     collected: quantity > 0,
-    //                     quantity: quantity,
-    //                     hasNonFoil: Boolean(normalPrice > 0),
-    //                     hasFoil: Boolean(foilPrice > 0),
-    //                     colorIdentity: [],
-    //                     keywords: [],
-    //                     cmc: parseInt(card.manaCost) || 0,
-    //                     frameEffects: []
-    //                 };
-    //             });
-    //         });
-            
-    //         return cards;
-    //     } catch (error) {
-    //         console.error(`[DatabaseService] Error getting set cards for collection: ${error}`);
-    //         return [];
-    //     }
-    // }
-
-    // async getCardByUUID(uuid: string): Promise<ExtendedCard | null> {
-    //     return new Promise((resolve, reject) => {
-    //         this.db!.transaction(tx => {
-    //             tx.executeSql(
-    //                 'SELECT * FROM cards WHERE uuid = ?', 
-    //                 [uuid], 
-    //                 (_, result) => {
-    //                     const row = result.rows.raw()[0];
-    //                     if (!row) {
-    //                         resolve(null);
-    //                         return;
-    //                     }
-                        
-    //                     try {
-    //                         // Map the row data directly to ExtendedCard format
-    //                         const extendedCard: ExtendedCard = {
-    //                             id: row.uuid,
-    //                             uuid: row.uuid,
-    //                             name: row.name,
-    //                             setCode: row.setCode,
-    //                             setName: row.setName || '',
-    //                             collectorNumber: row.number,
-    //                             type: row.type,
-    //                             manaCost: row.manaCost,
-    //                             text: row.text,
-    //                             rarity: row.rarity,
-    //                             power: row.power || '',
-    //                             toughness: row.toughness || '',
-    //                             imageUris: {
-    //                                 small: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=small`,
-    //                                 normal: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=normal`,
-    //                                 large: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=large`,
-    //                                 art_crop: `https://api.scryfall.com/cards/${row.setCode.toLowerCase()}/${row.number}?format=image&version=art_crop`
-    //                             },
-    //                             prices: {
-    //                                 usd: null,
-    //                                 usdFoil: null
-    //                             },
-    //                             purchaseUrls: {},
-    //                             legalities: {},
-    //                             hasNonFoil: row.hasNonFoil === 1,
-    //                             hasFoil: row.hasFoil === 1,
-    //                             colorIdentity: [],
-    //                             keywords: [],
-    //                             cmc: 0,
-    //                             frameEffects: []
-    //                         };
-                            
-    //                         console.log('Mapped card:', extendedCard);
-    //                         resolve(extendedCard);
-    //                     } catch (e) {
-    //                         console.error('Error mapping card data:', e);
-    //                         resolve(null);
-    //                     }
-    //                 }, 
-    //                 (_, error) => reject(error)
-    //             );
-    //         });
-    //     });
-    // }
-
-    
 }
 
 export default AllPrintingsJsonDatabase;

@@ -25,6 +25,8 @@ import type { SetInfo } from '../../services/DatabaseService';
 import { downloadAndImportPriceData } from '../../utils/priceData';
 import { getCachedImageUri, ensureCacheDirectory } from '../../utils/imageCache';
 import AllPrintingsJsonDatabase from '../../services/database/AllPrintingsJsonDatabase';
+import { PriceService } from '../../services/price/PriceService';
+import { DatabaseManager } from '../../services/database/DatabaseManager';
 
 const WatchlistScreen = () => {
     const navigation = useNavigation();
@@ -160,9 +162,19 @@ const WatchlistScreen = () => {
                     // Try loading sets again
                     const retrySetList = await AllPrintingsJsonDatabase.getInstance().getSetList();
                     console.log('[WatchlistScreen] Retry loaded sets:', retrySetList.length);
-                    setSets(retrySetList.map(set => ({...set, cardCount: 0})));
+                    setSets(retrySetList.map(set => ({
+                        code: set.code,
+                        name: set.name,
+                        cardCount: set.totalCards || 0,
+                        highestPrice: 0
+                    })));
                 } else {
-                    setSets(setList.map(set => ({...set, cardCount: 0})));
+                    setSets(setList.map(set => ({
+                        code: set.code,
+                        name: set.name,
+                        cardCount: set.totalCards || 0,
+                        highestPrice: 0
+                    })));
                 }
             } catch (error) {
                 console.error('[WatchlistScreen] Error loading sets:', error);
@@ -433,6 +445,10 @@ const WatchlistScreen = () => {
             
             // Reinitialize database if needed
             await AllPrintingsJsonDatabase.getInstance().reinitializePrices();
+            const dbManager = new DatabaseManager();
+            await dbManager.initialize();
+            const priceService = new PriceService(dbManager);
+            await priceService.initialize();
             
             // Force the price data update
             const shouldUpdate = await databaseService.shouldUpdatePrices(true);

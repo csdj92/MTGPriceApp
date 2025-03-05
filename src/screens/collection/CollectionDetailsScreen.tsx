@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert, Platform, ToastAndroid} from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { databaseService } from '../../services/DatabaseService';
@@ -13,6 +13,7 @@ import type { ExtendedCard } from '../../types/card';
 import type { LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Collection } from '../../types/collection';
+import DatabaseInitializer from '../../services/DatabaseInitializer';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CollectionDetails'>;
@@ -33,37 +34,41 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     const loadCollection = useCallback(async () => {
         setIsLoading(true);
         try {
-            // First run diagnostics to check database state
-            // const diagnostics = await databaseService.diagnoseCollectionIssues()
-            //     .catch(error => {
-            //         console.error('[CollectionDetailsScreen] Error running diagnostics:', error);
-            //         return null;
-            //     });
-            
-            // if (diagnostics) {
-            //     console.log('[CollectionDetailsScreen] Database diagnostic results:', JSON.stringify(diagnostics, null, 2));
-                
-            //     // Alert if there are issues with the database
-            //     if (diagnostics.issues.length > 0) {
-            //         console.warn('[CollectionDetailsScreen] Database issues detected:', diagnostics.issues);
-            //     }
-                
-            //     // Check if the collection exists in the diagnostic data
-            //     const collectionExists = diagnostics.collectionsData.some(c => c.id === collectionId);
-            //     if (!collectionExists) {
-            //         console.error(`[CollectionDetailsScreen] Collection with ID ${collectionId} not found in database`);
-            //     }
-            // }
+            ToastAndroid.show('Starting to load collection...', ToastAndroid.SHORT);
+
+            // Check if databaseService is properly initialized
+            if (!databaseService) {
+                ToastAndroid.show('Database service is not initialized!', ToastAndroid.LONG);
+                throw new Error('Database service is not initialized');
+            }
+
+            // Ensure database is initialized
+            try {
+                await DatabaseInitializer.initializeAllDatabases();
+                ToastAndroid.show('Database initialized successfully', ToastAndroid.SHORT);
+            } catch (initError) {
+                ToastAndroid.show(`Database initialization failed: ${initError}`, ToastAndroid.LONG);
+                throw initError;
+            }
 
             // First try MTG collections
-            const mtgCollection = await databaseService.getCollections()
-                .then(collections => collections.find(c => c.id === collectionId))
-                .catch(error => {
-                    console.error('[CollectionDetailsScreen] Error getting MTG collections:', error);
-                    return null;
-                });
+            let collections;
+            try {
+                collections = await databaseService.getCollections();
+                if (!collections || !Array.isArray(collections)) {
+                    ToastAndroid.show('Got invalid collections data', ToastAndroid.LONG);
+                    throw new Error('Invalid collections data received');
+                }
+                ToastAndroid.show(`Found ${collections.length} collections`, ToastAndroid.SHORT);
+            } catch (error) {
+                ToastAndroid.show(`Failed to get collections: ${error}`, ToastAndroid.LONG);
+                throw error;
+            }
+
+            const mtgCollection = collections.find(c => c.id === collectionId);
 
             if (mtgCollection) {
+                ToastAndroid.show(`Found collection: ${mtgCollection.name}`, ToastAndroid.SHORT);
                 setCollection({
                     id: mtgCollection.id,
                     name: mtgCollection.name,
@@ -80,21 +85,26 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                 const setCodeMatch = mtgCollection.description?.match(/\(([^)]+)\)$/);
                 if (setCodeMatch && setCodeMatch[1]) {
                     const setCode = setCodeMatch[1];
+                    ToastAndroid.show(`Loading set cards for ${setCode}...`, ToastAndroid.SHORT);
                     try {
                         const allSetCards = await databaseService.getSetMissingCards(setCode)
                             .catch(error => {
+                                ToastAndroid.show(`Error getting set cards: ${error}`, ToastAndroid.LONG);
                                 console.error(`[CollectionDetailsScreen] Error getting set cards for ${setCode}:`, error);
                                 return [];
                             });
+                        ToastAndroid.show(`Loaded ${allSetCards.length} set cards`, ToastAndroid.SHORT);
                         setMtgCards(allSetCards);
                         setHasMore(false); // Disable pagination since we have all cards
                     } catch (error) {
+                        ToastAndroid.show(`Error processing set cards: ${error}`, ToastAndroid.LONG);
                         console.error(`[CollectionDetailsScreen] Error processing set cards for ${setCode}:`, error);
                         setMtgCards([]);
                         setHasMore(false);
                     }
                 }
             } else {
+                ToastAndroid.show('MTG collection not found, checking Lorcana...', ToastAndroid.SHORT);
                 // If not found in MTG collections, check Lorcana collections
                 try {
                     const lorcanaCollections = await getLorcanaSetCollections()

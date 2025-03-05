@@ -82,20 +82,14 @@ export const CardProcessingService = {
    */
   preprocessOcrText(text: string): string {
     if (!text) return '';
+
+    console.log('preprocessOcrText', text);
     
     // Standardize whitespace
     let cleaned = text.replace(/\s+/g, ' ').trim();
     
     // Replace common OCR errors
-    cleaned = cleaned
-      // Number/letter confusions
-      .replace(/0/g, 'O')
-      .replace(/1/g, 'l')
-      .replace(/5/g, 'S')
-      
-      // Remove trailing garbage characters and punctuation
-      .replace(/[^\w\s\-'\.]+$/, '')
-      
+    cleaned = cleaned      
       // Remove common OCR artifacts
       .replace(/\(CollectorNumber\)/i, '')
       .replace(/\(\d+\/\d+\)/, '') // Remove collector number notations like (123/456)
