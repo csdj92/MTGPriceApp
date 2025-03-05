@@ -21,6 +21,8 @@ import { useDebouncedCallback } from 'use-debounce';
 import { InteractionManager } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { CardDetailModal } from './CardDetail';
+import useThemedStyles from '../hooks/useThemedStyles';
+import type { Theme } from '../context/ThemeContext';
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<any>;
 interface MTGGridViewProps {
     cards: ExtendedCard[];
@@ -154,10 +156,13 @@ const handleFetchError = (error: unknown) => {
 };
 
 const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
+    const { theme } = useTheme();
+    const styles = useStyles();
+
     if (error) {
         return (
             <View style={styles.errorContainer}>
-                <Icon name="alert-circle" size={48} color="#ff4444" />
+                <Icon name="alert-circle" size={48} color={theme.error} />
                 <Text style={styles.errorText}>Error loading cards</Text>
                 <Button 
                     title="Retry" 
@@ -209,17 +214,18 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
     const CARD_HEIGHT = IMAGE_HEIGHT + INFO_HEIGHT_ESTIMATE + 8; // image + info + padding
 
     // Then define renderItem after CARD_WIDTH is declared
-    const renderItem = useCallback(
-        ({ item }: { item: ExtendedCard }) => (
-            <CardItem
+    const renderItem = useCallback(({ item, index }: { item: ExtendedCard; index: number }) => {
+        const cardWidth = (Dimensions.get('window').width - 16) / NUM_COLUMNS;
+        
+        return (
+            <CardItem 
                 item={item}
-                cardWidth={CARD_WIDTH}
+                cardWidth={cardWidth}
                 onPress={() => handleCardPress(item)}
                 onLongPress={() => handleLongPress(item)}
             />
-        ),
-        [handleCardPress, handleLongPress, CARD_WIDTH]
-    );
+        );
+    }, [handleCardPress, handleLongPress]);
 
     const handleVersionChange = (newVersion: ExtendedCard) => {
         if (props.onCardsUpdate) {
@@ -457,16 +463,58 @@ interface CardItemProps {
     onLongPress: () => void;
 }
 
+// Add skeleton loading component
+const SkeletonCard = () => {
+    const styles = useStyles();
+    const { width } = Dimensions.get('window');
+    const cardWidth = (width - 16) / NUM_COLUMNS; // Account for padding
+    const { theme } = useTheme();
+    
+    return (
+        <View style={[styles.cardContainer, styles.skeletonCard]}>
+            <View style={[
+                styles.skeletonImage, 
+                { 
+                    width: '100%',
+                    height: cardWidth / CARD_ASPECT_RATIO,
+                    aspectRatio: CARD_ASPECT_RATIO
+                }
+            ]}>
+                <View style={styles.skeletonImageShimmer} />
+            </View>
+            <View style={[styles.skeletonText, { marginTop: 4, width: '60%' as any }]} />
+            <View style={[styles.skeletonText, { width: '80%' as any }]} />
+        </View>
+    );
+};
+
+// Memoized Empty State Component
+const EmptyState = memo(() => {
+    const { theme } = useTheme();
+    const styles = useStyles();
+    
+    return (
+        <View style={styles.emptyContainer}>
+            <Icon name="cards-outline" size={64} color={theme.borderLight} />
+            <Text style={styles.emptyText}>No cards found</Text>
+        </View>
+    );
+});
+
+
+
+// CardItem component with proper styles access
 const CardItem = memo(({ item, cardWidth, onPress, onLongPress }: CardItemProps) => {
     const [isLoading, setIsLoading] = useState(true);
     const imageUri = item.imageUris?.normal || item.imageUrl;
     const hasCollectionStatus = !!item.quantity;
+    const styles = useStyles();
     
     const imageStyle = useMemo(() => [
         styles.cardImage, 
         { width: cardWidth, height: cardWidth / CARD_ASPECT_RATIO },
         !hasCollectionStatus && styles.cardImageUncollected
-    ], [cardWidth, hasCollectionStatus]);
+    ], [cardWidth, hasCollectionStatus, styles]);
 
     return (
         <TouchableOpacity 
@@ -510,16 +558,11 @@ const CardItem = memo(({ item, cardWidth, onPress, onLongPress }: CardItemProps)
     );
 });
 
-const getFormattedPrice = (price: number) => 
-    new Intl.NumberFormat('en-US', { 
-        style: 'currency', 
-        currency: 'USD', 
-        minimumFractionDigits: 2 
-    }).format(price);
-
+// CardInfo component with proper styles access
 const CardInfo = memo(({ item, hasCollectionStatus }: { item: ExtendedCard; hasCollectionStatus: boolean }) => {
     const normalPrice = useMemo(() => getBestPrice(item.prices, false).toFixed(2), [item.prices]);
     const foilPrice = useMemo(() => getBestPrice(item.prices, true).toFixed(2), [item.prices]);
+    const styles = useStyles();
 
     return (
         <View style={[styles.cardInfo, !hasCollectionStatus && styles.cardInfoUncollected]}>
@@ -543,6 +586,7 @@ const CardInfo = memo(({ item, hasCollectionStatus }: { item: ExtendedCard; hasC
     );
 });
 
+// FilterPanel component with proper styles access
 const FilterPanel = memo(({ visible, filters, onFilterChange }: { 
     visible: boolean; 
     filters: Filters; 
@@ -550,6 +594,7 @@ const FilterPanel = memo(({ visible, filters, onFilterChange }: {
 }) => {
     const [searchQuery, setSearchQuery] = useState(filters.search);
     const [showAdvanced, setShowAdvanced] = useState(false);
+    const styles = useStyles();
     
     const debouncedSearch = useDebouncedCallback((text: string) => {
         onFilterChange(prev => ({ ...prev, search: text }));
@@ -759,84 +804,76 @@ const transformCardRow = (row: CardRow): ExtendedCard => ({
     frameEffects: [],
 });
 
-// Memoized Empty State Component
-const EmptyState = memo(() => (
-    <View style={styles.emptyContainer}>
-        <Icon name="cards-outline" size={64} color="#e0e0e0" />
-        <Text style={styles.emptyText}>No cards found</Text>
-    </View>
-));
+const getFormattedPrice = (price: number) => 
+    new Intl.NumberFormat('en-US', { 
+        style: 'currency', 
+        currency: 'USD', 
+        minimumFractionDigits: 2 
+    }).format(price);
 
-// Add skeleton loading component
-const SkeletonCard = () => (
-    <View style={[styles.cardContainer, styles.skeletonCard]}>
-        <View style={[styles.cardImage, styles.skeletonImage]} />
-        <View style={styles.skeletonText} />
-        <View style={styles.skeletonText} />
-    </View>
-);
 
-const styles = StyleSheet.create({
+    // Style hook definition
+const useStyles = () => useThemedStyles((theme: Theme) => ({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
     },
     header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        flexDirection: 'row' as const,
+        justifyContent: 'space-between' as const,
+        alignItems: 'center' as const,
         padding: 8,
-        backgroundColor: 'white',
+        backgroundColor: theme.surface,
         borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        borderBottomColor: theme.border,
     },
     filterButtonContainer: {
-        alignItems: 'center',
+        alignItems: 'center' as const,
     },
     filterButton: {
-        flexDirection: 'column',
-        alignItems: 'center',
+        flexDirection: 'column' as const,
+        alignItems: 'center' as const,
         padding: 8,
         borderRadius: 4,
         gap: 2,
     },
     buttonText: {
         fontSize: 10,
-        color: '#2196F3',
+        color: theme.primary,
         marginTop: 2,
     },
     sortContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
         gap: 8,
     },
     sortButtonContainer: {
-        alignItems: 'center',
+        alignItems: 'center' as const,
     },
     sortButton: {
-        flexDirection: 'column',
-        alignItems: 'center',
+        flexDirection: 'column' as const,
+        alignItems: 'center' as const,
         padding: 8,
         borderRadius: 4,
         gap: 2,
     },
     sortButtonActive: {
-        backgroundColor: '#e3f2fd',
+        backgroundColor: theme.primary + '20', // 20% opacity primary color
     },
     sortButtonText: {
         fontSize: 10,
-        color: '#666',
+        color: theme.textSecondary,
         marginTop: 2,
     },
     sortButtonTextActive: {
-        color: '#2196F3',
-        fontWeight: '500',
+        color: theme.primary,
+        fontWeight: '500' as const,
     },
     filtersPanel: {
-        backgroundColor: 'white',
+        backgroundColor: theme.surface,
         padding: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        borderBottomColor: theme.border,
     },
     filtersPanelHidden: {
         display: 'none',
@@ -844,22 +881,24 @@ const styles = StyleSheet.create({
     searchInput: {
         height: 40,
         borderWidth: 1,
-        borderColor: '#e0e0e0',
+        borderColor: theme.border,
         borderRadius: 4,
         paddingHorizontal: 8,
         marginBottom: 16,
+        color: theme.text,
+        backgroundColor: theme.background,
     },
     filterSection: {
         marginBottom: 16,
     },
     filterTitle: {
         fontSize: 16,
-        fontWeight: '500',
+        fontWeight: '500' as const,
         marginBottom: 8,
     },
     filterOptions: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
+        flexDirection: 'row' as const,
+        flexWrap: 'wrap' as const,
         gap: 8,
     },
     filterChip: {
@@ -867,29 +906,29 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
         borderRadius: 16,
         borderWidth: 1,
-        borderColor: '#e0e0e0',
-        backgroundColor: 'white',
+        borderColor: theme.border,
+        backgroundColor: theme.surface,
     },
     filterChipSelected: {
-        backgroundColor: '#2196F3',
-        borderColor: '#2196F3',
+        backgroundColor: theme.primary,
+        borderColor: theme.primary,
     },
     filterChipText: {
-        color: '#666',
+        color: theme.textSecondary,
     },
     filterChipTextSelected: {
         color: 'white',
     },
     resetButton: {
-        alignSelf: 'center',
+        alignSelf: 'center' as const,
         paddingHorizontal: 16,
         paddingVertical: 8,
         borderRadius: 4,
-        backgroundColor: '#f44336',
+        backgroundColor: theme.error,
     },
     resetButtonText: {
         color: 'white',
-        fontWeight: '500',
+        fontWeight: '500' as const,
     },
     grid: {
         padding: 4,
@@ -898,36 +937,36 @@ const styles = StyleSheet.create({
     cardContainer: {
         flex: 1/NUM_COLUMNS,
         padding: 4,
-        height: '100%',
+        height: '100%' as any,
     },
     cardImageContainer: {
-        position: 'relative',
-        width: '100%',
+        position: 'relative' as any,
+        width: '100%' as any,
         aspectRatio: CARD_ASPECT_RATIO,
     },
     cardImage: {
-        width: '100%',
-        height: '100%',
+        width: '100%' as any,
+        height: '100%' as any,
         borderRadius: 8,
     },
     cardImageUncollected: {
         opacity: 0.5,
     },
     missingOverlay: {
-        position: 'absolute',
+        position: 'absolute' as any,
         top: 0,
         left: 0,
         right: 0,
         bottom: 0,
         backgroundColor: 'rgba(0, 0, 0, 0.3)',
         borderRadius: 8,
-        justifyContent: 'center',
-        alignItems: 'center',
+        justifyContent: 'center' as any,
+        alignItems: 'center' as any,
     },
     missingText: {
         color: 'white',
         fontSize: 12,
-        fontWeight: '500',
+        fontWeight: '500' as any,
         marginTop: 4,
     },
     cardInfo: {
@@ -938,34 +977,35 @@ const styles = StyleSheet.create({
     },
     cardNumber: {
         fontSize: 10,
-        color: '#666',
+        color: theme.textSecondary,
         marginBottom: 2,
     },
     cardName: {
         fontSize: 12,
-        fontWeight: '500',
+        fontWeight: '500' as const,
         marginBottom: 2,
+        color: theme.text,
     },
     cardNameUncollected: {
-        color: '#999',
+        color: theme.textTertiary,
     },
     cardPrice: {
         fontSize: 12,
-        color: '#666',
+        color: theme.textSecondary,
     },
     cardPriceUncollected: {
-        color: '#999',
+        color: theme.textTertiary,
     },
     modalContainer: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        justifyContent: 'center',
-        alignItems: 'center',
+        justifyContent: 'center' as const,
+        alignItems: 'center' as const,
     },
     modalContent: {
         width: '90%',
         maxHeight: '90%',
-        backgroundColor: 'white',
+        backgroundColor: theme.surface,
         borderRadius: 8,
         padding: 16,
     },
@@ -974,7 +1014,7 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     modalImage: {
-        width: '100%',
+        width: '100%' as any,
         aspectRatio: CARD_ASPECT_RATIO,
         borderRadius: 8,
     },
@@ -999,27 +1039,31 @@ const styles = StyleSheet.create({
     },
     modalTitle: {
         fontSize: 20,
-        fontWeight: 'bold',
+        fontWeight: 'bold' as const,
         marginBottom: 8,
+        color: theme.text,
     },
     modalText: {
         fontSize: 16,
         marginBottom: 8,
+        color: theme.text,
     },
     modalPrices: {
         marginTop: 16,
     },
     modalPriceTitle: {
         fontSize: 18,
-        fontWeight: 'bold',
+        fontWeight: 'bold' as const,
         marginBottom: 8,
+        color: theme.text,
     },
     modalPrice: {
         fontSize: 16,
         marginBottom: 4,
+        color: theme.text,
     },
     foilIndicator: {
-        position: 'absolute',
+        position: 'absolute' as any,
         top: 4,
         right: 4,
         backgroundColor: 'rgba(0, 0, 0, 0.6)',
@@ -1027,38 +1071,93 @@ const styles = StyleSheet.create({
         padding: 4,
     },
     priceContainer: {
-        flexDirection: 'column',
-        alignItems: 'flex-start',
+        flexDirection: 'column' as const,
+        alignItems: 'flex-start' as const,
         gap: 2,
     },
     foilPrice: {
         fontSize: 12,
-        color: '#666',
-        fontStyle: 'italic',
+        color: theme.textSecondary,
+        fontStyle: 'italic' as const,
     },
     modalHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        flexDirection: 'row' as const,
+        justifyContent: 'space-between' as const,
+        alignItems: 'center' as const,
         marginBottom: 8,
     },
     foilToggle: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'row' as const,
+        alignItems: 'center' as const,
         padding: 8,
         borderRadius: 4,
-        backgroundColor: '#f5f5f5',
+        backgroundColor: theme.background,
         gap: 4,
     },
     foilToggleActive: {
-        backgroundColor: '#2196F3',
+        backgroundColor: theme.primary,
     },
     foilToggleText: {
         fontSize: 14,
-        color: '#666',
+        color: theme.textSecondary,
     },
     foilToggleTextActive: {
         color: 'white',
+    },
+    // Add more themed styles here
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center' as const,
+        alignItems: 'center' as const,
+        padding: 20,
+        minHeight: 300,
+    },
+    emptyText: {
+        fontSize: 18,
+        color: theme.textSecondary,
+        marginTop: 16,
+    },
+    errorContainer: {
+        flex: 1,
+        justifyContent: 'center' as const,
+        alignItems: 'center' as const,
+        backgroundColor: theme.background,
+        padding: 20,
+    },
+    errorText: {
+        fontSize: 18,
+        color: theme.error,
+        marginVertical: 16,
+    },
+    skeletonCard: {
+        flex: 1,
+        padding: 4,
+        backgroundColor: 'transparent',
+    },
+    skeletonImage: {
+        width: '100%' as any,
+        borderRadius: 8,
+        backgroundColor: theme.borderLight,
+    },
+    skeletonImageShimmer: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: 8,
+        overflow: 'hidden' as 'hidden',
+    },
+    skeletonText: {
+        height: 12,
+        backgroundColor: theme.borderLight,
+        borderRadius: 4,
+        marginBottom: 4,
+        width: '80%' as any,
+        marginTop: 2,
+    },
+    imageLoadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center' as const,
+        alignItems: 'center' as const,
+        backgroundColor: 'rgba(0,0,0,0.1)',
     },
     versionOption: {
         padding: 12,
@@ -1108,69 +1207,23 @@ const styles = StyleSheet.create({
         color: 'white',
         fontWeight: 'bold',
     },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 20,
-        minHeight: 300,
-    },
-    emptyText: {
-        fontSize: 18,
-        color: '#9e9e9e',
-        marginTop: 16,
-    },
-    imageLoadingOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.1)',
-    },
-    errorContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 20,
-    },
-    errorText: {
-        fontSize: 18,
-        color: '#ff4444',
-        marginVertical: 16,
-    },
-    skeletonCard: {
-        flex: 1,
-        padding: 4,
-        backgroundColor: 'white',
-        borderRadius: 8,
-    },
-    skeletonImage: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 8,
-    },
-    skeletonText: {
-        height: 12,
-        backgroundColor: '#e0e0e0',
-        borderRadius: 4,
-        marginBottom: 4,
-    },
     advancedFilterButton: {
-        padding: 10,
-        backgroundColor: '#e3f2fd',
+        padding: 8,
+        backgroundColor: theme.primary,
         borderRadius: 4,
         marginVertical: 8,
-        alignItems: 'center',
+        alignItems: 'center' as any,
     },
     advancedFilterText: {
-        color: '#2196F3',
-        fontWeight: '500',
+        color: 'white',
+        fontWeight: '500' as any,
     },
     advancedFilters: {
         marginTop: 8,
     },
     priceRangeContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'row' as any,
+        alignItems: 'center' as any,
         gap: 8,
     },
     priceInput: {
@@ -1208,7 +1261,7 @@ const styles = StyleSheet.create({
     },
     rulingDate: {
         fontSize: 14,
-        fontWeight: 'bold',
+        fontWeight: 'bold' as const,
         color: '#666',
         marginBottom: 4,
     },
@@ -1229,8 +1282,8 @@ const styles = StyleSheet.create({
         marginRight: 12,
     },
     variationImage: {
-        width: '100%',
-        height: '100%',
+        width: '100%' as any,
+        height: '100%' as any,
         borderRadius: 4,
     },
     variationInfo: {
@@ -1239,7 +1292,7 @@ const styles = StyleSheet.create({
     },
     variationSetName: {
         fontSize: 16,
-        fontWeight: 'bold',
+        fontWeight: 'bold' as const,
         marginBottom: 4,
     },
     variationNumber: {
@@ -1249,7 +1302,7 @@ const styles = StyleSheet.create({
     variationRarity: {
         fontSize: 14,
         color: '#666',
-        textTransform: 'capitalize',
+        textTransform: 'capitalize' as any,
         marginBottom: 8,
     },
     variationPrices: {
@@ -1284,6 +1337,6 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginLeft: 6,
     },
-});
+}));
 
-export default MTGGridView; 
+export default MTGGridView;

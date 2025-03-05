@@ -327,14 +327,14 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         }
     };
 
-    if (isLoading) {
-        return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={theme.primary} />
-                <Text style={styles.loadingText}>Loading collections...</Text>
-            </View>
-        );
-    }
+    // if (isLoading) {
+    //     return (
+    //         <View style={styles.loadingContainer}>
+    //             <ActivityIndicator size="large" color={theme.primary} />
+    //             <Text style={styles.loadingText}>Loading collections...</Text>
+    //         </View>
+    //     );
+    // }
 
     return (
         <View style={styles.container}>

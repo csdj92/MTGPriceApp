@@ -61,6 +61,11 @@ export interface ExtendedCard {
         cardmarket?: string;
         cardhoarder?: string;
     };
+    purchase_uris?: {
+        tcgplayer?: string;
+        cardmarket?: string;
+        cardhoarder?: string;
+    };
     legalities: {
         [format: string]: string;
     };

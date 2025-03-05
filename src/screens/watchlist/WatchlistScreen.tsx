@@ -396,10 +396,23 @@ const WatchlistScreen = () => {
             key={set.code}
             style={styles.setItem}
             onPress={() => {
+                console.log(`[WatchlistScreen] Set selected: ${set.name} (${set.code})`);
+                setIsSetLoading(true);
                 setSelectedSet(set);
                 setIsSetModalVisible(false);
                 setSetSearchText('');
-                loadPriceData('');
+                
+                // Load data with error handling
+                loadPriceData('')
+                    .catch(error => {
+                        console.error('[WatchlistScreen] Error loading set data:', error);
+                        // Show empty state but don't clear the selected set
+                        setPriceData([]);
+                        setHasMore(false);
+                    })
+                    .finally(() => {
+                        setIsSetLoading(false);
+                    });
             }}
         >
             <Text style={styles.setItemText}>{set.name}</Text>

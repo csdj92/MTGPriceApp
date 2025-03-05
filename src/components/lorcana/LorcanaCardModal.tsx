@@ -4,6 +4,7 @@ import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
+import { useTheme } from '../../context/ThemeContext';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -28,6 +29,7 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
     onAddToCollection,
     onRemoveFromCollection
 }) => {
+    const { theme } = useTheme();
     if (!card) return null;
 
     return (
@@ -37,13 +39,13 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
             transparent={true}
             onRequestClose={onClose}
         >
-            <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
+            <View style={[styles.modalContainer, { backgroundColor: theme.background }]}>
+                <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
                     <ScrollView>
                         <View style={styles.modalImageContainer}>
                             <FastImage
                                 source={getImageSource(card.Image) || { uri: card.Image }}
-                                style={styles.modalImage}
+                                style={[styles.modalImage, { backgroundColor: theme.surface }]}
                                 resizeMode={FastImage.resizeMode.contain}
                                 onLoad={() => {
                                     handleImageLoadSuccess(card.Image, { 
@@ -57,22 +59,22 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                                 }}
                             />
                             <TouchableOpacity
-                                style={styles.modalCloseButton}
+                                style={[styles.modalCloseButton, { backgroundColor: 'rgba(0, 0, 0, 0.5)' }]}
                                 onPress={onClose}
                             >
-                                <Icon name="close" size={28} color="#666" />
+                                <Icon name="close" size={28} color={theme.text} />
                             </TouchableOpacity>
                         </View>
-                        <View style={styles.modalInfo}>
-                            <Text style={styles.modalTitle}>{card.Name}</Text>
-                            <Text style={styles.modalText}>Set: {card.Set_Name}</Text>
-                            <Text style={styles.modalText}>Number: {card.Card_Num}</Text>
-                            <Text style={styles.modalText}>Rarity: {card.Rarity}</Text>
-                            <Text style={styles.modalText}>Color: {card.Color}</Text>
-                            <Text style={styles.modalText}>Franchise: {card.Franchise || ''}</Text>
-                            <View style={styles.modalPrices}>
-                                <Text style={styles.modalPriceTitle}>Price:</Text>
-                                <Text style={styles.modalPrice}>
+                        <View style={[styles.modalInfo, { backgroundColor: theme.surface }]}>
+                            <Text style={[styles.modalTitle, { color: theme.text }]}>{card.Name}</Text>
+                            <Text style={[styles.modalText, { color: theme.text }]}>Set: {card.Set_Name}</Text>
+                            <Text style={[styles.modalText, { color: theme.text }]}>Number: {card.Card_Num}</Text>
+                            <Text style={[styles.modalText, { color: theme.text }]}>Rarity: {card.Rarity}</Text>
+                            <Text style={[styles.modalText, { color: theme.text }]}>Color: {card.Color}</Text>
+                            <Text style={[styles.modalText, { color: theme.text }]}>Franchise: {card.Franchise || ''}</Text>
+                            <View style={[styles.modalPrices, { backgroundColor: theme.surface }]}>
+                                <Text style={[styles.modalPriceTitle, { color: theme.text }]}>Price:</Text>
+                                <Text style={[styles.modalPrice, { color: theme.success || theme.primary }]}>
                                     ${card.prices?.usd ? Number(card.prices.usd).toFixed(2) : '0.00'}
                                 </Text>
                             </View>
@@ -82,19 +84,19 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                     {/* Collection management buttons */}
                     {!card.collected && onAddToCollection && (
                         <TouchableOpacity
-                            style={styles.addButton}
+                            style={[styles.addButton, { backgroundColor: theme.success || '#28a745' }]}
                             onPress={onAddToCollection}
                         >
-                            <Text style={styles.addButtonText}>Add to Collection</Text>
+                            <Text style={[styles.addButtonText, { color: '#ffffff' }]}>Add to Collection</Text>
                         </TouchableOpacity>
                     )}
 
                     {card.collected && onRemoveFromCollection && (
                         <TouchableOpacity
-                            style={styles.removeButton}
+                            style={[styles.removeButton, { backgroundColor: theme.error || '#dc3545' }]}
                             onPress={onRemoveFromCollection}
                         >
-                            <Text style={styles.removeButtonText}>Remove from Collection</Text>
+                            <Text style={[styles.removeButtonText, { color: '#ffffff' }]}>Remove from Collection</Text>
                         </TouchableOpacity>
                     )}                   
 
@@ -115,7 +117,6 @@ const styles = StyleSheet.create({
     modalContent: {
         width: '90%',
         maxHeight: '90%',
-        backgroundColor: 'white',
         borderRadius: 8,
         padding: 16,
     },
@@ -130,6 +131,7 @@ const styles = StyleSheet.create({
     },
     modalInfo: {
         padding: 16,
+        borderRadius: 8,
     },
     modalTitle: {
         fontSize: 20,
@@ -142,6 +144,8 @@ const styles = StyleSheet.create({
     },
     modalPrices: {
         marginTop: 16,
+        borderRadius: 8,
+        padding: 8,
     },
     modalPriceTitle: {
         fontSize: 18,
@@ -151,6 +155,7 @@ const styles = StyleSheet.create({
     modalPrice: {
         fontSize: 16,
         marginBottom: 4,
+        fontWeight: 'bold',
     },
     modalCloseButton: {
         position: 'absolute',
@@ -158,8 +163,6 @@ const styles = StyleSheet.create({
         right: 8,
         padding: 8,
         borderRadius: 20,
-        backgroundColor: 'rgba(255, 255, 255, 0.9)',
-        shadowColor: '#000',
         shadowOffset: {
             width: 0,
             height: 2,
@@ -171,29 +174,24 @@ const styles = StyleSheet.create({
     addButton: {
         marginTop: 16,
         padding: 12,
-        backgroundColor: '#4CAF50',
         borderRadius: 8,
         alignItems: 'center',
     },
     addButtonText: {
-        color: 'white',
         fontWeight: 'bold',
     },
     removeButton: {
         marginTop: 16,
         padding: 12,
-        backgroundColor: '#f44336',
         borderRadius: 8,
         alignItems: 'center',
     },
     removeButtonText: {
-        color: 'white',
         fontWeight: 'bold',
     },
     deleteButton: {
         marginTop: 16,
         padding: 12,
-        backgroundColor: '#f44336',
         borderRadius: 8,
         alignItems: 'center',
     },

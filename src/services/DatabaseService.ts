@@ -3177,6 +3177,42 @@ export default class DatabaseService {
             });
         });
     }
+
+    async getPurchaseLinks(cardId: string): Promise<{
+        tcgplayer: string | null;
+        cardmarket: string | null;
+        cardKingdom: string | null;
+        // Add other purchase links here as needed
+        
+    }> {
+        return new Promise((resolve, reject) => {
+            mtgJsonDb!.transaction(tx => {
+                tx.executeSql(
+                    'SELECT * FROM cardPurchaseUrls WHERE uuid = ?',
+                    [cardId],
+                    (_, result) => {
+                        const row = result.rows.raw()[0];
+                        if (!row) {
+                            resolve({
+                                tcgplayer: null,
+                                cardmarket: null,
+                                cardKingdom: null
+                            });
+                            return;
+                        }
+                        
+                        resolve({
+                            tcgplayer: row.tcgplayer,
+                            cardmarket: row.cardmarket,
+                            cardKingdom: row.cardKingdom
+                        });
+                    },
+                    (_, error) => reject(error)
+                );
+            });
+        });
+    }
+
     //mtg.db mark card as missing
     async markCardAsMissing(cardUuid: string, collectionId: string): Promise<void> {
         if (!cardUuid || !collectionId) {

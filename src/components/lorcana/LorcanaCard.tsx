@@ -4,6 +4,7 @@ import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
+import { useTheme } from '../../context/ThemeContext';
 
 // Fix the Icon type with a proper type assertion
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -19,7 +20,9 @@ interface LorcanaCardProps {
 }
 
 const LorcanaCard: React.FC<LorcanaCardProps> = ({ card, onPress, onLongPress }) => {
-    const isCollected = !!card.collected;
+    const { theme } = useTheme();
+    const isCollected = card.collected || false;
+    const cardImage = card.Image;
     // Create a stable image source with immutable caching
     const imageSource = card.Image ? {
         uri: card.Image,
@@ -31,31 +34,31 @@ const LorcanaCard: React.FC<LorcanaCardProps> = ({ card, onPress, onLongPress })
             style={styles.cardContainer}
             onPress={onPress}
             onLongPress={onLongPress}
+            activeOpacity={0.7}
         >
             <View style={styles.cardImageContainer}>
-                {imageSource ? (
+                {cardImage ? (
                     <FastImage
-                        source={imageSource}
+                        source={getImageSource(cardImage) || { uri: cardImage }}
                         style={[
-                            styles.cardImage,
+                            styles.cardImage, 
                             !isCollected && styles.cardImageUncollected
                         ]}
                         resizeMode={FastImage.resizeMode.contain}
-                        // Use a stable key based on unique ID
-                        key={`card-${card.Unique_ID}`}
                         onLoad={() => {
-                            handleImageLoadSuccess(card.Image, { 
+                            handleImageLoadSuccess(cardImage, { 
                                 name: card.Name, 
-                                id: card.Unique_ID 
+                                id: card.Unique_ID,
+                                context: 'card'
                             });
                         }}
                         onError={() => {
-                            handleImageLoadError(card.Image, card.Name);
+                            handleImageLoadError(cardImage, card.Name);
                         }}
                     />
                 ) : (
-                    <View style={[styles.cardImage, styles.placeholderImage]}>
-                        <Icon name="image-off" size={24} color="#666" />
+                    <View style={[styles.cardImage, styles.placeholderImage, { backgroundColor: theme.card || theme.surface }]}>
+                        <Icon name="image-off" size={24} color={theme.textSecondary} />
                     </View>
                 )}
                 {!isCollected && (
@@ -66,11 +69,24 @@ const LorcanaCard: React.FC<LorcanaCardProps> = ({ card, onPress, onLongPress })
                 )}
             </View>
             <View style={[styles.cardInfo, !isCollected && styles.cardInfoUncollected]}>
-                <Text style={styles.cardNumber}>#{card.Card_Num || '0'}</Text>
-                <Text style={[styles.cardName, !isCollected && styles.cardNameUncollected]} numberOfLines={1}>
+                <Text style={[styles.cardNumber, { color: theme.textSecondary }]}>#{card.Card_Num || '0'}</Text>
+                <Text 
+                    style={[
+                        styles.cardName, 
+                        { color: theme.text }, 
+                        !isCollected && [styles.cardNameUncollected, { color: theme.textTertiary }]
+                    ]} 
+                    numberOfLines={1}
+                >
                     {card.Name}
                 </Text>
-                <Text style={[styles.cardPrice, !isCollected && styles.cardPriceUncollected]}>
+                <Text 
+                    style={[
+                        styles.cardPrice, 
+                        { color: theme.success || theme.primary }, 
+                        !isCollected && [styles.cardPriceUncollected, { color: theme.textTertiary }]
+                    ]}
+                >
                     ${card.prices?.usd ? Number(card.prices.usd).toFixed(2) : '0.00'}
                 </Text>
             </View>
@@ -99,7 +115,6 @@ const styles = StyleSheet.create({
     placeholderImage: {
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#f5f5f5',
     },
     missingOverlay: {
         position: 'absolute',
@@ -126,7 +141,6 @@ const styles = StyleSheet.create({
     },
     cardNumber: {
         fontSize: 10,
-        color: '#666',
         marginBottom: 2,
     },
     cardName: {
@@ -135,14 +149,13 @@ const styles = StyleSheet.create({
         marginBottom: 2,
     },
     cardNameUncollected: {
-        color: '#999',
+        opacity: 0.6,
     },
     cardPrice: {
         fontSize: 12,
-        color: '#666',
     },
     cardPriceUncollected: {
-        color: '#999',
+        opacity: 0.6,
     },
 });
 

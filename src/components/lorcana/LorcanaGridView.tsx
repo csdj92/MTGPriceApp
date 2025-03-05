@@ -12,8 +12,8 @@ import { useLorcanaPrices } from '../../hooks/useLorcanaPrices';
 import { useLorcanaFilters } from '../../hooks/useLorcanaFilters';
 import SortHeader from '../shared/SortHeader';
 import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
-import FastImage from "@d11/react-native-fast-image";
-import { getDB, fetchCardVersionsByName } from '../../services/LorcanaService';
+import {  fetchCardVersionsByName } from '../../services/LorcanaService';
+import { useTheme } from '../../context/ThemeContext';
 
 // Fix Icon type with proper type assertion
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -39,6 +39,8 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     onDeleteCard,
     onCardsUpdate
 }) => {
+    const { theme } = useTheme();
+
     // State
     const [selectedCard, setSelectedCard] = useState<LorcanaCardWithPrice | null>(null);
     const [showFilters, setShowFilters] = useState(false);
@@ -177,30 +179,33 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
     if (isLoading) {
         return (
-            <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#2196F3" />
+            <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
+                <ActivityIndicator size="large" color={theme.primary} />
             </View>
         );
     }
 
     return (
-        <View style={styles.container}>
-            <View style={styles.statsContainer}>
+        <View style={[styles.container, { backgroundColor: theme.background }]}>
+            <View style={[styles.statsContainer, { 
+                backgroundColor: theme.surface,
+                borderBottomColor: theme.border || theme.surface 
+            }]}>
                 <View style={styles.statsRow}>
-                    <Text style={styles.statsText}>
-                        <Icon name="image-multiple" size={14} color="#2196F3" /> {cacheStats.totalSuccessfulImages} images cached
+                    <Text style={[styles.statsText, { color: theme.text }]}>
+                        <Icon name="image-multiple" size={14} color={theme.primary} /> {cacheStats.totalSuccessfulImages} images cached
                         {cacheStats.recentlySuccessfulImages > 0 && ` (${cacheStats.recentlySuccessfulImages} recent)`}
                     </Text>
-                    <TouchableOpacity 
-                        style={styles.cacheButton}
+                    <TouchableOpacity
+                        style={[styles.cacheButton, { backgroundColor: theme.card || theme.surface }]}
                         onPress={handleClearCache}
                         disabled={refreshingCache}
                     >
-                        <Icon 
-                            name={refreshingCache ? "refresh" : "cached"} 
-                            size={18} 
-                            color="#2196F3" 
-                        />
+                        {refreshingCache ? (
+                            <ActivityIndicator size="small" color={theme.primary} />
+                        ) : (
+                            <Icon name="cached" size={16} color={theme.primary} />
+                        )}
                     </TouchableOpacity>
                 </View>
             </View>
@@ -235,14 +240,16 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 updateCellsBatchingPeriod={50}
             />
 
-            <LorcanaCardModal
-                card={selectedCard}
-                visible={selectedCard !== null && !showVersionModal}
-                onClose={() => setSelectedCard(null)}
-                onDelete={handleDeleteCard}
-                onAddToCollection={!selectedCard?.collected ? handleAddToCollection : undefined}
-                onRemoveFromCollection={selectedCard?.collected ? handleDeleteCard : undefined}
-            />
+            {selectedCard && (
+                <LorcanaCardModal
+                    card={selectedCard}
+                    visible={selectedCard !== null && !showVersionModal}
+                    onClose={() => setSelectedCard(null)}
+                    onDelete={handleDeleteCard}
+                    onAddToCollection={!selectedCard.collected ? handleAddToCollection : undefined}
+                    onRemoveFromCollection={selectedCard.collected ? handleDeleteCard : undefined}
+                />
+            )}
 
             <LorcanaVersionModal
                 card={selectedCard}
@@ -260,7 +267,6 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
     },
     loadingContainer: {
         flex: 1,
@@ -272,9 +278,7 @@ const styles = StyleSheet.create({
     },
     statsContainer: {
         padding: 8,
-        backgroundColor: '#f8f8f8',
         borderBottomWidth: 1,
-        borderBottomColor: '#ddd',
     },
     statsRow: {
         flexDirection: 'row',
@@ -283,12 +287,10 @@ const styles = StyleSheet.create({
     },
     statsText: {
         fontSize: 12,
-        color: '#333',
     },
     cacheButton: {
         padding: 5,
         borderRadius: 15,
-        backgroundColor: '#f0f0f0',
     },
     // Modal styles
     modalContainer: {
@@ -300,7 +302,6 @@ const styles = StyleSheet.create({
     modalContent: {
         width: '90%',
         maxHeight: '90%',
-        backgroundColor: 'white',
         borderRadius: 8,
         padding: 16,
         position: 'relative',
@@ -320,7 +321,6 @@ const styles = StyleSheet.create({
     versionOption: {
         padding: 10,
         borderWidth: 1,
-        borderColor: '#ccc',
         borderRadius: 5,
         margin: 5,
         alignItems: 'center',
@@ -336,25 +336,21 @@ const styles = StyleSheet.create({
         borderRadius: 5,
     },
     addButton: {
-        backgroundColor: '#28a745',
         padding: 10,
         borderRadius: 5,
         margin: 10,
         alignItems: 'center',
     },
     addButtonText: {
-        color: 'white',
         fontWeight: 'bold',
     },
     removeButton: {
-        backgroundColor: '#dc3545',
         padding: 10,
         borderRadius: 5,
         margin: 10,
         alignItems: 'center',
     },
     removeButtonText: {
-        color: 'white',
         fontWeight: 'bold',
     },
 });

@@ -38,6 +38,14 @@ export const Logger = {
   },
   
   /**
+   * Database-related logging (critical for both dev and prod)
+   */
+  database: (message: string, ...args: any[]) => {
+    // Always log database errors regardless of environment
+    console.log(`[DATABASE] ${message}`, ...args);
+  },
+  
+  /**
    * Log method start/end for performance tracking (only in dev)
    */
   traceMethod: (methodName: string, callback: () => any) => {

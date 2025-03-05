@@ -1,5 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
+import { useTheme } from '../../context/ThemeContext';
+
 
 export interface Filters {
     search: string;
@@ -28,20 +30,21 @@ const LorcanaFilters: React.FC<LorcanaFiltersProps> = ({
     onReset,
     visible
 }) => {
+    const { theme } = useTheme();
     if (!visible) return null;
 
     return (
-        <View style={styles.filtersPanel}>
+        <View style={[styles.filtersPanel, { backgroundColor: theme.surface }]}>
             <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, { backgroundColor: theme.surface }]}
                 placeholder="Search cards..."
                 value={filters.search}
                 onChangeText={text => onFiltersChange({ ...filters, search: text })}
             />
             
-            <View style={styles.filterSection}>
-                <Text style={styles.filterTitle}>Collection Status</Text>
-                <View style={styles.filterOptions}>
+            <View style={[styles.filterSection, { backgroundColor: theme.surface }]}>
+                <Text style={[styles.filterTitle, { color: theme.text }]}>Collection Status</Text>
+                <View style={[styles.filterOptions, { backgroundColor: theme.surface }]}>
                     {(['all', 'collected', 'missing'] as const).map(status => (
                         <TouchableOpacity
                             key={status}
@@ -67,8 +70,8 @@ const LorcanaFilters: React.FC<LorcanaFiltersProps> = ({
             </View>
 
             <View style={styles.filterSection}>
-                <Text style={styles.filterTitle}>Rarity</Text>
-                <View style={styles.filterOptions}>
+                <Text style={[styles.filterTitle, { color: theme.text }]}>Rarity</Text>
+                <View style={[styles.filterOptions, { backgroundColor: theme.surface }]}>
                     {rarityOptions.map(rarity => (
                         <TouchableOpacity
                             key={rarity}
@@ -92,9 +95,9 @@ const LorcanaFilters: React.FC<LorcanaFiltersProps> = ({
                 </View>
             </View>
 
-            <View style={styles.filterSection}>
-                <Text style={styles.filterTitle}>Color</Text>
-                <View style={styles.filterOptions}>
+            <View style={[styles.filterSection, { backgroundColor: theme.surface }]}>
+                <Text style={[styles.filterTitle, { color: theme.text }]}>Color</Text>
+                <View style={[styles.filterOptions, { backgroundColor: theme.surface }]}>
                     {colorOptions.map(color => (
                         <TouchableOpacity
                             key={color}
@@ -119,10 +122,10 @@ const LorcanaFilters: React.FC<LorcanaFiltersProps> = ({
             </View>
 
             <TouchableOpacity
-                style={styles.resetButton}
+                style={[styles.resetButton, { backgroundColor: theme.surface }]}
                 onPress={onReset}
             >
-                <Text style={styles.resetButtonText}>Reset Filters</Text>
+                <Text style={[styles.resetButtonText, { color: theme.text }]}>Reset Filters</Text>
             </TouchableOpacity>
         </View>
     );

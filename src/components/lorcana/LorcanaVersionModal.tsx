@@ -4,6 +4,7 @@ import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
+import { useTheme } from '../../context/ThemeContext';
 
 // Fix Icon type with proper type assertion
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -31,6 +32,8 @@ const LorcanaVersionModal: React.FC<LorcanaVersionModalProps> = ({
     onAddToCollection,
     onRemoveFromCollection
 }) => {
+    const { theme } = useTheme();
+
     if (!card) return null;
 
     return (
@@ -41,16 +44,16 @@ const LorcanaVersionModal: React.FC<LorcanaVersionModalProps> = ({
             onRequestClose={onClose}
         >
             <View style={styles.modalContainer}>
-                <View style={styles.modalContent}>
-                    <Text style={styles.modalTitle}>Select Card Version</Text>
+                <View style={[styles.modalContent, { backgroundColor: theme.surface }]}>
+                    <Text style={[styles.modalTitle, { color: theme.text }]}>Select Card Version</Text>
                     <ScrollView>
                         {availableVersions.map(version => (
                             <TouchableOpacity
                                 key={version.Unique_ID}
-                                style={styles.versionOption}
+                                style={[styles.versionOption, { borderColor: theme.border || theme.surface }]}
                                 onPress={() => onVersionChange(version)}
                             >
-                                <Text style={styles.versionText}>{version.Name}</Text>
+                                <Text style={[styles.versionText, { color: theme.text }]}>{version.Name}</Text>
                                 {version.Image ? (
                                     <FastImage
                                         source={getImageSource(version.Image) || { 
@@ -74,8 +77,8 @@ const LorcanaVersionModal: React.FC<LorcanaVersionModalProps> = ({
                                         }}
                                     />
                                 ) : (
-                                    <View style={[styles.versionImage, {backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center'}]}>
-                                        <Icon name="image-off" size={24} color="#666" />
+                                    <View style={[styles.versionImage, { backgroundColor: theme.card || theme.surface, justifyContent: 'center', alignItems: 'center' }]}>
+                                        <Icon name="image-off" size={24} color={theme.textSecondary} />
                                     </View>
                                 )}
                             </TouchableOpacity>
@@ -84,19 +87,19 @@ const LorcanaVersionModal: React.FC<LorcanaVersionModalProps> = ({
                     {/* Only show the Add to Collection button if the card is not collected */}
                     {card && !card.collected && onAddToCollection && (
                         <TouchableOpacity
-                            style={styles.addButton}
+                            style={[styles.addButton, { backgroundColor: theme.success || '#28a745' }]}
                             onPress={onAddToCollection}
                         >
-                            <Text style={styles.addButtonText}>Add to Collection</Text>
+                            <Text style={[styles.addButtonText, { color: '#ffffff' }]}>Add to Collection</Text>
                         </TouchableOpacity>
                     )}
                     {/* Show a Remove from Collection button if the card is already collected */}
                     {card && card.collected && onRemoveFromCollection && (
                         <TouchableOpacity
-                            style={styles.removeButton}
+                            style={[styles.removeButton, { backgroundColor: theme.error || '#dc3545' }]}
                             onPress={onRemoveFromCollection}
                         >
-                            <Text style={styles.removeButtonText}>Remove from Collection</Text>
+                            <Text style={[styles.removeButtonText, { color: '#ffffff' }]}>Remove from Collection</Text>
                         </TouchableOpacity>
                     )}
                    
