@@ -34,26 +34,26 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         setIsLoading(true);
         try {
             // First run diagnostics to check database state
-            const diagnostics = await databaseService.diagnoseCollectionIssues()
-                .catch(error => {
-                    console.error('[CollectionDetailsScreen] Error running diagnostics:', error);
-                    return null;
-                });
+            // const diagnostics = await databaseService.diagnoseCollectionIssues()
+            //     .catch(error => {
+            //         console.error('[CollectionDetailsScreen] Error running diagnostics:', error);
+            //         return null;
+            //     });
             
-            if (diagnostics) {
-                console.log('[CollectionDetailsScreen] Database diagnostic results:', JSON.stringify(diagnostics, null, 2));
+            // if (diagnostics) {
+            //     console.log('[CollectionDetailsScreen] Database diagnostic results:', JSON.stringify(diagnostics, null, 2));
                 
-                // Alert if there are issues with the database
-                if (diagnostics.issues.length > 0) {
-                    console.warn('[CollectionDetailsScreen] Database issues detected:', diagnostics.issues);
-                }
+            //     // Alert if there are issues with the database
+            //     if (diagnostics.issues.length > 0) {
+            //         console.warn('[CollectionDetailsScreen] Database issues detected:', diagnostics.issues);
+            //     }
                 
-                // Check if the collection exists in the diagnostic data
-                const collectionExists = diagnostics.collectionsData.some(c => c.id === collectionId);
-                if (!collectionExists) {
-                    console.error(`[CollectionDetailsScreen] Collection with ID ${collectionId} not found in database`);
-                }
-            }
+            //     // Check if the collection exists in the diagnostic data
+            //     const collectionExists = diagnostics.collectionsData.some(c => c.id === collectionId);
+            //     if (!collectionExists) {
+            //         console.error(`[CollectionDetailsScreen] Collection with ID ${collectionId} not found in database`);
+            //     }
+            // }
 
             // First try MTG collections
             const mtgCollection = await databaseService.getCollections()

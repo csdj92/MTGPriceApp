@@ -15,6 +15,7 @@ const Icon = MaterialCommunityIcons as any;
 import { databaseService } from '../../services/DatabaseService';
 import { fixCardNames } from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
+import { downloadAndImportPriceData } from '../../utils/priceData';
 
 
 interface SettingsSectionProps {
@@ -112,31 +113,43 @@ const SettingsScreen = () => {
     const handleRebuildDatabase = async () => {
         Alert.alert(
             'Rebuild Database',
-            'Are you sure you want to rebuild the MTG database? This will download the latest data from MTGJson. This process may take several minutes.',
+            'Are you sure you want to rebuild the MTG database? This will download the latest data from MTGJson and update prices. This process may take several minutes.',
             [
-                {
-                    text: 'Cancel',
-                    style: 'cancel',
-                },
+                { text: 'Cancel', style: 'cancel' },
                 {
                     text: 'Rebuild',
                     style: 'destructive',
                     onPress: () => {
-                        // Set rebuilding state immediately to show the UI indicator
                         setIsRebuilding(true);
-
-                        // Use InteractionManager to ensure UI updates before starting heavy work
                         InteractionManager.runAfterInteractions(async () => {
                             try {
-                                // Run the database operations on a separate JS thread
-                                await databaseService.downloadMTGJsonDatabase();
-                                await databaseService.updatePrices({});
-                                
-                                // Show success alert after operations complete
+                                // Step 1: Download MTGJson Database
+                                const downloadSuccess = await databaseService.downloadMTGJsonDatabase();
+                                if (!downloadSuccess) {
+                                    throw new Error('Failed to download MTGJson database.');
+                                }
+
+                                // Step 2: Initialize Database Structure
+                                await databaseService.initDatabase();
+
+                                // Step 3: Force Price Data Update
+                                const shouldUpdate = await databaseService.shouldUpdatePrices(true);
+                                if (shouldUpdate) {
+                                    await downloadAndImportPriceData((progress: number) => {
+                                        console.log(`Price data download progress: ${progress}%`);
+                                    }, true);
+                                }
+
+                                // Step 4: Verify Database Integrity
+                                const integrityCheck = await databaseService.verifyPriceDataIntegrity();
+                                if (!integrityCheck.isValid) {
+                                    throw new Error('Database integrity check failed.');
+                                }
+
                                 Alert.alert('Success', 'Database has been rebuilt successfully.');
-                            } catch (error) {
+                            } catch (error: any) {
                                 console.error('Error rebuilding database:', error);
-                                Alert.alert('Error', 'Failed to rebuild database. Please try again.');
+                                Alert.alert('Error', error.message || 'Failed to rebuild database. Please try again.');
                             } finally {
                                 setIsRebuilding(false);
                             }

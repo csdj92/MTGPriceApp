@@ -80,7 +80,7 @@ export class DatabaseManager {
      * Ensure the MTGJson database exists or create it
      */
     async ensureMTGJsonDatabaseExists(): Promise<void> {
-        const mtgJsonPath = '/data/data/com.mtgpriceapp/files/AllPrintings.sqlite';
+        const mtgJsonPath = '/data/data/com.mtgpriceapp/databases/AllPrintings.sqlite';
         
         try {
             // Check if the file exists

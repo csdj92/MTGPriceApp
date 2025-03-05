@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { databaseService } from './src/services/DatabaseService';
+import DatabaseService from './src/services/DatabaseService';
 import AppNavigator from './src/navigation/AppNavigator';
 import LoadingScreen from './src/components/LoadingScreen';
 import 'react-native-reanimated';
@@ -12,9 +12,10 @@ import FastImage from "@d11/react-native-fast-image";
 import ErrorBoundary from './src/components/ErrorBoundary';
 import DatabaseErrorScreen from './src/components/DatabaseErrorScreen';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
+import AppStartup from './src/services/AppStartup';
 
 const AppContent = () => {
-  const [isDbInitialized, setIsDbInitialized] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { theme } = useTheme();
@@ -31,13 +32,15 @@ const AppContent = () => {
     const initializeApp = async () => {
       try {
         setIsLoading(true);
-        // Initialize database
-        await databaseService.initializeAllDatabases();
+        
+        // Use AppStartup service to initialize all services including databases
+        const appStartup = AppStartup.getInstance();
+        await appStartup.initialize();
         
         // Preload cache
         await collectionCacheService.preloadCache();
         
-        setIsDbInitialized(true);
+        setIsInitialized(true);
       } catch (error) {
         console.error('Failed to initialize app:', error);
         setInitError(error instanceof Error ? error : new Error('Unknown initialization error'));
@@ -49,14 +52,10 @@ const AppContent = () => {
     initializeApp();
   }, []);
 
-  if (isLoading) {
-    return <LoadingScreen message="Initializing database..." />;
-  }
-
   if (initError) {
     return (
       <LoadingScreen 
-        message="Database initialization failed" 
+        message="Application initialization failed" 
         error={initError.message}
       />
     );

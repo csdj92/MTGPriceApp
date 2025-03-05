@@ -2,6 +2,7 @@ import { openDatabase, SQLiteDatabase, enablePromise } from 'react-native-sqlite
 import RNFS from 'react-native-fs'
 import { updateAllImageUrlsInDatabase } from '../utils/imageUtils'
 import { LorcanaCard, LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../types/lorcana'
+import DatabaseInitializer from './DatabaseInitializer'
 
 // Enable promise support for SQLite
 enablePromise(true)
@@ -21,98 +22,77 @@ const handleError = (message: string, error: any) => {
 
 // Export getDB function
 export const getDB = async () => {
-    if (dbInstance) return dbInstance;
-
     try {
-        dbInstance = await openDatabase({
-            name: 'lorcana.db',
-            location: 'default',
-            createFromLocation: 2
-        });
-
-        await dbInstance.executeSql('PRAGMA foreign_keys = ON;');
-        await dbInstance.executeSql('PRAGMA journal_mode = WAL;');
-
-        return dbInstance;
+        return await DatabaseInitializer.getDatabase('lorcana');
     } catch (error) {
-        return handleError('Database initialization failed', error);
+        console.error('[LorcanaService] Error getting database:', error);
+        throw error;
     }
 };
 
 const verifyAndRepairDatabase = async () => {
-    const db = await getDB();
-    
-    // Check if tables exist instead of dropping them
-    const [tablesResult] = await db.executeSql(`
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND (
-            name='lorcana_cards' OR 
-            name='lorcana_collections' OR 
-            name='lorcana_collection_cards'
-        )
-    `);
-    
-    const existingTables = new Set<string>();
-    for (let i = 0; i < tablesResult.rows.length; i++) {
-        existingTables.add(tablesResult.rows.item(i).name);
+    console.log('[LorcanaService] Starting database verification...');
+    try {
+        const db = await getDB();
+        console.log('[LorcanaService] Got database connection for verification');
+        
+        // Check if tables exist instead of dropping them
+        console.log('[LorcanaService] Checking existing tables...');
+        const [tablesResult] = await db.executeSql(`
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND (
+                name='lorcana_cards' OR 
+                name='lorcana_collections' OR 
+                name='lorcana_collection_cards'
+            )
+        `);
+        
+        const existingTables = new Set<string>();
+        for (let i = 0; i < tablesResult.rows.length; i++) {
+            existingTables.add(tablesResult.rows.item(i).name);
+        }
+        
+        console.log(`[LorcanaService] Found ${existingTables.size} Lorcana database tables:`, Array.from(existingTables));
+        
+        // Only recreate tables if needed
+        console.log('[LorcanaService] Ensuring tables are created...');
+        await ensureTablesCreated();
+        console.log('[LorcanaService] Tables verified/created successfully');
+        
+        // Update image URLs
+        console.log('[LorcanaService] Updating image URLs...');
+        await updateLorcanaImageUrls();
+        console.log('[LorcanaService] Image URLs updated successfully');
+    } catch (error) {
+        console.error('[LorcanaService] Error in verifyAndRepairDatabase:', error);
+        if (error instanceof Error) {
+            console.error('[LorcanaService] Error details:', {
+                message: error.message,
+                stack: error.stack,
+                name: error.name
+            });
+        }
+        throw error;
     }
-    
-    console.log(`[LorcanaService] Found ${existingTables.size} Lorcana database tables`);
-    
-    // Only recreate tables if needed
-    await ensureTablesCreated();
-    
-    // Update image URLs
-    await updateLorcanaImageUrls();
 };
 
 const ensureTablesCreated = async () => {
-    const db = await getDB();
-
-    await db.transaction(async (tx) => {
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_cards (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            Artist TEXT, Body_Text TEXT, Card_Num INTEGER, Classifications TEXT,
-            Color TEXT, Cost INTEGER, Date_Added TEXT, Date_Modified TEXT,
-            Flavor_Text TEXT, Franchise TEXT, Image TEXT, Inkable INTEGER,
-            Lore INTEGER, Name TEXT, Rarity TEXT, Set_ID TEXT, Set_Name TEXT,
-            Set_Num INTEGER, Strength INTEGER, Type TEXT, Unique_ID TEXT UNIQUE,
-            Willpower INTEGER, price_usd TEXT, price_usd_foil TEXT,
-            last_updated TEXT, collected INTEGER DEFAULT 0
-        );`);
-
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_name ON lorcana_cards(Name);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_unique_id ON lorcana_cards(Unique_ID);');
-
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collections (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );`);
-
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collection_cards (
-            collection_id TEXT NOT NULL,
-            card_id TEXT NOT NULL,
-            added_at TEXT NOT NULL,
-            PRIMARY KEY (collection_id, card_id),
-            FOREIGN KEY (collection_id) REFERENCES lorcana_collections(id) ON DELETE CASCADE,
-            FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
-        );`);
-
-        // Create the lorcana_card_prices table that's referenced in getLorcanaCollectionCards
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_card_prices (
-            card_id TEXT PRIMARY KEY NOT NULL,
-            usd TEXT,
-            usd_foil TEXT,
-            tcgplayer_id TEXT,
-            last_updated TEXT,
-            FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
-        );`);
-        
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_card_prices_card_id ON lorcana_card_prices(card_id);');
-    });
+    console.log('[LorcanaService] Starting ensureTablesCreated...');
+    try {
+        // DatabaseInitializer handles table creation
+        // We can keep this function for backward compatibility
+        return true;
+    } catch (error) {
+        console.error('[LorcanaService] Error in ensureTablesCreated:', error);
+        if (error instanceof Error) {
+            console.error('[LorcanaService] Error details:', {
+                message: error.message,
+                stack: error.stack,
+                name: error.name
+            });
+        }
+        throw error;
+    }
 };
 
 // Add this mapping function
@@ -130,90 +110,30 @@ const mapLorcastSetCodeToSetId = (setCode: string): string | null => {
 };
 
 export const initializeLorcanaDatabase = async () => {
-    if (isInitialized) {
-        console.log('[LorcanaService] Database already initialized, skipping');
-        return;
-    }
-
-    // If there's already an initialization in progress, wait for it
-    if (initializationPromise) {
-        console.log('[LorcanaService] Waiting for existing initialization to complete');
-        await initializationPromise;
-        return;
-    }
-
-    initializationPromise = (async () => {
-        try {
-            console.log('[LorcanaService] Initializing Lorcana database...');
-            
-            // Make sure we have a database connection
-            const db = await getDB();
-            
-            // Verify and repair the database structure if needed
-            await verifyAndRepairDatabase();
-            
-            // Ensure tables are created
-            await ensureTablesCreated();
-            
-            // Check if we need to populate the lorcana_card_prices table
-            await populateLorcanaCardPricesTable();
-            
-            
-            // Check if we need to refresh the card data
-            const [results] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_cards WHERE Name IS NOT NULL');
-            const count = results.rows.item(0).count;
-            
-            if (count === 0) {
-                const response = await fetch(LorcanaBulkCardApi);
-                if (!response.ok) throw new Error(`API request failed: ${response.status}`);
-
-                const data = await response.json();
-                const batchSize = 100;
-
-                for (let i = 0; i < data.length; i += batchSize) {
-                    const batch = data.slice(i, i + batchSize);
-                    await db.transaction((tx) => {
-                        batch.forEach((card: LorcanaCard) => {
-                            if (!card || !card.Name) return;
-
-                            tx.executeSql(`INSERT OR REPLACE INTO lorcana_cards (
-                                Artist, Body_Text, Card_Num, Classifications, Color, Cost,
-                                Date_Added, Date_Modified, Flavor_Text, Franchise, Image,
-                                Inkable, Lore, Name, Rarity, Set_ID, Set_Name, Set_Num,
-                                Strength, Type, Unique_ID, Willpower,
-                                price_usd, price_usd_foil, last_updated, collected
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
-                                card.Artist || null, card.Body_Text || null, card.Card_Num || null,
-                                card.Classifications || null, card.Color || null, card.Cost || null,
-                                card.Date_Added || null, card.Date_Modified || null, card.Flavor_Text || null,
-                                card.Franchise || null, card.Image || null, card.Inkable ? 1 : 0,
-                                card.Lore || null, card.Name || null, card.Rarity || null,
-                                card.Set_ID || null, card.Set_Name || null, card.Set_Num || null,
-                                card.Strength || null, card.Type || null, card.Unique_ID || null,
-                                card.Willpower || null, null, null, new Date().toISOString(), 0
-                            ]);
-                        });
-                    });
-                }
-
-                await fetchAndStoreEnchantedCards();
-            }
-            
-            console.log('[LorcanaService] Database initialization complete');
-            isInitialized = true;
-            
-        } catch (error) {
-            console.error('[LorcanaService] Database initialization failed:', error);
-            throw error;
-        } finally {
-            initializationPromise = null;
+    try {
+        console.log('[LorcanaService] Initializing Lorcana database...');
+        isInitialized = false;
+        
+        // Use DatabaseInitializer to ensure database is initialized
+        await DatabaseInitializer.initializeAllDatabases();
+        
+        // The database and tables will be ready after calling initializeAllDatabases
+        console.log('[LorcanaService] Lorcana database initialized successfully');
+        isInitialized = true;
+        return true;
+    } catch (error) {
+        console.error('[LorcanaService] Error initializing Lorcana database:', error);
+        if (error instanceof Error) {
+            console.error('[LorcanaService] Error details:', {
+                message: error.message,
+                stack: error.stack,
+                name: error.name
+            });
         }
-    })();
-    
-    return initializationPromise;
+        isInitialized = false;
+        return false;
+    }
 };
-
-
 
 // Add function to populate the lorcana_card_prices table from existing data
 const populateLorcanaCardPricesTable = async () => {

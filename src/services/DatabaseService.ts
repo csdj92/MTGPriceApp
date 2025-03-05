@@ -6,6 +6,7 @@ import { MigrationManager } from '../database/migrations/MigrationManager';
 import { InitialSchemaMigration } from '../database/migrations/001_InitialSchema';
 import { DataMerger } from '../database/DataMerger';
 import { InteractionManager } from 'react-native';
+import { AllPrintingsJsonDatabase } from './database/AllPrintingsJsonDatabase';
 
 SQLite.enablePromise(true);
 SQLite.DEBUG(false);
@@ -106,93 +107,93 @@ export interface Deck {
 let mtgJsonDb: SQLite.SQLiteDatabase | null = null;
 
 // Add error recovery mechanism to handle closed database
-const reopenMTGJsonDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
-    console.log('[DatabaseService] Attempting to reopen MTGJson database...');
+// const reopenMTGJsonDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
+//     console.log('[DatabaseService] Attempting to reopen MTGJson database...');
     
-    // Close the existing connection if it exists but is in an error state
-    if (mtgJsonDb) {
-        try {
-            await mtgJsonDb.close();
-        } catch (error) {
-            console.log('[DatabaseService] Error closing existing database connection:', error);
-            // Continue regardless of close error
-        }
-        mtgJsonDb = null;
-    }
+//     // Close the existing connection if it exists but is in an error state
+//     if (mtgJsonDb) {
+//         try {
+//             await mtgJsonDb.close();
+//         } catch (error) {
+//             console.log('[DatabaseService] Error closing existing database connection:', error);
+//             // Continue regardless of close error
+//         }
+//         mtgJsonDb = null;
+//     }
     
-    const mtgJsonPath = '/data/data/com.mtgpriceapp/files/AllPrintings.sqlite';
+//     const mtgJsonPath = '/data/data/com.mtgpriceapp/databases/AllPrintings.sqlite';
     
-    try {
-        // Check if file exists and is valid
-        const exists = await RNFS.exists(mtgJsonPath);
-        if (!exists) {
-            throw new Error('MTGJson database file not found');
-        }
+//     try {
+//         // Check if file exists and is valid
+//         const exists = await RNFS.exists(mtgJsonPath);
+//         if (!exists) {
+//             throw new Error('MTGJson database file not found');
+//         }
         
-        // Try to open the database with error handling
-        mtgJsonDb = await SQLite.openDatabase({
-            name: mtgJsonPath,
-            location: 'Library',
-            createFromLocation: 1
-        });
+//         // Try to open the database with error handling
+//         mtgJsonDb = await SQLite.openDatabase({
+//             name: mtgJsonPath,
+//             location: 'Library',
+//             createFromLocation: 1
+//         });
         
-        // Verify we can query the database
-        const [tables] = await mtgJsonDb.executeSql(
-            "SELECT name FROM sqlite_master WHERE type='table' LIMIT 1"
-        );
+//         // Verify we can query the database
+//         const [tables] = await mtgJsonDb.executeSql(
+//             "SELECT name FROM sqlite_master WHERE type='table' LIMIT 1"
+//         );
         
-        if (tables.rows.length === 0) {
-            throw new Error('MTGJson database appears to be empty or corrupted');
-        }
+//         if (tables.rows.length === 0) {
+//             throw new Error('MTGJson database appears to be empty or corrupted');
+//         }
         
-        console.log('[DatabaseService] Successfully reopened MTGJson database');
-        return mtgJsonDb;
-    } catch (error) {
-        console.error('[DatabaseService] Error reopening MTGJson database:', error);
+//         console.log('[DatabaseService] Successfully reopened MTGJson database');
+//         return mtgJsonDb;
+//     } catch (error) {
+//         console.error('[DatabaseService] Error reopening MTGJson database:', error);
         
-        // If we can't reopen, try to recover by redownloading
-        console.log('[DatabaseService] Attempting recovery by redownloading database...');
+//         // If we can't reopen, try to recover by redownloading
+//         console.log('[DatabaseService] Attempting recovery by redownloading database...');
         
-        // Delete corrupt database file if it exists
-        if (await RNFS.exists(mtgJsonPath)) {
-            try {
-                await RNFS.unlink(mtgJsonPath);
-                console.log('[DatabaseService] Deleted corrupt database file');
-            } catch (unlinkError) {
-                console.error('[DatabaseService] Failed to delete corrupt database:', unlinkError);
-            }
-        }
+//         // Delete corrupt database file if it exists
+//         if (await RNFS.exists(mtgJsonPath)) {
+//             try {
+//                 await RNFS.unlink(mtgJsonPath);
+//                 console.log('[DatabaseService] Deleted corrupt database file');
+//             } catch (unlinkError) {
+//                 console.error('[DatabaseService] Failed to delete corrupt database:', unlinkError);
+//             }
+//         }
         
-        // Download a fresh copy
-        const dbService = new DatabaseService();
-        const success = await dbService.downloadMTGJsonDatabase();
-        if (!success || !mtgJsonDb) {
-            throw new Error('Failed to recover MTGJson database');
-        }
+//         // Download a fresh copy
+//         const dbService = new DatabaseService();
+//         const success = await dbService.downloadMTGJsonDatabase();
+//         if (!success || !mtgJsonDb) {
+//             throw new Error('Failed to recover MTGJson database');
+//         }
         
-        return mtgJsonDb;
-    }
-};
+//         return mtgJsonDb;
+//     }
+// };
 
 // Function to safely execute database operations with connection recovery
-const safeMTGJsonOperation = async <T>(operation: (db: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> => {
-    try {
-        if (!mtgJsonDb) {
-            mtgJsonDb = await reopenMTGJsonDatabase();
-        }
-        return await operation(mtgJsonDb);
-    } catch (error) {
-        // If we get "already-closed" error, try to reopen and retry once
-        if (error instanceof Error && 
-            (error.message.includes('already-closed') || 
-             error.message.includes('attempt to re-open an already-closed object'))) {
-            console.log('[DatabaseService] Handling database closed error, reopening and retrying...');
-            mtgJsonDb = await reopenMTGJsonDatabase();
-            return await operation(mtgJsonDb);
-        }
-        throw error;
-    }
-};
+// const safeMTGJsonOperation = async <T>(operation: (db: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> => {
+//     try {
+//         if (!mtgJsonDb) {
+//             mtgJsonDb = await reopenMTGJsonDatabase();
+//         }
+//         return await operation(mtgJsonDb);
+//     } catch (error) {
+//         // If we get "already-closed" error, try to reopen and retry once
+//         if (error instanceof Error && 
+//             (error.message.includes('already-closed') || 
+//              error.message.includes('attempt to re-open an already-closed object'))) {
+//             console.log('[DatabaseService] Handling database closed error, reopening and retrying...');
+//             mtgJsonDb = await reopenMTGJsonDatabase();
+//             return await operation(mtgJsonDb);
+//         }
+//         throw error;
+//     }
+// };
 
 // Function to safely handle database transactions with automatic recovery
 export const safeExecuteSQL = async <T>(
@@ -230,40 +231,42 @@ export const safeExecuteSQL = async <T>(
     }
 };
 
-// // Add recovery function for the main database
-// const recoverMainDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
-//     console.log('[DatabaseService] Attempting to recover main database connection');
-//     try {
-//         // Close any existing connection first
-//         if (mtgJsonDb) {
-//             try {
-//                 await mtgJsonDb.close();
-//             } catch (closeError) {
-//                 console.log('[DatabaseService] Error closing existing connection:', closeError);
-//                 // Continue regardless
-//             }
-//             mtgJsonDb = null;
-//         }
+
+
+// Add recovery function for the main database
+const recoverMainDatabase = async (): Promise<SQLite.SQLiteDatabase> => {
+    console.log('[DatabaseService] Attempting to recover main database connection');
+    try {
+        // Close any existing connection first
+        if (mtgJsonDb) {
+            try {
+                await mtgJsonDb.close();
+            } catch (closeError) {
+                console.log('[DatabaseService] Error closing existing connection:', closeError);
+                // Continue regardless
+            }
+            mtgJsonDb = null;
+        }
         
-//         // Reopen the database
-//         const dbName = 'mtg.db';
-//         mtgJsonDb = await openDatabase({
-//             name: dbName,
-//             location: 'default',
-//             createFromLocation: 2
-//         });
+        // Reopen the database
+        const dbName = 'mtg.db';
+        mtgJsonDb = await openDatabase({
+            name: dbName,
+            location: 'default',
+            createFromLocation: 2
+        });
         
-//         // Set pragmas
-//         await mtgJsonDb.executeSql('PRAGMA foreign_keys = ON;');
-//         await mtgJsonDb.executeSql('PRAGMA journal_mode = WAL;');
+        // Set pragmas
+        await mtgJsonDb.executeSql('PRAGMA foreign_keys = ON;');
+        await mtgJsonDb.executeSql('PRAGMA journal_mode = WAL;');
         
-//         console.log('[DatabaseService] Successfully recovered main database connection');
-//         return mtgJsonDb;
-//     } catch (error) {
-//         console.error('[DatabaseService] Failed to recover main database:', error);
-//         throw error;
-//     }
-// };
+        console.log('[DatabaseService] Successfully recovered main database connection');
+        return mtgJsonDb;
+    } catch (error) {
+        console.error('[DatabaseService] Failed to recover main database:', error);
+        throw error;
+    }
+};
 
 export default class DatabaseService {
     private db: SQLite.SQLiteDatabase | null = null;
@@ -271,215 +274,122 @@ export default class DatabaseService {
     private setListLastUpdate = 0;
     private readonly SET_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
     private setCardsCache: { [key: string]: { cards: any[]; timestamp: number } } = {};
-    private readonly CARDS_CACHE_DURATION = 45 * 60 * 1000; // 5 minutes in milliseconds
+    private readonly CARDS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
     private expensiveCardsCache: {
         [key: string]: {
             cards: any[];
             timestamp: number;
         };
     } = {};
-    private readonly EXPENSIVE_CARDS_CACHE_DURATION = 45 * 60 * 1000; // 5 minutes
+    private readonly EXPENSIVE_CARDS_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
     private migrationManager: MigrationManager | null = null;
     private dataMerger: DataMerger | null = null;
-    private isInitialized = false;
-    private tableCacheTimestamp = 0;
-    private tablesCreated = false;
+
+    // Add static properties to the class outside the method
+    private static tableCacheTimestamp = 0;
+    private static tablesCreated = false;
 
     constructor() {
-        // Don't initialize in constructor anymore
+        this.initializeDatabase();
     }
 
-    private async initializeDatabase(): Promise<void> {
-        let retryCount = 0;
-        const MAX_RETRIES = 3;
-        const RETRY_DELAY = 1000; // 1 second
 
-        while (retryCount < MAX_RETRIES) {
-            try {
-                if (!this.db) {
-                    console.log('[DatabaseService] Opening main database...');
-                    this.db = await SQLite.openDatabase({
-                        name: 'mtg.db',
-                        location: 'default',
-                        createFromLocation: 1
-                    });
-                    
-                    // Enable foreign keys and WAL mode for better performance
-                    await this.db.executeSql('PRAGMA foreign_keys = ON;');
-                    await this.db.executeSql('PRAGMA journal_mode = WAL;');
-                    
-                    console.log('[DatabaseService] Main database opened successfully');
-                }
+    // private async ensureMTGJsonDatabaseExists(): Promise<void> {
+    //     const mtgJsonPath = '/data/data/com.mtgpriceapp/files/AllPrintings.sqlite';
+        
+    //     try {
+    //         // Check if the file exists
+    //         const exists = await RNFS.exists(mtgJsonPath);
+    //         console.log('[DatabaseService] MTGJson database exists:', exists);
 
-                // Initialize migration manager if needed
-                if (!this.migrationManager) {
-                    this.migrationManager = new MigrationManager(this.db);
-                    await this.migrationManager.migrateToLatest();
-                }
+    //         if (!exists) {
+    //             console.log('[DatabaseService] MTGJson database not found, downloading...');
+    //             const success = await this.downloadMTGJsonDatabase();
+    //             if (!success) {
+    //                 throw new Error('Failed to download MTGJson database');
+    //             }
+    //         }
 
-                // Initialize data merger if needed
-                if (!this.dataMerger) {
-                    this.dataMerger = new DataMerger(this.db);
-                }
+    //         // Try to open the database to verify it's valid
+    //         mtgJsonDb = await reopenMTGJsonDatabase();
 
-                // Verify database structure
-                await this.verifyDatabaseStructure();
-                
-                this.isInitialized = true;
+    //         if (!mtgJsonDb) {
+    //             throw new Error('Failed to open MTGJson database');
+    //         }
+
+    //         // Verify we can query the database
+    //         const [tables] = await mtgJsonDb.executeSql(
+    //             "SELECT name FROM sqlite_master WHERE type='table'"
+    //         );
+
+    //         if (tables.rows.length === 0) {
+    //             console.log('[DatabaseService] MTGJson database appears empty, redownloading...');
+    //             await RNFS.unlink(mtgJsonPath);
+    //             const success = await this.downloadMTGJsonDatabase();
+    //             if (!success) {
+    //                 throw new Error('Failed to download MTGJson database');
+    //             }
+    //         } else {
+    //             console.log('[DatabaseService] MTGJson database tables:', 
+    //                 Array.from({length: tables.rows.length}, (_, i) => tables.rows.item(i).name));
+    //         }
+    //     } catch (error) {
+    //         console.error('[DatabaseService] Error ensuring MTGJson database exists:', error);
+    //         throw error;
+    //     }
+    // }
+    // double method we have initdatabase already
+    private async initializeDatabase() {
+        try {
+            if (mtgJsonDb) {
+                console.log('[DatabaseService] MTGJson database already initialized');
                 return;
-            } catch (error) {
-                retryCount++;
-                console.error(`[DatabaseService] Initialization attempt ${retryCount} failed:`, error);
+            }
+
+            console.log('[DatabaseService] Initializing MTGJson database');
+            
+            const allPrintingsDb = AllPrintingsJsonDatabase.getInstance();
+            let dbExists = await allPrintingsDb.databaseExists();
+            
+            if (dbExists) {
+                try {
+                    await allPrintingsDb.initialize();
+                    mtgJsonDb = allPrintingsDb.getDatabase();
+                    
+                    if (!mtgJsonDb) {
+                        throw new Error('Failed to initialize existing MTGJson database');
+                    }
+                    
+                    console.log('[DatabaseService] MTGJson database initialized successfully from existing file');
+                } catch (error) {
+                    console.error('[DatabaseService] Error initializing existing database, will redownload:', error);
+                    dbExists = false;
+                }
+            }
+            
+            if (!dbExists) {
+                console.log('[DatabaseService] Attempting to download MTGJson database');
+                const downloadSuccess = await this.downloadMTGJsonDatabase();
                 
-                if (retryCount < MAX_RETRIES) {
-                    console.log(`[DatabaseService] Retrying in ${RETRY_DELAY}ms...`);
-                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
-                } else {
-                    console.error('[DatabaseService] Max retries reached. Initialization failed.');
-                    throw new Error('Failed to initialize database after multiple attempts');
-                }
-            }
-        }
-    }
-
-    async initializeAllDatabases(): Promise<void> {
-        try {
-            console.log('[DatabaseService] Starting database initialization...');
-            
-            // Initialize main database with retry mechanism
-            await this.initializeDatabase();
-            
-            // Initialize MTGJson database
-            await this.ensureMTGJsonDatabaseExists();
-            
-            // Initialize Lorcana database
-            await this.initializeLorcanaDatabase();
-
-            console.log('[DatabaseService] All databases initialized successfully');
-        } catch (error) {
-            console.error('[DatabaseService] Failed to initialize all databases:', error);
-            if (error instanceof Error) {
-                console.error('[DatabaseService] Error details:', {
-                    message: error.message,
-                    stack: error.stack
-                });
-            }
-            throw error;
-        }
-    }
-
-    private async initializeLorcanaDatabase(): Promise<void> {
-        try {
-            const lorcanaDb = await SQLite.openDatabase({
-                name: 'lorcana.db',
-                location: 'default',
-                createFromLocation: 1
-            });
-
-            // Enable WAL mode for better performance
-            await lorcanaDb.executeSql('PRAGMA journal_mode = WAL;');
-            
-            // Verify Lorcana database structure
-            const [tables] = await lorcanaDb.executeSql(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='collections'"
-            );
-            
-            if (tables.rows.length === 0) {
-                console.log('[DatabaseService] Creating Lorcana database structure...');
-                await this.createLorcanaTables(lorcanaDb);
-            }
-            
-            await lorcanaDb.close();
-        } catch (error) {
-            console.error('[DatabaseService] Error initializing Lorcana database:', error);
-            throw error;
-        }
-    }
-
-    private async createLorcanaTables(db: SQLite.SQLiteDatabase): Promise<void> {
-        await db.executeSql(`
-            CREATE TABLE IF NOT EXISTS collections (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT,
-                createdAt TEXT NOT NULL,
-                updatedAt TEXT NOT NULL,
-                totalValue REAL DEFAULT 0,
-                cardCount INTEGER DEFAULT 0
-            )
-        `);
-        
-        await db.executeSql(`
-            CREATE TABLE IF NOT EXISTS collection_cards (
-                collection_id TEXT,
-                card_uuid TEXT,
-                added_at TEXT NOT NULL,
-                FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
-                PRIMARY KEY (collection_id, card_uuid)
-            )
-        `);
-    }
-
-    /**
-     * Check if databases are initialized
-     */
-    isInitializedAndReady(): boolean {
-        return this.isInitialized && !!this.db && !!mtgJsonDb;
-    }
-
-    /**
-     * Ensure databases are initialized before any operation
-     */
-    private async ensureInitialized(): Promise<void> {
-        if (!this.isInitializedAndReady()) {
-            if (!this.isInitialized) {
-                await this.initializeAllDatabases();
-            }
-            throw new Error('Database not initialized. Please ensure initializeAllDatabases() is called at app startup.');
-        }
-    }
-
-    private async ensureMTGJsonDatabaseExists(): Promise<void> {
-        const mtgJsonPath = '/data/data/com.mtgpriceapp/files/AllPrintings.sqlite';
-        
-        try {
-            // Check if the file exists
-            const exists = await RNFS.exists(mtgJsonPath);
-            console.log('[DatabaseService] MTGJson database exists:', exists);
-
-            if (!exists) {
-                console.log('[DatabaseService] MTGJson database not found, downloading...');
-                const success = await this.downloadMTGJsonDatabase();
-                if (!success) {
+                if (!downloadSuccess) {
                     throw new Error('Failed to download MTGJson database');
                 }
-            }
-
-            // Try to open the database to verify it's valid
-            mtgJsonDb = await reopenMTGJsonDatabase();
-
-            if (!mtgJsonDb) {
-                throw new Error('Failed to open MTGJson database');
-            }
-
-            // Verify we can query the database
-            const [tables] = await mtgJsonDb.executeSql(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            );
-
-            if (tables.rows.length === 0) {
-                console.log('[DatabaseService] MTGJson database appears empty, redownloading...');
-                await RNFS.unlink(mtgJsonPath);
-                const success = await this.downloadMTGJsonDatabase();
-                if (!success) {
-                    throw new Error('Failed to download MTGJson database');
+                
+                // After successful download, initialize AllPrintingsJsonDatabase
+                await allPrintingsDb.initialize();
+                mtgJsonDb = allPrintingsDb.getDatabase();
+                
+                if (!mtgJsonDb) {
+                    throw new Error('Failed to initialize downloaded MTGJson database');
                 }
-            } else {
-                console.log('[DatabaseService] MTGJson database tables:', 
-                    Array.from({length: tables.rows.length}, (_, i) => tables.rows.item(i).name));
             }
+
+            // Create price tables if needed
+            await this.createPriceTables();
+            console.log('[DatabaseService] Database initialization completed successfully');
+
         } catch (error) {
-            console.error('[DatabaseService] Error ensuring MTGJson database exists:', error);
+            console.error('[DatabaseService] Error initializing database:', error);
             throw error;
         }
     }
@@ -492,46 +402,39 @@ export default class DatabaseService {
             // Return a promise that won't resolve until the background work is complete
             return await new Promise((resolve, reject) => {
                 // Move the entire operation to run after UI interactions are complete
-                InteractionManager.runAfterInteractions(() => {
-                    // Download the new database file
-                    RNFS.downloadFile({
-                        fromUrl: mtgJsonUrl,
-                        toFile: mtgJsonPath,
-                        background: true, // Ensure download happens in background thread
-                        progressDivider: 5, // Report progress less frequently to reduce UI updates
-                        progress: (response) => {
-                            const progress = (response.bytesWritten / response.contentLength) * 100;
-                            console.log(`Download progress: ${progress.toFixed(2)}%`);
-                        },
-                    })
-                    .promise
-                    .then(() => {
-                        // After download is complete, open database in another interaction frame
-                        InteractionManager.runAfterInteractions(async () => {
-                            try {
-                                // Open the new database
-                                mtgJsonDb = await SQLite.openDatabase({
-                                    name: mtgJsonPath,
-                                    location: 'default',
-                                    createFromLocation: 1
-                                });
+                InteractionManager.runAfterInteractions(async () => {
+                    try {
+                        // Delete existing file if it exists
+                        if (await RNFS.exists(mtgJsonPath)) {
+                            await RNFS.unlink(mtgJsonPath);
+                        }
 
-                                if (this.dataMerger) {
-                                    // Migrate price data from old database to new using the correct path
-                                    await this.dataMerger.mergePriceDataToNewDb(mtgJsonPath);
-                                }
-                                
-                                resolve(true);
-                            } catch (error) {
-                                console.error('[DatabaseService] Error opening or migrating database:', error);
-                                reject(error);
-                            }
-                        });
-                    })
-                    .catch(error => {
-                        console.error('[DatabaseService] Error downloading MTGJson database:', error);
+                        console.log('[DatabaseService] Starting MTGJson database download');
+                        
+                        // Download the new database file
+                        const downloadResult = await RNFS.downloadFile({
+                            fromUrl: mtgJsonUrl,
+                            toFile: mtgJsonPath,
+                            background: true,
+                            progressDivider: 5,
+                            progress: (response) => {
+                                const progress = (response.bytesWritten / response.contentLength) * 100;
+                                console.log(`[DatabaseService] Download progress: ${progress.toFixed(2)}%`);
+                            },
+                        }).promise;
+
+                        if (downloadResult.statusCode !== 200) {
+                            throw new Error(`Download failed with status ${downloadResult.statusCode}`);
+                        }
+
+                        console.log('[DatabaseService] Download completed successfully');
+
+                        // We don't open the database here anymore - that's handled by AllPrintingsJsonDatabase
+                        resolve(true);
+                    } catch (error) {
+                        console.error('[DatabaseService] Error in database download:', error);
                         reject(error);
-                    });
+                    }
                 });
             });
         } catch (error) {
@@ -540,28 +443,28 @@ export default class DatabaseService {
         }
     }
 
-    // async getAllTables(): Promise<{ local: string[], mtgjson: string[] }> {
-    //     const local = await this.db!.executeSql('SELECT name FROM sqlite_master WHERE type="table"');
-    //     const localTables = local[0].rows.raw().map(row => row.name);
+    async getAllTables(): Promise<{ local: string[], mtgjson: string[] }> {
+        const local = await this.db!.executeSql('SELECT name FROM sqlite_master WHERE type="table"');
+        const localTables = local[0].rows.raw().map(row => row.name);
 
-    //     let mtgjsonTables: string[] = [];
-    //     if (mtgJsonDb) {
-    //         mtgjsonTables = await this.getMTGJsonTables();
-    //     }
+        let mtgjsonTables: string[] = [];
+        if (mtgJsonDb) {
+            mtgjsonTables = await this.getMTGJsonTables();
+        }
 
-    //     return {
-    //         local: localTables,
-    //         mtgjson: mtgjsonTables
-    //     };
-    // }
+        return {
+            local: localTables,
+            mtgjson: mtgjsonTables
+        };
+    }
 
-    // async getMTGJsonTables(): Promise<string[]> {
-    //     if (!mtgJsonDb) {
-    //         throw new Error('MTGJson database not initialized');
-    //     }
-    //     const tables = await mtgJsonDb.executeSql('SELECT name FROM sqlite_master WHERE type="table"');
-    //     return tables[0].rows.raw().map(row => row.name);
-    // }
+    async getMTGJsonTables(): Promise<string[]> {
+        if (!mtgJsonDb) {
+            throw new Error('MTGJson database not initialized');
+        }
+        const tables = await mtgJsonDb.executeSql('SELECT name FROM sqlite_master WHERE type="table"');
+        return tables[0].rows.raw().map(row => row.name);
+    }
 
     // async getCardDetailsByUuid(uuid: string): Promise<any> {
     //     if (!mtgJsonDb) {
@@ -625,56 +528,56 @@ export default class DatabaseService {
     //     }
     // }
 
-    // async initDatabase(): Promise<void> {
-    //     try {
-    //         console.log('[DatabaseService] Initializing database...');
+    async initDatabase(): Promise<void> {
+        try {
+            console.log('[DatabaseService] Initializing database...');
 
-    //         // Initialize database connection
-    //         if (!this.db) {
-    //             this.db = await SQLite.openDatabase({
-    //                 name: 'mtg.db',
-    //                 location: 'default',
-    //             });
-    //         }
+            // Initialize database connection
+            if (!this.db) {
+                this.db = await SQLite.openDatabase({
+                    name: 'mtg.db',
+                    location: 'default',
+                });
+            }
 
-    //         // Initialize migration manager
-    //         this.migrationManager = new MigrationManager(this.db);
-    //         this.migrationManager.registerMigration(InitialSchemaMigration);
+            // Initialize migration manager
+            this.migrationManager = new MigrationManager(this.db);
+            this.migrationManager.registerMigration(InitialSchemaMigration);
             
-    //         // Run migrations
-    //         await this.migrationManager.migrateToLatest();
+            // Run migrations
+            await this.migrationManager.migrateToLatest();
 
-    //         // Initialize data merger
-    //         this.dataMerger = new DataMerger(this.db);
+            // Initialize data merger
+            this.dataMerger = new DataMerger(this.db);
 
-    //         console.log('[DatabaseService] Database initialized successfully');
+            console.log('[DatabaseService] Database initialized successfully');
 
-    //         // Enable foreign keys
-    //         await this.db.executeSql('PRAGMA foreign_keys = ON;');
-    //         console.log('[DatabaseService] Foreign key constraints enabled');
+            // Enable foreign keys
+            await this.db.executeSql('PRAGMA foreign_keys = ON;');
+            console.log('[DatabaseService] Foreign key constraints enabled');
             
             
-    //         // Verify and create database structure
-    //         await this.verifyDatabaseStructure();
-    //         console.log('[DatabaseService] Database structure verified');
+            // Verify and create database structure
+            await this.verifyDatabaseStructure();
+            console.log('[DatabaseService] Database structure verified');
 
-    //         // Verify the connection is working
-    //         const [tables] = await this.db.executeSql("SELECT name FROM sqlite_master WHERE type='table'");
-    //         console.log('[DatabaseService] Existing tables:', tables.rows.raw());
+            // Verify the connection is working
+            const [tables] = await this.db.executeSql("SELECT name FROM sqlite_master WHERE type='table'");
+            console.log('[DatabaseService] Existing tables:', tables.rows.raw());
 
-    //     } catch (error) {
-    //         console.error('[DatabaseService] Database initialization error:', error);
-    //         if (error instanceof Error) {
-    //             console.error('[DatabaseService] Error details:', {
-    //                 message: error.message,
-    //                 stack: error.stack
-    //             });
-    //         }
-    //         // Reset the database connection on error
-    //         this.db = null;
-    //         throw error;
-    //     }
-    // }
+        } catch (error) {
+            console.error('[DatabaseService] Database initialization error:', error);
+            if (error instanceof Error) {
+                console.error('[DatabaseService] Error details:', {
+                    message: error.message,
+                    stack: error.stack
+                });
+            }
+            // Reset the database connection on error
+            this.db = null;
+            throw error;
+        }
+    }
 
     private async verifyDatabaseStructure(): Promise<void> {
         if (!this.db) {
@@ -789,7 +692,25 @@ export default class DatabaseService {
                     updated_at INTEGER NOT NULL
                 )
             `);
-            console.log(' [DatabaseService] app_settings table created/verified');
+            console.log('App settings table created/verified');
+
+            // // Create card_hashes table with TEXT for hash
+            // await this.db.executeSql(`
+            //     CREATE TABLE IF NOT EXISTS card_hashes (
+            //         uuid TEXT PRIMARY KEY NOT NULL,
+            //         hash TEXT NOT NULL
+            //     );
+            // `);
+            // console.log('[DatabaseService] card_hashes table (TEXT) created/verified.');
+
+            // // Add index for better lookup performance
+            // await this.db.executeSql(
+            //     'CREATE INDEX IF NOT EXISTS idx_card_hashes_hash ON card_hashes(hash)'
+            // );
+            // console.log('Card hashes index created/verified');
+
+            // // After creating tables, preload hashes
+            // await this.preloadHashes();
 
             console.log('[DatabaseService] Database structure verified');
         } catch (error) {
@@ -797,9 +718,13 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    //mtg.db create collection
     async createCollection(name: string, description?: string): Promise<Collection> {
-         try {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
+        try {
             // Ensure collections table exists
             await this.db!.executeSql(`
                 CREATE TABLE IF NOT EXISTS collections (
@@ -843,8 +768,12 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    //mtg.db get collections
     async getCollections(): Promise<Collection[]> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         console.time('getCollections');
         try {
             // Use a single optimized query to get both collection info and total values in one go
@@ -899,8 +828,12 @@ export default class DatabaseService {
             console.timeEnd('getCollections');
         }
     }
-
+    //mtg.db save collection cache
     async saveCollectionCache(cards: ExtendedCard[]): Promise<void> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         try {
             // Instead of clearing the cache, update or insert new cards
             await this.db!.transaction(async (tx) => {
@@ -921,8 +854,12 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    //mtg.db get collection cache
     async getCollectionCache(): Promise<ExtendedCard[]> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         try {
             const results = await this.db!.executeSql(
                 'SELECT card_data FROM collection_cache'
@@ -945,36 +882,43 @@ export default class DatabaseService {
         }
     }
 
-    async getFirst100Cards(): Promise<Card[]> {
-        try {
-            await this.ensureInitialized();
-            console.log('Executing query to fetch cards...');
-            
-            const results = await this.db!.executeSql(
-                'SELECT uuid, name, setCode, rarity, manaCost, type, text FROM cards LIMIT 100'
-            );
+    // async getFirst100Cards(): Promise<Card[]> {
+    //     try {
+    //         if (!this.db) {
+    //             console.log('Database not initialized, initializing now...');
+    //             await this.initDatabase();
+    //         }
 
-            if (!results || !results[0] || !results[0].rows) {
-                console.error('Query returned invalid results structure:', results);
-                throw new Error('Invalid query results');
-            }
+    //         console.log('Executing query to fetch cards...');
+    //         const results = await this.db!.executeSql(
+    //             'SELECT uuid, name, setCode, rarity, manaCost, type, text FROM cards LIMIT 100'
+    //         );
 
-            const cards: Card[] = [];
-            const rows = results[0].rows;
-            console.log(`Query returned ${rows.length} rows`);
+    //         if (!results || !results[0] || !results[0].rows) {
+    //             console.error('Query returned invalid results structure:', results);
+    //             throw new Error('Invalid query results');
+    //         }
 
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows.item(i);
-                cards.push(row);
-            }
+    //         const cards: Card[] = [];
+    //         const rows = results[0].rows;
+    //         console.log(`Query returned ${rows.length} rows`);
 
-            console.log(`Successfully processed ${cards.length} cards`);
-            return cards;
-        } catch (error) {
-            console.error('Error in getFirst100Cards:', error);
-            throw error;
-        }
-    }
+    //         for (let i = 0; i < rows.length; i++) {
+    //             const row = rows.item(i);
+    //             cards.push(row);
+    //         }
+
+    //         console.log(`Successfully processed ${cards.length} cards`);
+    //         return cards;
+    //     } catch (error) {
+    //         console.error('Error in getFirst100Cards:', error);
+    //         if (error instanceof Error) {
+    //             console.error('Error message:', error.message);
+    //             console.error('Error stack:', error.stack);
+    //         }
+    //         throw error;
+    //     }
+    // }
 
     async closeDatabase() {
         if (this.db) {
@@ -989,58 +933,27 @@ export default class DatabaseService {
             }
         }
     }
-
+    //mtg.db get collection cards
     async getCollectionCards(collectionId: string, page = 1, pageSize = 20): Promise<ExtendedCard[]> {
-        console.log(`[DatabaseService] Getting collection cards for collection ${collectionId}, page ${page}, pageSize ${pageSize}`);
-        
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         try {
-            await this.ensureInitialized();
-            
             const offset = (page - 1) * pageSize;
-            
-            // First check if collection exists
-            const collectionResult = await this.db!.executeSql(
-                'SELECT * FROM collections WHERE id = ?',
-                [collectionId]
-            );
-            
-            if (collectionResult[0].rows.length === 0) {
-                console.error(`[DatabaseService] Collection with ID ${collectionId} not found`);
-                return [];
-            }
-            
-            console.log(`[DatabaseService] Collection found, fetching cards with offset ${offset} and limit ${pageSize}`);
-            
             const results = await this.db!.executeSql(
-                `SELECT cc.card_uuid, cache.card_data
+                `SELECT cache.card_data
                  FROM collection_cards cc
-                 LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid
+                 JOIN collection_cache cache ON cc.card_uuid = cache.uuid
                  WHERE cc.collection_id = ?
                  LIMIT ? OFFSET ?`,
                 [collectionId, pageSize, offset]
             );
 
-            console.log(`[DatabaseService] Found ${results[0].rows.length} cards in collection`);
-            
             const cards: ExtendedCard[] = [];
             for (let i = 0; i < results[0].rows.length; i++) {
                 const row = results[0].rows.item(i);
-                try {
-                    if (!row.card_data) {
-                        console.warn(`[DatabaseService] Missing card data for UUID ${row.card_uuid}, fetching from MTGJson`);
-                        // Try to fetch and cache the card data if it's missing
-                        const card = await this.getCardByUUID(row.card_uuid);
-                        if (card) {
-                            cards.push(card);
-                        } else {
-                            console.error(`[DatabaseService] Failed to fetch card with UUID ${row.card_uuid}`);
-                        }
-                    } else {
-                        cards.push(JSON.parse(row.card_data));
-                    }
-                } catch (parseError) {
-                    console.error('[DatabaseService] Error parsing card data:', parseError, 'Card UUID:', row.card_uuid);
-                }
+                cards.push(JSON.parse(row.card_data));
             }
 
             return cards;
@@ -1049,7 +962,7 @@ export default class DatabaseService {
             return [];
         }
     }
-
+    //mtg.db add card to collection
     async addCardToCollection(cardUuid: string, collectionId: string): Promise<void> {
         if (!cardUuid) {
             throw new Error('Card UUID is required');
@@ -1061,35 +974,42 @@ export default class DatabaseService {
         console.log(`[DatabaseService] Adding card ${cardUuid} to collection ${collectionId}`);
 
         try {
-        
+            // Ensure database is initialized
+            if (!this.db) {
+                console.log('[DatabaseService] Database not initialized, initializing now...');
+                await this.initDatabase();
+                if (!this.db) {
+                    throw new Error('Failed to initialize database');
+                }
+            }
+
+            // Ensure MTGJson database is initialized
+            if (!mtgJsonDb) {
+                console.log('[DatabaseService] MTGJson database not initialized, initializing now...');
+                await this.initializeDatabase();
+                if (!mtgJsonDb) {
+                    throw new Error('Failed to initialize MTGJson database');
+                }
+            }
+
             const now = new Date().toISOString();
 
-            // First check if the card exists and get its current quantity
-            const [existingCardResult] = await this.db!.executeSql(
-                'SELECT quantity FROM collection_cards WHERE collection_id = ? AND card_uuid = ?',
-                [collectionId, cardUuid]
-            );
-
-            await this.db!.transaction(async (tx) => {
-                if (existingCardResult.rows.length > 0) {
-                    // Card exists, get current quantity and increment
-                    const currentQuantity = existingCardResult.rows.item(0).quantity;
-                    const newQuantity = currentQuantity + 1;
-                    console.log(`[DatabaseService] Updating quantity from ${currentQuantity} to ${newQuantity}`);
-                    
-                    await tx.executeSql(
-                        'UPDATE collection_cards SET quantity = ?, added_at = ? WHERE collection_id = ? AND card_uuid = ?',
-                        [newQuantity, now, collectionId, cardUuid]
-                    );
-                    console.log(`[DatabaseService] Incremented quantity for existing card in collection`);
-                } else {
-                    // New card, add with quantity 1
-                    await tx.executeSql(
-                        'INSERT INTO collection_cards (collection_id, card_uuid, quantity, added_at) VALUES (?, ?, 1, ?)',
-                        [collectionId, cardUuid, now]
-                    );
-                    console.log(`[DatabaseService] Added new card to collection_cards table`);
-                }
+            await this.db.transaction(async (tx) => {
+                // Use INSERT OR REPLACE to handle both new cards and updates
+                await tx.executeSql(
+                    `INSERT OR REPLACE INTO collection_cards 
+                     (collection_id, card_uuid, quantity, added_at) 
+                     VALUES (?, ?, 
+                        COALESCE(
+                            (SELECT quantity + 1 FROM collection_cards 
+                             WHERE collection_id = ? AND card_uuid = ?), 
+                            1
+                        ), 
+                        ?
+                     )`,
+                    [collectionId, cardUuid, collectionId, cardUuid, now]
+                );
+                console.log(`[DatabaseService] Card added/updated in collection_cards table`);
 
                 // Update collection stats
                 await tx.executeSql(
@@ -1100,7 +1020,7 @@ export default class DatabaseService {
             });
 
             // Verify the update
-            const [verifyResult] = await this.db!.executeSql(
+            const [verifyResult] = await this.db.executeSql(
                 'SELECT quantity FROM collection_cards WHERE collection_id = ? AND card_uuid = ?',
                 [collectionId, cardUuid]
             );
@@ -1120,8 +1040,12 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    //mtg.db mark scanned card added to collection
     async markScannedCardAddedToCollection(cardId: string, collectionId: string): Promise<void> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         try {
             await this.db!.executeSql(
                 `UPDATE scan_history 
@@ -1134,9 +1058,12 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    //mtg.db add to scan history
     async addToScanHistory(card: ExtendedCard): Promise<void> {
-       
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         try {
             const now = new Date().toISOString();
             await this.db!.executeSql(
@@ -1149,8 +1076,11 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    //mtg.db get scan history
     async getScanHistory(): Promise<ExtendedCard[]> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
 
         try {
             const results = await this.db!.executeSql(
@@ -1169,13 +1099,19 @@ export default class DatabaseService {
             return [];
         }
     }
-
+    //mtg.db add to cache
     async addToCache(card: ExtendedCard): Promise<ExtendedCard> {
-        
+        if (!this.db || !mtgJsonDb) {
+            await this.initDatabase();
+            await this.initializeDatabase();
+            if (!this.db || !mtgJsonDb) {
+                throw new Error('Failed to initialize databases');
+            }
+        }
 
         try {
             // First, try to find the card in MTGJson database to get the correct UUID
-            const [mtgJsonCard] = await mtgJsonDb!.executeSql(`
+            const [mtgJsonCard] = await mtgJsonDb.executeSql(`
                 SELECT uuid 
                 FROM cards 
                 WHERE name = ? AND setCode = ?
@@ -1193,7 +1129,7 @@ export default class DatabaseService {
                 throw new Error('Card must have either uuid or id field');
             }
 
-            await this.db!.executeSql(
+            await this.db.executeSql(
                 'INSERT OR REPLACE INTO collection_cache (uuid, card_data, last_updated) VALUES (?, ?, ?)',
                 [card.uuid, JSON.stringify(card), Date.now()]
             );
@@ -1204,10 +1140,10 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    //mtgjson.db cleanup old price history
     private async cleanupOldPriceHistory(): Promise<void> {
         try {
-            await safeMTGJsonOperation(async (db) => {
+            await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 // First check if the price_history table exists
                 const [tableCheck] = await db.executeSql(`
                     SELECT name FROM sqlite_master 
@@ -1325,7 +1261,7 @@ export default class DatabaseService {
             }
             
             // Update app settings with last price update time
-            await safeMTGJsonOperation(async (db) => {
+            await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 await db.executeSql(
                     `INSERT OR REPLACE INTO app_settings (key, value, updated_at)
                      VALUES (?, ?, ?)`,
@@ -1360,7 +1296,7 @@ export default class DatabaseService {
         timestamp: number
     ): Promise<void> {
         try {
-            await safeMTGJsonOperation(async (db) => {
+            await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 // Use a transaction for better performance
                 await db.transaction(async (tx) => {
                     // Convert batch data to SQL placeholders and values
@@ -1432,7 +1368,7 @@ export default class DatabaseService {
         historyTimestamp: number
     ): Promise<void> {
         try {
-            await safeMTGJsonOperation(async (db) => {
+            await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 // First check if the price_history table exists
                 const [tableCheck] = await db.executeSql(`
                     SELECT name FROM sqlite_master 
@@ -1637,7 +1573,7 @@ export default class DatabaseService {
 
     async getPriceData(page: number, pageSize: number): Promise<{ uuid: string; normal_price: number; foil_price: number; last_updated: number; }[]> {
         try {
-            return await safeMTGJsonOperation(async (db) => {
+            return await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 const offset = (page - 1) * pageSize;
                 const [result] = await db.executeSql(`
                     SELECT uuid, normal_price, foil_price, last_updated 
@@ -1668,7 +1604,7 @@ export default class DatabaseService {
         }
         
         try {
-            return await safeMTGJsonOperation(async (db) => {
+            return await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 const [result] = await db.executeSql(
                     `SELECT * FROM ${tableName} LIMIT ?`,
                     [limit]
@@ -1681,92 +1617,92 @@ export default class DatabaseService {
         }
     }
 
-    async getAllCardsBySet(setCode: string, pageSize: number, offset: number): Promise<any[]> {
-        if (!mtgJsonDb) {
-            throw new Error('MTGJson database not initialized');
-        }
+    // async getAllCardsBySet(setCode: string, pageSize: number, offset: number): Promise<any[]> {
+    //     if (!mtgJsonDb) {
+    //         throw new Error('MTGJson database not initialized');
+    //     }
 
-        // Check cache first
-        const cacheKey = `${setCode}_${pageSize}_${offset}`;
-        const cached = this.setCardsCache[cacheKey];
-        if (cached && (Date.now() - cached.timestamp) < this.CARDS_CACHE_DURATION) {
-            return cached.cards;
-        }
+    //     // Check cache first
+    //     const cacheKey = `${setCode}_${pageSize}_${offset}`;
+    //     const cached = this.setCardsCache[cacheKey];
+    //     if (cached && (Date.now() - cached.timestamp) < this.CARDS_CACHE_DURATION) {
+    //         return cached.cards;
+    //     }
 
-        try {
-            // Optimize the query by using a single JOIN and avoiding subqueries
-            const [result] = await mtgJsonDb.executeSql(`
-                SELECT 
-                    c.uuid, 
-                    c.name, 
-                    c.setCode,
-                    c.number, 
-                    c.rarity,
-                    COALESCE(p.normal_price, 0) as normal_price,
-                    COALESCE(p.foil_price, 0) as foil_price,
-                    COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
-                    COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
-                    COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
-                    COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price,
-                    COALESCE(p.cardkingdom_normal_price, 0) as cardkingdom_normal_price,
-                    COALESCE(p.cardkingdom_foil_price, 0) as cardkingdom_foil_price,
-                    COALESCE(p.cardsphere_normal_price, 0) as cardsphere_normal_price,
-                    COALESCE(p.cardsphere_foil_price, 0) as cardsphere_foil_price,
-                    p.last_updated
-                FROM cards c
-                LEFT JOIN prices p ON c.uuid = p.uuid
-                WHERE UPPER(c.setCode) = ?
-                ORDER BY c.number ASC
-                LIMIT ? OFFSET ?
-            `, [setCode.toUpperCase(), pageSize, offset]);
+    //     try {
+    //         // Optimize the query by using a single JOIN and avoiding subqueries
+    //         const [result] = await mtgJsonDb.executeSql(`
+    //             SELECT 
+    //                 c.uuid, 
+    //                 c.name, 
+    //                 c.setCode,
+    //                 c.number, 
+    //                 c.rarity,
+    //                 COALESCE(p.normal_price, 0) as normal_price,
+    //                 COALESCE(p.foil_price, 0) as foil_price,
+    //                 COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
+    //                 COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
+    //                 COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
+    //                 COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price,
+    //                 COALESCE(p.cardkingdom_normal_price, 0) as cardkingdom_normal_price,
+    //                 COALESCE(p.cardkingdom_foil_price, 0) as cardkingdom_foil_price,
+    //                 COALESCE(p.cardsphere_normal_price, 0) as cardsphere_normal_price,
+    //                 COALESCE(p.cardsphere_foil_price, 0) as cardsphere_foil_price,
+    //                 p.last_updated
+    //             FROM cards c
+    //             LEFT JOIN prices p ON c.uuid = p.uuid
+    //             WHERE UPPER(c.setCode) = ?
+    //             ORDER BY c.number ASC
+    //             LIMIT ? OFFSET ?
+    //         `, [setCode.toUpperCase(), pageSize, offset]);
 
-            const cards = result.rows.raw().map(card => ({
-                uuid: card.uuid,
-                name: card.name,
-                setCode: card.setCode,
-                number: card.number,
-                rarity: card.rarity,
-                normal_price: parseFloat(card.normal_price) || 0,
-                foil_price: parseFloat(card.foil_price) || 0,
-                prices: {
-                    tcgplayer: {
-                        normal: parseFloat(card.tcg_normal_price) || 0,
-                        foil: parseFloat(card.tcg_foil_price) || 0
-                    },
-                    cardmarket: {
-                        normal: parseFloat(card.cardmarket_normal_price) || 0,
-                        foil: parseFloat(card.cardmarket_foil_price) || 0
-                    },
-                    cardkingdom: {
-                        normal: parseFloat(card.cardkingdom_normal_price) || 0,
-                        foil: parseFloat(card.cardkingdom_foil_price) || 0
-                    },
-                    cardsphere: {
-                        normal: parseFloat(card.cardsphere_normal_price) || 0,
-                        foil: parseFloat(card.cardsphere_foil_price) || 0
-                    }
-                },
-                last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
-            }));
+    //         const cards = result.rows.raw().map(card => ({
+    //             uuid: card.uuid,
+    //             name: card.name,
+    //             setCode: card.setCode,
+    //             number: card.number,
+    //             rarity: card.rarity,
+    //             normal_price: parseFloat(card.normal_price) || 0,
+    //             foil_price: parseFloat(card.foil_price) || 0,
+    //             prices: {
+    //                 tcgplayer: {
+    //                     normal: parseFloat(card.tcg_normal_price) || 0,
+    //                     foil: parseFloat(card.tcg_foil_price) || 0
+    //                 },
+    //                 cardmarket: {
+    //                     normal: parseFloat(card.cardmarket_normal_price) || 0,
+    //                     foil: parseFloat(card.cardmarket_foil_price) || 0
+    //                 },
+    //                 cardkingdom: {
+    //                     normal: parseFloat(card.cardkingdom_normal_price) || 0,
+    //                     foil: parseFloat(card.cardkingdom_foil_price) || 0
+    //                 },
+    //                 cardsphere: {
+    //                     normal: parseFloat(card.cardsphere_normal_price) || 0,
+    //                     foil: parseFloat(card.cardsphere_foil_price) || 0
+    //                 }
+    //             },
+    //             last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
+    //         }));
 
-            // Cache the results
-            this.setCardsCache[cacheKey] = {
-                cards,
-                timestamp: Date.now()
-            };
+    //         // Cache the results
+    //         this.setCardsCache[cacheKey] = {
+    //             cards,
+    //             timestamp: Date.now()
+    //         };
 
-            return cards;
-        } catch (error) {
-            console.error('[DatabaseService] Error getting cards by set:', {
-                message: error instanceof Error ? error.message : 'Unknown error',
-                stack: error instanceof Error ? error.stack : undefined,
-                setCode,
-                pageSize,
-                offset
-            });
-            return [];
-        }
-    }
+    //         return cards;
+    //     } catch (error) {
+    //         console.error('[DatabaseService] Error getting cards by set:', {
+    //             message: error instanceof Error ? error.message : 'Unknown error',
+    //             stack: error instanceof Error ? error.stack : undefined,
+    //             setCode,
+    //             pageSize,
+    //             offset
+    //         });
+    //         return [];
+    //     }
+    // }
 
     async getLastPriceUpdate(): Promise<number | null> {
         if (!mtgJsonDb) {
@@ -1792,20 +1728,16 @@ export default class DatabaseService {
         }
     }
 
-    /**
-     * Create price tables if they don't exist
-     */
     private async createPriceTables(): Promise<void> {
-        if (!this.isInitializedAndReady()) {
-            throw new Error('Database not initialized');
+        // If tables were created in the last hour, skip the check
+        const now = Date.now();
+        const ONE_HOUR = 60 * 60 * 1000;
+        if (DatabaseService.tableCacheTimestamp > 0 && now - DatabaseService.tableCacheTimestamp < ONE_HOUR && DatabaseService.tablesCreated) {
+            return;
         }
 
-        // Reset cache flags to force recreation
-        this.tablesCreated = false;
-        this.tableCacheTimestamp = 0;
-
         try {
-            await safeMTGJsonOperation(async (db) => {
+            await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 // First, check if tables already exist
                 const [tablesResult] = await db.executeSql(`
                     SELECT name FROM sqlite_master 
@@ -1827,87 +1759,12 @@ export default class DatabaseService {
                 if (allTablesExist) {
                     console.log(`[DatabaseService] Found ${existingTables.size} of ${requiredTables.length} required price tables`);
                     // Update cache
-                    this.tablesCreated = true;
-                    this.tableCacheTimestamp = Date.now();
+                    DatabaseService.tableCacheTimestamp = now;
+                    DatabaseService.tablesCreated = true;
                     return;
                 }
                 
-                // Create each table separately to better track success/failure
-                
-                // Create app_settings table if needed
-                if (!existingTables.has('app_settings')) {
-                    await db.executeSql(`
-                        CREATE TABLE IF NOT EXISTS app_settings (
-                            key TEXT PRIMARY KEY NOT NULL,
-                            value TEXT NOT NULL,
-                            updated_at INTEGER NOT NULL
-                        )
-                    `);
-                    console.log('[DatabaseService] App settings table created');
-                }
-                
-                // Create prices table if needed
-                if (!existingTables.has('prices')) {
-                    await db.executeSql(`
-                        CREATE TABLE IF NOT EXISTS prices (
-                            uuid TEXT PRIMARY KEY NOT NULL,
-                            normal_price REAL DEFAULT 0,
-                            foil_price REAL DEFAULT 0,
-                            tcg_normal_price REAL DEFAULT 0,
-                            tcg_foil_price REAL DEFAULT 0,
-                            cardmarket_normal_price REAL DEFAULT 0,
-                            cardmarket_foil_price REAL DEFAULT 0,
-                            cardkingdom_normal_price REAL DEFAULT 0,
-                            cardkingdom_foil_price REAL DEFAULT 0,
-                            cardsphere_normal_price REAL DEFAULT 0,
-                            cardsphere_foil_price REAL DEFAULT 0,
-                            cardhoarder_normal_price REAL DEFAULT 0,
-                            cardhoarder_foil_price REAL DEFAULT 0,
-                            last_updated INTEGER NOT NULL
-                        )
-                    `);
-                    console.log('[DatabaseService] Prices table created');
-                    
-                    // Verify prices table was created
-                    const [verifyResult] = await db.executeSql(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='prices'"
-                    );
-                    if (verifyResult.rows.length === 0) {
-                        throw new Error('Failed to create prices table - table not found after creation');
-                    }
-                }
-                
-                // Create price_history table if needed
-                if (!existingTables.has('price_history')) {
-                    await db.executeSql(`
-                        CREATE TABLE IF NOT EXISTS price_history (
-                            uuid TEXT NOT NULL,
-                            normal_price REAL DEFAULT 0,
-                            foil_price REAL DEFAULT 0,
-                            tcg_normal_price REAL DEFAULT 0,
-                            tcg_foil_price REAL DEFAULT 0,
-                            cardmarket_normal_price REAL DEFAULT 0,
-                            cardmarket_foil_price REAL DEFAULT 0,
-                            cardkingdom_normal_price REAL DEFAULT 0,
-                            cardkingdom_foil_price REAL DEFAULT 0,
-                            cardsphere_normal_price REAL DEFAULT 0,
-                            cardsphere_foil_price REAL DEFAULT 0,
-                            recorded_at INTEGER NOT NULL,
-                            PRIMARY KEY (uuid, recorded_at)
-                        )
-                    `);
-                    console.log('[DatabaseService] Price history table created successfully');
-                    
-                    // Verify price_history table was created
-                    const [verifyResult] = await db.executeSql(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='price_history'"
-                    );
-                    if (verifyResult.rows.length === 0) {
-                        throw new Error('Failed to create price_history table - table not found after creation');
-                    }
-                }
-                
-                // Now handle indexes separately from table creation
+                // Check which indexes exist
                 const [indexesResult] = await db.executeSql(`
                     SELECT name FROM sqlite_master 
                     WHERE type='index' AND (
@@ -1926,53 +1783,95 @@ export default class DatabaseService {
                     existingIndexes.add(indexesResult.rows.item(i).name);
                 }
                 
-                // Create missing indexes
-                if (!existingIndexes.has('idx_prices_last_updated')) {
-                    await db.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_last_updated ON prices(last_updated)`);
-                }
-                if (!existingIndexes.has('idx_price_history_recorded_at')) {
-                    await db.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at)`);
-                }
-                if (!existingIndexes.has('idx_prices_normal')) {
-                    await db.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price)`);
-                }
-                if (!existingIndexes.has('idx_prices_foil')) {
-                    await db.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_foil ON prices(foil_price)`);
-                }
-                if (!existingIndexes.has('idx_price_history_normal')) {
-                    await db.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_normal ON price_history(normal_price)`);
-                }
-                if (!existingIndexes.has('idx_price_history_foil')) {
-                    await db.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_foil ON price_history(foil_price)`);
-                }
-                if (!existingIndexes.has('idx_app_settings_key')) {
-                    await db.executeSql(`CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)`);
-                }
+                // Use a transaction for creating tables and indexes
+                await db.transaction(async (tx) => {                    
+                    // Create app_settings table if needed
+                    if (!existingTables.has('app_settings')) {
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS app_settings (
+                                key TEXT PRIMARY KEY NOT NULL,
+                                value TEXT NOT NULL,
+                                updated_at INTEGER NOT NULL
+                            )
+                        `);
+                        console.log('[DatabaseService] App settings table created/verified');
+                    }
+                    
+                    // Create prices table if needed
+                    if (!existingTables.has('prices')) {
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS prices (
+                                uuid TEXT PRIMARY KEY NOT NULL,
+                                normal_price REAL DEFAULT 0,
+                                foil_price REAL DEFAULT 0,
+                                tcg_normal_price REAL DEFAULT 0,
+                                tcg_foil_price REAL DEFAULT 0,
+                                cardmarket_normal_price REAL DEFAULT 0,
+                                cardmarket_foil_price REAL DEFAULT 0,
+                                cardkingdom_normal_price REAL DEFAULT 0,
+                                cardkingdom_foil_price REAL DEFAULT 0,
+                                cardsphere_normal_price REAL DEFAULT 0,
+                                cardsphere_foil_price REAL DEFAULT 0,
+                                cardhoarder_normal_price REAL DEFAULT 0,
+                                cardhoarder_foil_price REAL DEFAULT 0,
+                                last_updated INTEGER NOT NULL
+                            )
+                        `);
+                        console.log('[DatabaseService] Prices table created/verified');
+                    }
+                    
+                    // Create price_history table if needed
+                    if (!existingTables.has('price_history')) {
+                        await tx.executeSql(`
+                            CREATE TABLE IF NOT EXISTS price_history (
+                                uuid TEXT NOT NULL,
+                                normal_price REAL DEFAULT 0,
+                                foil_price REAL DEFAULT 0,
+                                tcg_normal_price REAL DEFAULT 0,
+                                tcg_foil_price REAL DEFAULT 0,
+                                cardmarket_normal_price REAL DEFAULT 0,
+                                cardmarket_foil_price REAL DEFAULT 0,
+                                cardkingdom_normal_price REAL DEFAULT 0,
+                                cardkingdom_foil_price REAL DEFAULT 0,
+                                cardsphere_normal_price REAL DEFAULT 0,
+                                cardsphere_foil_price REAL DEFAULT 0,
+                                recorded_at INTEGER NOT NULL,
+                                PRIMARY KEY (uuid, recorded_at),
+                                FOREIGN KEY (uuid) REFERENCES prices(uuid) ON DELETE CASCADE
+                            )
+                        `);
+                        console.log('[DatabaseService] Price history table created/verified');
+                    }
+                    
+                    // Create missing indexes
+                    if (!existingIndexes.has('idx_prices_last_updated')) {
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_last_updated ON prices(last_updated)`);
+                    }
+                    if (!existingIndexes.has('idx_price_history_recorded_at')) {
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at)`);
+                    }
+                    if (!existingIndexes.has('idx_prices_normal')) {
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price)`);
+                    }
+                    if (!existingIndexes.has('idx_prices_foil')) {
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_foil ON prices(foil_price)`);
+                    }
+                    if (!existingIndexes.has('idx_price_history_normal')) {
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_normal ON price_history(normal_price)`);
+                    }
+                    if (!existingIndexes.has('idx_price_history_foil')) {
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_foil ON price_history(foil_price)`);
+                    }
+                    if (!existingIndexes.has('idx_app_settings_key')) {
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(key)`);
+                    }
+                });
                 
                 console.log('[DatabaseService] Price indices created/verified');
                 
-                // Final verification of all tables
-                const [finalCheck] = await db.executeSql(`
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND (
-                        name='prices' OR 
-                        name='price_history' OR 
-                        name='app_settings'
-                    )
-                `);
-                
-                if (finalCheck.rows.length !== 3) {
-                    const tableNames = [];
-                    for (let i = 0; i < finalCheck.rows.length; i++) {
-                        tableNames.push(finalCheck.rows.item(i).name);
-                    }
-                    console.error(`[DatabaseService] Table creation verification failed. Found tables: ${tableNames.join(', ')}`);
-                    throw new Error(`Failed to create all required tables. Only found: ${tableNames.join(', ')}`);
-                }
-                
                 // Update cache
-                this.tablesCreated = true;
-                this.tableCacheTimestamp = Date.now();
+                DatabaseService.tableCacheTimestamp = now;
+                DatabaseService.tablesCreated = true;
             });
             
             console.log('[DatabaseService] Price tables and indexes created successfully');
@@ -1981,7 +1880,7 @@ export default class DatabaseService {
             throw error;
         }
     }
-
+    // delete
     async getPriceCount(): Promise<number> {
         if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
@@ -2000,220 +1899,271 @@ export default class DatabaseService {
 
     async verifyDatabaseState(): Promise<boolean> {
         try {
-             // Verify we can query the database
-            const [result] = await mtgJsonDb!.executeSql('SELECT COUNT(*) as count FROM prices');
-            const count = result.rows.item(0).count;
-            console.log(`[DatabaseService] Found ${count} price entries in database`);
-
-            if (count === 0) {
-                console.log('[DatabaseService] No prices found in database, might need to refresh price data');
+            console.log('[DatabaseService] Verifying database state...');
+            
+            // Check if MTGJson database is initialized
+            const allPrintingsDb = AllPrintingsJsonDatabase.getInstance();
+            const dbExists = await allPrintingsDb.databaseExists();
+            
+            if (!dbExists) {
+                console.log('[DatabaseService] MTGJson database does not exist, needs to be downloaded');
                 return false;
             }
-
+            
+            // Check if price tables exist
+            const tables = await this.getMTGJsonTables();
+            const hasPriceTable = tables.includes('prices');
+            const hasPriceHistoryTable = tables.includes('price_history');
+            
+            if (!hasPriceTable || !hasPriceHistoryTable) {
+                console.log('[DatabaseService] Price tables do not exist, need to be created');
+                return false;
+            }
+            
+            // Check if there are prices in the database
+            const priceCount = await this.getPriceCount();
+            if (priceCount === 0) {
+                console.log('[DatabaseService] No prices in database, need to download price data');
+                return false;
+            }
+            
+            // Check when prices were last updated
+            const lastUpdate = await this.getLastPriceUpdate();
+            if (!lastUpdate) {
+                console.log('[DatabaseService] No price update timestamp, need to update prices');
+                return false;
+            }
+            
+            const now = Date.now();
+            const daysSinceUpdate = (now - lastUpdate) / (1000 * 60 * 60 * 24);
+            
+            if (daysSinceUpdate > 7) {
+                console.log(`[DatabaseService] Prices are ${daysSinceUpdate.toFixed(1)} days old, need to update`);
+                return false;
+            }
+            
+            console.log('[DatabaseService] Database state verified successfully');
             return true;
         } catch (error) {
-            console.error('[DatabaseService] Database state verification failed:', error);
+            console.error('[DatabaseService] Error verifying database state:', error);
             return false;
         }
     }
 
-    async reinitializePrices(): Promise<void> {
-        try {
-            console.log('[DatabaseService] Starting price database reinitialization...');
-            // Use the safe operation pattern
-            try {
-                // Drop existing price-related tables
-                console.log('[DatabaseService] Dropping existing price tables...');
-                await safeMTGJsonOperation(async (mtgJsonDb) => {
-                    await mtgJsonDb.executeSql('DROP TABLE IF EXISTS price_history');
-                    await mtgJsonDb.executeSql('DROP TABLE IF EXISTS prices');
-                    await mtgJsonDb.executeSql('DROP TABLE IF EXISTS app_settings');
-                });
+    // async reinitializePrices(): Promise<void> {
+    //     try {
+    //         console.log('[DatabaseService] Starting price database reinitialization...');
 
-                // Recreate tables
-                console.log('[DatabaseService] Recreating price tables...');
-                await this.createPriceTables();
-            } catch (error) {
-                // If we get here, attempt recovery
-                console.error('[DatabaseService] Error during price reinitialization, attempting recovery:', error);
+    //         // Ensure MTGJson database is initialized
+    //         if (!mtgJsonDb) {
+    //             console.log('[DatabaseService] MTGJson database not initialized, initializing...');
+    //             await this.initializeDatabase();
+    //             if (!mtgJsonDb) {
+    //                 throw new Error('Failed to initialize MTGJson database');
+    //             }
+    //         }
+
+    //         // Use the safe operation pattern
+    //         try {
+    //             // Drop existing price-related tables
+    //             console.log('[DatabaseService] Dropping existing price tables...');
+    //             await safeMTGJsonOperation(async (db) => {
+    //                 await db.executeSql('DROP TABLE IF EXISTS price_history');
+    //                 await db.executeSql('DROP TABLE IF EXISTS prices');
+    //                 await db.executeSql('DROP TABLE IF EXISTS app_settings');
+    //             });
+
+    //             // Recreate tables
+    //             console.log('[DatabaseService] Recreating price tables...');
+    //             await this.createPriceTables();
+    //         } catch (error) {
+    //             // If we get here, attempt recovery
+    //             console.error('[DatabaseService] Error during price reinitialization, attempting recovery:', error);
                 
-                // Try to reopen the database
-                await reopenMTGJsonDatabase();
+    //             // Try to reopen the database
+    //             await reopenMTGJsonDatabase();
                 
-                // Retry the operation
-                await safeMTGJsonOperation(async (mtgJsonDb) => {
-                    await mtgJsonDb.executeSql('DROP TABLE IF EXISTS price_history');
-                    await mtgJsonDb.executeSql('DROP TABLE IF EXISTS prices');
-                    await mtgJsonDb.executeSql('DROP TABLE IF EXISTS app_settings');
-                });
+    //             // Retry the operation
+    //             await safeMTGJsonOperation(async (db) => {
+    //                 await db.executeSql('DROP TABLE IF EXISTS price_history');
+    //                 await db.executeSql('DROP TABLE IF EXISTS prices');
+    //                 await db.executeSql('DROP TABLE IF EXISTS app_settings');
+    //             });
                 
-                await this.createPriceTables();
-            }
+    //             await this.createPriceTables();
+    //         }
 
-            console.log('[DatabaseService] Price database successfully reinitialized');
-        } catch (error) {
-            console.error('[DatabaseService] Failed to reinitialize price database:', error);
-            if (error instanceof Error) {
-                console.error('[DatabaseService] Error details:', {
-                    message: error.message,
-                    stack: error.stack
-                });
-            }
-            throw error;
-        }
-    }
+    //         console.log('[DatabaseService] Price database successfully reinitialized');
+    //     } catch (error) {
+    //         console.error('[DatabaseService] Failed to reinitialize price database:', error);
+    //         if (error instanceof Error) {
+    //             console.error('[DatabaseService] Error details:', {
+    //                 message: error.message,
+    //                 stack: error.stack
+    //             });
+    //         }
+    //         throw error;
+    //     }
+    // }
 
-   
-    async getMostExpensiveCards(pageSize: number, offset: number, sortBy: 'normal_price' | 'foil_price'): Promise<any[]> {
-        if (!mtgJsonDb) {
-            throw new Error('MTGJson database not initialized');
-        }
+    // print all the rows in the cards table debug delete
+    // async printTenCardsRows(): Promise<void> {
+    //     await safeMTGJsonOperation(async (db) => {
+    //         const [result] = await db.executeSql('SELECT * FROM cards LIMIT 10');
+    //         console.log('[DatabaseService] All cards:', JSON.stringify(result.rows.raw(), null, 2));
+    //     });
+    // }
 
-        // Check cache first
-        const cacheKey = `${pageSize}_${offset}_${sortBy}`;
-        const cached = this.expensiveCardsCache[cacheKey];
-        if (cached && (Date.now() - cached.timestamp) < this.EXPENSIVE_CARDS_CACHE_DURATION) {
-            return cached.cards;
-        }
+    // async getMostExpensiveCards(pageSize: number, offset: number, sortBy: 'normal_price' | 'foil_price'): Promise<any[]> {
+    //     if (!mtgJsonDb) {
+    //         throw new Error('MTGJson database not initialized');
+    //     }
 
-        try {
-            // Create indexes if they don't exist
-            await mtgJsonDb.executeSql(`
-                CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price);
-                CREATE INDEX IF NOT EXISTS idx_prices_foil ON prices(foil_price);
-            `);
+    //     // Check cache first
+    //     const cacheKey = `${pageSize}_${offset}_${sortBy}`;
+    //     const cached = this.expensiveCardsCache[cacheKey];
+    //     if (cached && (Date.now() - cached.timestamp) < this.EXPENSIVE_CARDS_CACHE_DURATION) {
+    //         return cached.cards;
+    //     }
 
-            const [result] = await mtgJsonDb.executeSql(`
-                SELECT 
-                    c.uuid,
-                    c.name,
-                    c.setCode,
-                    c.number,
-                    c.rarity,
-                    COALESCE(p.normal_price, 0) as normal_price,
-                    COALESCE(p.foil_price, 0) as foil_price,
-                    COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
-                    COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
-                    COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
-                    COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price,
-                    COALESCE(p.cardkingdom_normal_price, 0) as cardkingdom_normal_price,
-                    COALESCE(p.cardkingdom_foil_price, 0) as cardkingdom_foil_price,
-                    COALESCE(p.cardsphere_normal_price, 0) as cardsphere_normal_price,
-                    COALESCE(p.cardsphere_foil_price, 0) as cardsphere_foil_price,
-                    p.last_updated
-                FROM cards c
-                LEFT JOIN prices p ON c.uuid = p.uuid
-                WHERE p.${sortBy} > 0
-                ORDER BY p.${sortBy} DESC
-                LIMIT ? OFFSET ?
-            `, [pageSize, offset]);
+    //     try {
+    //         // Create indexes if they don't exist
+    //         await mtgJsonDb.executeSql(`
+    //             CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price);
+    //             CREATE INDEX IF NOT EXISTS idx_prices_foil ON prices(foil_price);
+    //         `);
 
-            const cards = result.rows.raw().map(card => ({
-                uuid: card.uuid,
-                name: card.name,
-                setCode: card.setCode,
-                number: card.number,
-                rarity: card.rarity,
-                normal_price: parseFloat(card.normal_price) || 0,
-                foil_price: parseFloat(card.foil_price) || 0,
-                prices: {
-                    tcgplayer: {
-                        normal: parseFloat(card.tcg_normal_price) || 0,
-                        foil: parseFloat(card.tcg_foil_price) || 0
-                    },
-                    cardmarket: {
-                        normal: parseFloat(card.cardmarket_normal_price) || 0,
-                        foil: parseFloat(card.cardmarket_foil_price) || 0
-                    },
-                    cardkingdom: {
-                        normal: parseFloat(card.cardkingdom_normal_price) || 0,
-                        foil: parseFloat(card.cardkingdom_foil_price) || 0
-                    },
-                    cardsphere: {
-                        normal: parseFloat(card.cardsphere_normal_price) || 0,
-                        foil: parseFloat(card.cardsphere_foil_price) || 0
-                    }
-                },
-                last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
-            }));
+    //         const [result] = await mtgJsonDb.executeSql(`
+    //             SELECT 
+    //                 c.uuid,
+    //                 c.name,
+    //                 c.setCode,
+    //                 c.number,
+    //                 c.rarity,
+    //                 COALESCE(p.normal_price, 0) as normal_price,
+    //                 COALESCE(p.foil_price, 0) as foil_price,
+    //                 COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
+    //                 COALESCE(p.tcg_foil_price, 0) as tcg_foil_price,
+    //                 COALESCE(p.cardmarket_normal_price, 0) as cardmarket_normal_price,
+    //                 COALESCE(p.cardmarket_foil_price, 0) as cardmarket_foil_price,
+    //                 COALESCE(p.cardkingdom_normal_price, 0) as cardkingdom_normal_price,
+    //                 COALESCE(p.cardkingdom_foil_price, 0) as cardkingdom_foil_price,
+    //                 COALESCE(p.cardsphere_normal_price, 0) as cardsphere_normal_price,
+    //                 COALESCE(p.cardsphere_foil_price, 0) as cardsphere_foil_price,
+    //                 p.last_updated
+    //             FROM cards c
+    //             LEFT JOIN prices p ON c.uuid = p.uuid
+    //             WHERE p.${sortBy} > 0
+    //             ORDER BY p.${sortBy} DESC
+    //             LIMIT ? OFFSET ?
+    //         `, [pageSize, offset]);
 
-            // Cache the results
-            this.expensiveCardsCache[cacheKey] = {
-                cards,
-                timestamp: Date.now()
-            };
+    //         const cards = result.rows.raw().map(card => ({
+    //             uuid: card.uuid,
+    //             name: card.name,
+    //             setCode: card.setCode,
+    //             number: card.number,
+    //             rarity: card.rarity,
+    //             normal_price: parseFloat(card.normal_price) || 0,
+    //             foil_price: parseFloat(card.foil_price) || 0,
+    //             prices: {
+    //                 tcgplayer: {
+    //                     normal: parseFloat(card.tcg_normal_price) || 0,
+    //                     foil: parseFloat(card.tcg_foil_price) || 0
+    //                 },
+    //                 cardmarket: {
+    //                     normal: parseFloat(card.cardmarket_normal_price) || 0,
+    //                     foil: parseFloat(card.cardmarket_foil_price) || 0
+    //                 },
+    //                 cardkingdom: {
+    //                     normal: parseFloat(card.cardkingdom_normal_price) || 0,
+    //                     foil: parseFloat(card.cardkingdom_foil_price) || 0
+    //                 },
+    //                 cardsphere: {
+    //                     normal: parseFloat(card.cardsphere_normal_price) || 0,
+    //                     foil: parseFloat(card.cardsphere_foil_price) || 0
+    //                 }
+    //             },
+    //             last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
+    //         }));
 
-            return cards;
-        } catch (error) {
-            console.error('[DatabaseService] Error getting most expensive cards:', {
-                message: error instanceof Error ? error.message : 'Unknown error',
-                stack: error instanceof Error ? error.stack : undefined,
-                pageSize,
-                offset,
-                sortBy
-            });
+    //         // Cache the results
+    //         this.expensiveCardsCache[cacheKey] = {
+    //             cards,
+    //             timestamp: Date.now()
+    //         };
 
-            // Return cached data if available, even if expired
-            if (this.expensiveCardsCache[cacheKey]) {
-                return this.expensiveCardsCache[cacheKey].cards;
-            }
+    //         return cards;
+    //     } catch (error) {
+    //         console.error('[DatabaseService] Error getting most expensive cards:', {
+    //             message: error instanceof Error ? error.message : 'Unknown error',
+    //             stack: error instanceof Error ? error.stack : undefined,
+    //             pageSize,
+    //             offset,
+    //             sortBy
+    //         });
+
+    //         // Return cached data if available, even if expired
+    //         if (this.expensiveCardsCache[cacheKey]) {
+    //             return this.expensiveCardsCache[cacheKey].cards;
+    //         }
             
-            return [];
-        }
-    }
+    //         return [];
+    //     }
+    // }
 
-    async getSetList(): Promise<SetInfo[]> {
-        // Return cached data if it's still valid
-        if (this.setListCache && (Date.now() - this.setListLastUpdate) < this.SET_CACHE_DURATION) {
-            return this.setListCache;
-        }
+    // async getSetList(): Promise<SetInfo[]> {
+    //     // Return cached data if it's still valid
+    //     if (this.setListCache && (Date.now() - this.setListLastUpdate) < this.SET_CACHE_DURATION) {
+    //         return this.setListCache;
+    //     }
 
-        if (!mtgJsonDb) {
-            throw new Error('MTGJson database not initialized');
-        }
+    //     if (!mtgJsonDb) {
+    //         throw new Error('MTGJson database not initialized');
+    //     }
 
-        try {
-            // Use a more efficient JOIN instead of a subquery
-            // Add indexes if they don't exist
-            await mtgJsonDb.executeSql(`
-                CREATE INDEX IF NOT EXISTS idx_cards_setcode ON cards(setCode);
-                CREATE INDEX IF NOT EXISTS idx_sets_code ON sets(code);
-                CREATE INDEX IF NOT EXISTS idx_sets_releasedate ON sets(releaseDate);
-            `);
+    //     try {
+    //         // Use a more efficient JOIN instead of a subquery
+    //         // Add indexes if they don't exist
+    //         await mtgJsonDb.executeSql(`
+    //             CREATE INDEX IF NOT EXISTS idx_cards_setcode ON cards(setCode);
+    //             CREATE INDEX IF NOT EXISTS idx_sets_code ON sets(code);
+    //             CREATE INDEX IF NOT EXISTS idx_sets_releasedate ON sets(releaseDate);
+    //         `);
 
-            const [result] = await mtgJsonDb.executeSql(`
-                SELECT 
-                    s.code as setCode,
-                    s.name as setName,
-                    s.releaseDate,
-                    COUNT(c.uuid) as cardCount
-                FROM sets s
-                LEFT JOIN cards c ON s.code = c.setCode
-                GROUP BY s.code, s.name, s.releaseDate
-                ORDER BY s.releaseDate DESC, s.name ASC
-            `);
+    //         const [result] = await mtgJsonDb.executeSql(`
+    //             SELECT 
+    //                 s.code as setCode,
+    //                 s.name as setName,
+    //                 s.releaseDate,
+    //                 COUNT(c.uuid) as cardCount
+    //             FROM sets s
+    //             LEFT JOIN cards c ON s.code = c.setCode
+    //             GROUP BY s.code, s.name, s.releaseDate
+    //             ORDER BY s.releaseDate DESC, s.name ASC
+    //         `);
 
-            const sets: SetInfo[] = result.rows.raw().map(row => ({
-                code: row.setCode || '',
-                name: row.setName || row.setCode || '',
-                releaseDate: row.releaseDate,
-                cardCount: row.cardCount
-            }));
+    //         const sets: SetInfo[] = result.rows.raw().map(row => ({
+    //             code: row.setCode || '',
+    //             name: row.setName || row.setCode || '',
+    //             releaseDate: row.releaseDate,
+    //             cardCount: row.cardCount
+    //         }));
 
-            // Update cache with a longer duration since set data rarely changes
-            this.setListCache = sets;
-            this.setListLastUpdate = Date.now();
+    //         // Update cache with a longer duration since set data rarely changes
+    //         this.setListCache = sets;
+    //         this.setListLastUpdate = Date.now();
 
-            return sets;
-        } catch (error) {
-            console.error('[DatabaseService] Error getting set list:', error);
-            // Return cached data even if expired in case of error
-            if (this.setListCache) {
-                return this.setListCache;
-            }
-            return [];
-        }
-    }
+    //         return sets;
+    //     } catch (error) {
+    //         console.error('[DatabaseService] Error getting set list:', error);
+    //         // Return cached data even if expired in case of error
+    //         if (this.setListCache) {
+    //             return this.setListCache;
+    //         }
+    //         return [];
+    //     }
+    // }
 
     async clearSetListCache(): Promise<void> {
         this.setListCache = null;
@@ -2223,19 +2173,32 @@ export default class DatabaseService {
 
     async getSetCollections(): Promise<(Collection & SetCollectionStats)[]> {
         try {
-            await this.ensureInitialized();
+            console.log('[DatabaseService] Starting to get set collections...');
+
+            // Ensure main database is initialized
             if (!this.db) {
-                throw new Error('Database not initialized after ensureInitialized call');
+                console.log('[DatabaseService] Main database not initialized, initializing...');
+                await this.initDatabase();
+                if (!this.db) {
+                    throw new Error('Failed to initialize main database');
+                }
             }
 
-            console.log('[DatabaseService] Starting to get set collections...');
+            // Ensure MTGJson database is initialized
+            if (!mtgJsonDb) {
+                console.log('[DatabaseService] MTGJson database not initialized, initializing...');
+                await this.initializeDatabase();
+                if (!mtgJsonDb) {
+                    throw new Error('Failed to initialize MTGJson database');
+                }
+            }        
 
             // Ensure cache is populated
             await this.ensureCollectionCachePopulated();
 
             console.log('[DatabaseService] Getting set-based collections...');
             // Get all collections that are set-based (name starts with 'Set: ')
-            const [collections] = await this.db!.executeSql(
+            const [collections] = await this.db.executeSql(
                 `SELECT * FROM collections WHERE name LIKE 'Set: %' ORDER BY name`
             );
 
@@ -2254,24 +2217,34 @@ export default class DatabaseService {
 
                 try {
                     // Get total unique cards in set from MTGJson database, grouping by collector number
-                    const [totalResult] = await mtgJsonDb!.executeSql(`
-                        WITH CardGroups AS (
-                            SELECT 
-                                number,
-                                MIN(CASE WHEN side = 'a' THEN uuid ELSE NULL END) as front_uuid,
-                                MIN(CASE WHEN side != 'a' OR side IS NULL THEN uuid ELSE NULL END) as back_uuid
-                            FROM cards 
-                            WHERE setCode = ?
-                            GROUP BY number
-                        )
-                        SELECT COUNT(*) as total 
-                        FROM CardGroups
-                    `, [setCode]);
-                    
+                    const totalResult = await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
+                        // First, check if the 'cards' table exists
+                        const [tableCheck] = await db.executeSql("SELECT name FROM sqlite_master WHERE type='table' AND name='cards'");
+                        if (tableCheck.rows.length === 0) {
+                            console.warn("[DatabaseService] Table 'cards' does not exist in MTGJson database. Setting totalCards to 0.");
+                            // Return a fake result with total 0
+                            return { rows: { item: (_: number) => ({ total: 0 }) } };
+                        }
+
+                        const [results] = await db.executeSql(`
+                            WITH CardGroups AS (
+                                SELECT 
+                                    number,
+                                    MIN(CASE WHEN side = 'a' THEN uuid ELSE NULL END) as front_uuid,
+                                    MIN(CASE WHEN side != 'a' OR side IS NULL THEN uuid ELSE NULL END) as back_uuid
+                                FROM cards 
+                                WHERE setCode = ?
+                                GROUP BY number
+                            )
+                            SELECT COUNT(*) as total 
+                            FROM CardGroups
+                        `, [setCode]);
+                        return results;
+                    }); 
                     const totalCards = totalResult.rows.item(0).total;
 
                     // Get collected cards count and total value
-                    const [collectedResult] = await this.db!.executeSql(
+                    const [collectedResult] = await this.db.executeSql(
                         `SELECT 
                             COUNT(*) as collected,
                             SUM(CASE 
@@ -2287,7 +2260,6 @@ export default class DatabaseService {
                     const collectedCards = collectedResult.rows.item(0).collected;
                     const totalValue = collectedResult.rows.item(0).total_value || 0;
 
-
                     // Calculate completion percentage
                     const completionPercentage = totalCards > 0 ? (collectedCards / totalCards) * 100 : 0;
 
@@ -2300,7 +2272,7 @@ export default class DatabaseService {
                     });
                 } catch (collectionError) {
                     console.error(`[DatabaseService] Error processing collection ${collection.name}:`, collectionError);
-                    // Continue with next collection instead of failing completely
+                    // Push default values for this collection to avoid failing the entire request
                     setCollections.push({
                         ...collection,
                         totalCards: 0,
@@ -2311,22 +2283,18 @@ export default class DatabaseService {
                 }
             }
 
-            console.log(`[DatabaseService] Successfully retrieved ${setCollections.length} set collections`);
             return setCollections;
         } catch (error) {
             console.error('[DatabaseService] Error getting set collections:', error);
-            if (error instanceof Error) {
-                console.error('[DatabaseService] Error details:', {
-                    message: error.message,
-                    stack: error.stack
-                });
-            }
-            // Return empty array instead of throwing to prevent UI crashes
+            // Instead of throwing, we return an empty array to prevent UI crashes
             return [];
         }
     }
 
     async getOrCreateSetCollection(setCode: string, setName: string): Promise<string> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
 
         try {
             // First, try to find an existing collection by set code
@@ -2503,28 +2471,75 @@ export default class DatabaseService {
     }
 
     async ensureCollectionCachePopulated(): Promise<void> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         try {
-            await this.ensureInitialized();
-            if (!this.db) {
-                throw new Error('Database not initialized after ensureInitialized call');
-            }
+            // Find cards in collection_cards that aren't in the cache
+            const [missingCards] = await this.db!.executeSql(`
+                SELECT DISTINCT cc.card_uuid 
+                FROM collection_cards cc 
+                LEFT JOIN collection_cache cache ON cc.card_uuid = cache.uuid 
+                WHERE cache.uuid IS NULL
+            `);
 
-            // Check if cache is already populated
-            const [result] = await this.db.executeSql('SELECT COUNT(*) as count FROM collection_cache');
-            const count = result.rows.item(0).count;
+            if (missingCards.rows.length > 0) {
+                console.log(`Found ${missingCards.rows.length} cards missing from cache, repopulating...`);
+                
+                // Get card data from MTGJson database
+                for (let i = 0; i < missingCards.rows.length; i++) {
+                    const cardUuid = missingCards.rows.item(i).card_uuid;
+                    const [cardResult] = await mtgJsonDb!.executeSql(`
+                        SELECT c.*, 
+                            p.normal_price, p.foil_price,
+                            p.tcg_normal_price, p.tcg_foil_price,
+                            p.cardmarket_normal_price, p.cardmarket_foil_price
+                        FROM cards c
+                        LEFT JOIN prices p ON c.uuid = p.uuid
+                        WHERE c.uuid = ?
+                    `, [cardUuid]);
 
-            if (count === 0) {
-                // Rest of the method...
-                // ... existing code ...
+                    if (cardResult.rows.length > 0) {
+                        const cardData = cardResult.rows.item(0);
+                        const extendedCard: ExtendedCard = {
+                            id: cardData.uuid,
+                            uuid: cardData.uuid,
+                            name: cardData.name,
+                            setCode: cardData.setCode,
+                            setName: cardData.setName || '',
+                            collectorNumber: cardData.number.replace(/[^a-zA-Z0-9]/g, ''), // Clean special characters
+                            type: cardData.type || '',
+                            rarity: cardData.rarity,
+                            hasNonFoil: Boolean(cardData.normal_price || cardData.tcg_normal_price || cardData.cardmarket_normal_price),
+                            hasFoil: Boolean(cardData.foil_price || cardData.tcg_foil_price || cardData.cardmarket_foil_price),
+                            prices: {
+                                usd: cardData.normal_price?.toString() || null,
+                                usdFoil: cardData.foil_price?.toString() || null
+                            },
+                            purchaseUrls: {},
+                            legalities: {},
+                            colorIdentity: [],
+                            keywords: [],
+                            cmc: 0,
+                            frameEffects: []
+                        };
+
+                        await this.addToCache(extendedCard);
+                    }
+                }
+                console.log('Cache repopulation complete');
             }
         } catch (error) {
             console.error('Error ensuring collection cache population:', error);
             throw error;
         }
     }
-
+    //mtg.db delete collection
     async deleteCollection(collectionId: string): Promise<void> {
-        await this.ensureInitialized();
+        if (!this.db) {
+            await this.initDatabase();
+        }
 
         try {
             console.log(`[DatabaseService] Deleting collection ${collectionId}`);
@@ -2551,13 +2566,20 @@ export default class DatabaseService {
         }
     }
 
+    public ensureInitialized = async (): Promise<void> => {
+        await this.verifyDatabaseStructure();
+    };
+
     async clearScanHistory(): Promise<void> {
         if (!this.db) throw new Error('Database not initialized');
         await this.db.executeSql('DELETE FROM scan_history');
     }
-
+    //mtg.db remove card from collection
     async removeCardFromCollection(cardUuid: string, collectionId: string): Promise<void> {
-      
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
         try {
             await this.db!.executeSql(
                 `DELETE FROM collection_cards 
@@ -2570,51 +2592,38 @@ export default class DatabaseService {
         }
     }
 
-    /**
-     * Marks a card as "missing" in a collection by setting its quantity to 0
-     * This keeps the card in the collection but indicates it's not owned
-     */
-    async markCardAsMissing(cardUuid: string, collectionId: string): Promise<void> {
-        if (!cardUuid || !collectionId) {
-            console.error('[DatabaseService] Cannot mark card as missing: missing id or collectionId');
-            throw new Error('Card UUID and Collection ID are required');
+    // async removeLorcanaCardFromCollection(cardId: string, collectionId: string): Promise<void> {
+    //     if (!this.db) {
+    //         await this.initDatabase();
+    //     }
+
+    //     try {
+    //         await this.db!.executeSql(
+    //             `DELETE FROM lorcana_collection_cards 
+    //              WHERE card_id = ? AND collection_id = ?`,
+    //             [cardId, collectionId]
+    //         );
+    //     } catch (error) {
+    //         console.error('Error removing Lorcana card from collection:', error);
+    //         throw error;
+    //     }
+    // }
+
+    async getSetMissingCards(setCode: string): Promise<ExtendedCard[]> {
+        if (!this.db) {
+            await this.initDatabase();
+            if (!this.db) {
+                console.error('[DatabaseService] Failed to initialize database');
+                return [];
+            }
         }
         
-        try {
-            console.log(`[DatabaseService] Marking card ${cardUuid} as missing in collection ${collectionId}`);
-            const now = new Date().toISOString();
-            
-            await this.db!.executeSql(
-                `UPDATE collection_cards 
-                 SET quantity = 0, added_at = ?
-                 WHERE card_uuid = ? AND collection_id = ?`,
-                [now, cardUuid, collectionId]
-            );
-            
-            // Verify the update
-            const [verifyResult] = await this.db!.executeSql(
-                'SELECT quantity FROM collection_cards WHERE collection_id = ? AND card_uuid = ?',
-                [collectionId, cardUuid]
-            );
-            
-            if (verifyResult.rows.length > 0) {
-                console.log(`[DatabaseService] Card quantity is now: ${verifyResult.rows.item(0).quantity}`);
-            } else {
-                console.error('[DatabaseService] Card not found in collection after update');
-            }
-        } catch (error) {
-            console.error('[DatabaseService] Error marking card as missing:', error);
-            throw error;
-        }
-    }
-
-    async getSetMissingCards(setCode: string): Promise<ExtendedCard[]> {          
         try {
             // First get the collection ID for this set
             let collectionId: string;
              
             // Try to find collection by set code first
-            const [codeResult] = await this.db!.executeSql(
+            const [codeResult] = await this.db.executeSql(
                 "SELECT id FROM collections WHERE name = ?",
                 [`Set: ${setCode}`]
             );
@@ -2623,7 +2632,7 @@ export default class DatabaseService {
                 collectionId = codeResult.rows.item(0).id;
             } else {
                 // Try to find by set name from MTGJson database
-                const setName = await safeMTGJsonOperation(async (db) => {
+                const setName = await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                     const [setResult] = await db.executeSql(
                         "SELECT name FROM sets WHERE code = ?",
                         [setCode.toUpperCase()]
@@ -2632,7 +2641,7 @@ export default class DatabaseService {
                 });
 
                 if (setName) {
-                    const [nameResult] = await this.db!.executeSql(
+                    const [nameResult] = await this.db.executeSql(
                         "SELECT id FROM collections WHERE name = ?",
                         [`Set: ${setName}`]
                     );
@@ -2646,7 +2655,7 @@ export default class DatabaseService {
             }
             
             // Get cards from MTGJson database
-            const cards = await safeMTGJsonOperation(async (db) => {
+            const cards = await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
                 // Get cards and prices from MTGJson database
                 const [results] = await db.executeSql(`
                     SELECT 
@@ -2774,271 +2783,207 @@ export default class DatabaseService {
         }
     }
 
-    async getSetCardsForCollection(setCode: string, collectionId: string): Promise<ExtendedCard[]> {
-        if (!this.db) {
-            console.error('[DatabaseService] Failed to initialize database');
-            return [];
-        }
+    // async getSetCardsForCollection(setCode: string, collectionId: string): Promise<ExtendedCard[]> {
+    //     if (!this.db) {
+    //         await this.initDatabase();
+    //         if (!this.db) {
+    //             console.error('[DatabaseService] Failed to initialize database');
+    //             return [];
+    //         }
+    //     }
         
-        try {
-            // Get cards from MTGJson database
-            const cards = await safeMTGJsonOperation(async (db) => {
-                const [results] = await db.executeSql(`
-                    SELECT 
-                        c.uuid,
-                        c.name,
-                        c.setCode,
-                        c.number,
-                        c.rarity,
-                        c.type,
-                        c.manaCost,
-                        c.text,
-                        c.side,
-                        s.name as setName,
-                        COALESCE(p.normal_price, 0) as normal_price,
-                        COALESCE(p.foil_price, 0) as foil_price,
-                        COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
-                        COALESCE(p.tcg_foil_price, 0) as tcg_foil_price
-                    FROM cards c
-                    LEFT JOIN prices p ON c.uuid = p.uuid
-                    LEFT JOIN sets s ON c.setCode = s.code
-                    WHERE UPPER(c.setCode) = ?
-                    ORDER BY c.number ASC, c.side ASC
-                `, [setCode.toUpperCase()]);
+    //     try {
+    //         // Get cards from MTGJson database
+    //         const cards = await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
+    //             const [results] = await db.executeSql(`
+    //                 SELECT 
+    //                     c.uuid,
+    //                     c.name,
+    //                     c.setCode,
+    //                     c.number,
+    //                     c.rarity,
+    //                     c.type,
+    //                     c.manaCost,
+    //                     c.text,
+    //                     c.side,
+    //                     s.name as setName,
+    //                     COALESCE(p.normal_price, 0) as normal_price,
+    //                     COALESCE(p.foil_price, 0) as foil_price,
+    //                     COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
+    //                     COALESCE(p.tcg_foil_price, 0) as tcg_foil_price
+    //                 FROM cards c
+    //                 LEFT JOIN prices p ON c.uuid = p.uuid
+    //                 LEFT JOIN sets s ON c.setCode = s.code
+    //                 WHERE UPPER(c.setCode) = ?
+    //                 ORDER BY c.number ASC, c.side ASC
+    //             `, [setCode.toUpperCase()]);
                 
-                if (!this.db) {
-                    throw new Error('Database connection lost during operation');
-                }
+    //             if (!this.db) {
+    //                 throw new Error('Database connection lost during operation');
+    //             }
                 
-                // Get collection cards
-                const [collectionCards] = await this.db.executeSql(`
-                    SELECT card_uuid, quantity
-                    FROM collection_cards
-                    WHERE collection_id = ?
-                `, [collectionId]);
+    //             // Get collection cards
+    //             const [collectionCards] = await this.db.executeSql(`
+    //                 SELECT card_uuid, quantity
+    //                 FROM collection_cards
+    //                 WHERE collection_id = ?
+    //             `, [collectionId]);
                 
-                // Create a map for quick lookup
-                const collectionMap = new Map();
-                for (let i = 0; i < collectionCards.rows.length; i++) {
-                    const item = collectionCards.rows.item(i);
-                    collectionMap.set(item.card_uuid, item.quantity);
-                }
+    //             // Create a map for quick lookup
+    //             const collectionMap = new Map();
+    //             for (let i = 0; i < collectionCards.rows.length; i++) {
+    //                 const item = collectionCards.rows.item(i);
+    //                 collectionMap.set(item.card_uuid, item.quantity);
+    //             }
                 
-                // Process the results
-                const cardsByNumber = new Map();
-                for (let i = 0; i < results.rows.length; i++) {
-                    const card = results.rows.item(i);
-                    // Prefer side 'a' cards
-                    if (!cardsByNumber.has(card.number) || 
-                        (card.side === 'a' && cardsByNumber.get(card.number).side !== 'a')) {
-                        cardsByNumber.set(card.number, card);
-                    }
-                }
+    //             // Process the results
+    //             const cardsByNumber = new Map();
+    //             for (let i = 0; i < results.rows.length; i++) {
+    //                 const card = results.rows.item(i);
+    //                 // Prefer side 'a' cards
+    //                 if (!cardsByNumber.has(card.number) || 
+    //                     (card.side === 'a' && cardsByNumber.get(card.number).side !== 'a')) {
+    //                     cardsByNumber.set(card.number, card);
+    //                 }
+    //             }
                 
-                // Convert to ExtendedCard format
-                return Array.from(cardsByNumber.values()).map(card => {
-                    const quantity = collectionMap.get(card.uuid) || 0;
-                    const normalPrice = parseFloat(card.normal_price) || 
-                                       parseFloat(card.tcg_normal_price) || 0;
-                    const foilPrice = parseFloat(card.foil_price) || 
-                                     parseFloat(card.tcg_foil_price) || 0;
+    //             // Convert to ExtendedCard format
+    //             return Array.from(cardsByNumber.values()).map(card => {
+    //                 const quantity = collectionMap.get(card.uuid) || 0;
+    //                 const normalPrice = parseFloat(card.normal_price) || 
+    //                                    parseFloat(card.tcg_normal_price) || 0;
+    //                 const foilPrice = parseFloat(card.foil_price) || 
+    //                                  parseFloat(card.tcg_foil_price) || 0;
                     
-                    return {
-                        id: card.uuid,
-                        uuid: card.uuid,
-                        name: card.name,
-                        setCode: card.setCode,
-                        setName: card.setName,
-                        collectorNumber: card.number,
-                        type: card.type,
-                        manaCost: card.manaCost,
-                        text: card.text,
-                        rarity: card.rarity,
-                        imageUris: {
-                            small: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=small`,
-                            normal: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=normal`,
-                            large: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=large`,
-                            art_crop: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=art_crop`
-                        },
-                        prices: {
-                            usd: normalPrice > 0 ? normalPrice.toString() : null,
-                            usdFoil: foilPrice > 0 ? foilPrice.toString() : null,
-                            normal: normalPrice,
-                            foil: foilPrice,
-                            tcgplayer: {
-                                normal: parseFloat(card.tcg_normal_price) || 0,
-                                foil: parseFloat(card.tcg_foil_price) || 0
-                            },
-                            cardmarket: {
-                                normal: 0,
-                                foil: 0
-                            }
-                        },
-                        purchaseUrls: {},
-                        legalities: {},
-                        collected: quantity > 0,
-                        quantity: quantity,
-                        hasNonFoil: Boolean(normalPrice > 0),
-                        hasFoil: Boolean(foilPrice > 0),
-                        colorIdentity: [],
-                        keywords: [],
-                        cmc: 0,
-                        frameEffects: []
-                    };
-                });
-            });
+    //                 return {
+    //                     id: card.uuid,
+    //                     uuid: card.uuid,
+    //                     name: card.name,
+    //                     setCode: card.setCode,
+    //                     setName: card.setName,
+    //                     collectorNumber: card.number,
+    //                     type: card.type,
+    //                     manaCost: card.manaCost,
+    //                     text: card.text,
+    //                     rarity: card.rarity,
+    //                     imageUris: {
+    //                         small: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=small`,
+    //                         normal: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=normal`,
+    //                         large: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=large`,
+    //                         art_crop: `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=art_crop`
+    //                     },
+    //                     prices: {
+    //                         usd: normalPrice > 0 ? normalPrice.toString() : null,
+    //                         usdFoil: foilPrice > 0 ? foilPrice.toString() : null,
+    //                         normal: normalPrice,
+    //                         foil: foilPrice,
+    //                         tcgplayer: {
+    //                             normal: parseFloat(card.tcg_normal_price) || 0,
+    //                             foil: parseFloat(card.tcg_foil_price) || 0
+    //                         },
+    //                         cardmarket: {
+    //                             normal: 0,
+    //                             foil: 0
+    //                         }
+    //                     },
+    //                     purchaseUrls: {},
+    //                     legalities: {},
+    //                     collected: quantity > 0,
+    //                     quantity: quantity,
+    //                     hasNonFoil: Boolean(normalPrice > 0),
+    //                     hasFoil: Boolean(foilPrice > 0),
+    //                     colorIdentity: [],
+    //                     keywords: [],
+    //                     cmc: 0,
+    //                     frameEffects: []
+    //                 };
+    //             });
+    //         });
             
-            return cards;
-        } catch (error) {
-            console.error(`[DatabaseService] Error getting set cards for collection: ${error}`);
-            return [];
+    //         return cards;
+    //     } catch (error) {
+    //         console.error(`[DatabaseService] Error getting set cards for collection: ${error}`);
+    //         return [];
+    //     }
+    // }
+
+    async getCardByHash(hash: string): Promise<string | null> {
+        if (!this.db) {
+            await this.initDatabase();
         }
-    }
 
-
-    async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
         try {
-            const db = await getDB();
-            if (!db) {
-                console.error('[DatabaseService] Database not initialized');
-                return [];
+            const [result] = await this.db!.executeSql(
+                'SELECT uuid FROM card_hashes WHERE hash = ?',
+                [hash]
+            );
+
+            if (result.rows.length > 0) {
+                return result.rows.item(0).uuid;
             }
-            
-            // Get the cards with the given name, joining with sets and prices tables
-            const cards = await new Promise<any[]>((resolve, reject) => {
-                db.transaction(tx => {
-                    tx.executeSql(
-                        `SELECT c.*, 
-                         s.name as setName, 
-                         s.code as setCode,
-                         s.releaseDate as releaseDate,
-                         p.normal_price, 
-                         p.foil_price,
-                         p.tcg_normal_price,
-                         p.tcg_foil_price,
-                         p.cardmarket_normal_price,
-                         p.cardmarket_foil_price,
-                         p.cardkingdom_normal_price,
-                         p.cardkingdom_foil_price
-                         FROM cards c
-                         LEFT JOIN sets s ON c.setCode = s.code
-                         LEFT JOIN prices p ON c.uuid = p.uuid
-                         WHERE c.name = ?
-                         ORDER BY s.releaseDate DESC, c.number ASC`,
-                        [cardName],
-                        (_, results) => {
-                            const foundCards: any[] = [];
-                            for (let i = 0; i < results.rows.length; i++) {
-                                foundCards.push(results.rows.item(i));
-                            }
-                            resolve(foundCards);
-                        },
-                        (_, error) => {
-                            console.error(`[DatabaseService] Error fetching cards by name: ${error}`);
-                            reject(error);
-                            return true;
-                        }
-                    );
-                });
-            });
-            
-            // Helper function to safely parse JSON or comma-separated strings
-            const safeJsonParse = (jsonString: any, defaultValue: any = []) => {
-                if (!jsonString) return defaultValue;
-                if (typeof jsonString !== 'string') return jsonString;
-                
-                // First try to parse as JSON
-                try {
-                    if (jsonString.trim().startsWith('[')) {
-                        return JSON.parse(jsonString);
-                    }
-                } catch (error) {
-                    // JSON parsing failed, we'll handle below
-                }
-                
-                // If it's not JSON or parsing failed, try to split by comma
-                if (jsonString.includes(',')) {
-                    return jsonString.split(',').map(item => item.trim());
-                }
-                
-                // If it's a single value, return as a single-element array
-                return [jsonString.trim()];
-            };
-            
-            // Transform the raw cards into ExtendedCard objects
-            return cards.map(card => {
-                // Create prices object
-                const prices = {
-                    normal: card.normal_price || 0,
-                    foil: card.foil_price || 0,
-                    tcgplayer: {
-                        normal: card.tcg_normal_price || 0,
-                        foil: card.tcg_foil_price || 0
-                    },
-                    cardmarket: {
-                        normal: card.cardmarket_normal_price || 0,
-                        foil: card.cardmarket_foil_price || 0
-                    }
-                };
-                
-                // Get image URL or construct fallbacks in order of preference
-                let imageUrl = card.imageUrl || '';
-                
-                // If no image URL is available, try constructing from scryfallId
-                if (!imageUrl && card.scryfallId) {
-                    imageUrl = `https://api.scryfall.com/cards/${card.scryfallId}?format=image`;
-                } 
-                // If still no URL, try constructing from setCode and number
-                else if (!imageUrl && card.setCode && card.number) {
-                    imageUrl = `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image`;
-                }
-                
-                // Construct a descriptive set name with code in parentheses
-                const setNameWithCode = card.setName ? 
-                    `${card.setName} (${card.setCode})` : 
-                    card.setCode || 'Unknown Set';
-                
-                // Create the ExtendedCard object
-                const extendedCard: ExtendedCard = {
-                    id: card.id || card.uuid || '',
-                    uuid: card.uuid,
-                    name: card.name,
-                    setCode: card.setCode || '',
-                    setName: setNameWithCode,
-                    collectorNumber: card.number || '',
-                    type: card.type || '',
-                    manaCost: card.manaCost || '',
-                    text: card.text || '',
-                    rarity: card.rarity || '',
-                    toughness: card.toughness || '',
-                    power: card.power || '',
-                    imageUrl: imageUrl,
-                    imageUris: {
-                        normal: imageUrl,
-                        small: imageUrl,
-                        large: imageUrl,
-                        art_crop: imageUrl
-                    },
-                    prices: prices,
-                    purchaseUrls: {},
-                    legalities: {},
-                    colorIdentity: safeJsonParse(card.colorIdentity, []),
-                    keywords: safeJsonParse(card.keywords, []),
-                    cmc: card.cmc || 0,
-                    flavorText: card.flavorText || '',
-                    frameEffects: safeJsonParse(card.frameEffects, []),
-                    hasNonFoil: Boolean(card.hasNonFoil),
-                    hasFoil: Boolean(card.hasFoil),
-                    colors: safeJsonParse(card.colors, [])
-                };
-                
-                return extendedCard;
-            });
+            return null;
         } catch (error) {
-            console.error(`[DatabaseService] Error getting card variants: ${error}`);
-            return [];
+            console.error('[DatabaseService] Error getting card by hash:', error);
+            return null;
         }
     }
+
+    async insertCardHash(uuid: string, hash: string): Promise<void> {
+        if (!this.db) {
+            await this.initDatabase();
+        }
+
+        try {
+            await this.db!.executeSql(
+                'INSERT OR REPLACE INTO card_hashes (uuid, hash) VALUES (?, ?)',
+                [uuid, hash]
+            );
+        } catch (error) {
+            console.error('[DatabaseService] Error inserting card hash:', error);
+            throw error;
+        }
+    }
+
+    // Add this method to test logging
+    public async testLogging(): Promise<void> {
+        console.log('[DatabaseService] Test log 1');
+        console.warn('[DatabaseService] Test warning');
+        console.error('[DatabaseService] Test error');
+        console.log('[DatabaseService] Test log 2');
+    }
+
+    // async getCardVariants(cardName: string): Promise<ExtendedCard[]> {
+    //     try {
+    //         const db = await getDB();
+    //         const variants = await new Promise<ExtendedCard[]>((resolve, reject) => {
+    //             db.transaction(tx => {
+    //                 tx.executeSql(
+    //                     `SELECT * FROM cards WHERE name = ? AND (imageUris IS NOT NULL OR imageUrl IS NOT NULL)`,
+    //                     [cardName],
+    //                     (_, results) => {
+    //                         const cards: ExtendedCard[] = [];
+    //                         for (let i = 0; i < results.rows.length; i++) {
+    //                             const card = results.rows.item(i);
+    //                             // Parse JSON fields
+    //                             card.imageUris = card.imageUris ? JSON.parse(card.imageUris) : null;
+    //                             card.prices = card.prices ? JSON.parse(card.prices) : null;
+    //                             cards.push(card);
+    //                         }
+    //                         resolve(cards);
+    //                     },
+    //                     (_, error) => {
+    //                         reject(error);
+    //                         return false;
+    //                     }
+    //                 );
+    //             });
+    //         });
+    //         return variants;
+    //     } catch (error) {
+    //         console.error('Error getting card variants:', error);
+    //         throw error;
+    //     }
+    // }
 
     async createDecksTable(): Promise<void> {
         // Ensure database is initialized
@@ -3085,28 +3030,41 @@ export default class DatabaseService {
             });
         });
     }
-
+    //mtg.db get decks
     async getDecks(): Promise<Deck[]> {
         try {
+            // Ensure database is initialized
             await this.ensureInitialized();
-            if (!this.db) {
-                throw new Error('Database not initialized after ensureInitialized call');
-            }
-
-            const [result] = await this.db.executeSql('SELECT * FROM decks ORDER BY created_at DESC');
-            return result.rows.raw();
-        } catch (error) {
-            console.error('[DatabaseService] Error getting decks:', error);
-            if (error instanceof Error) {
-                console.error('[DatabaseService] Error details:', {
-                    message: error.message,
-                    stack: error.stack
+            
+            // Create the decks table if it doesn't exist
+            await this.createDecksTable();
+            
+            return new Promise((resolve, reject) => {
+                if (!this.db) {
+                    console.warn('Database not available yet, returning empty decks list');
+                    return resolve([]);
+                }
+                
+                this.db.transaction(tx => {
+                    tx.executeSql(
+                        'SELECT * FROM decks ORDER BY created_at DESC',
+                        [],
+                        (_, result) => resolve(result.rows.raw()),
+                        (_, error) => {
+                            console.error('SQL error in getDecks:', error);
+                            reject(error);
+                            return false;
+                        }
+                    );
                 });
-            }
-            throw error;
+            });
+        } catch (error) {
+            console.error('Error in getDecks:', error);
+            // Return empty array instead of rejecting
+            return [];
         }
     }
-
+    //mtg.db create deck
     async createDeck(name: string): Promise<number> {
         return new Promise((resolve, reject) => {
             this.db!.transaction(tx => {
@@ -3119,7 +3077,7 @@ export default class DatabaseService {
             });
         });
     }
-
+    //mtg.db get deck cards
     async getDeckCards(deckId: number): Promise<ExtendedCard[]> {
         return new Promise((resolve, reject) => {
             this.db!.transaction(tx => {
@@ -3227,7 +3185,41 @@ export default class DatabaseService {
             });
         });
     }
-
+    //mtg.db mark card as missing
+    async markCardAsMissing(cardUuid: string, collectionId: string): Promise<void> {
+        if (!cardUuid || !collectionId) {
+            console.error('[DatabaseService] Cannot mark card as missing: missing id or collectionId');
+            throw new Error('Card UUID and Collection ID are required');
+        }
+        
+        try {
+            console.log(`[DatabaseService] Marking card ${cardUuid} as missing in collection ${collectionId}`);
+            const now = new Date().toISOString();
+            
+            await this.db!.executeSql(
+                `UPDATE collection_cards 
+                 SET quantity = 0, added_at = ?
+                 WHERE card_uuid = ? AND collection_id = ?`,
+                [now, cardUuid, collectionId]
+            );
+            
+            // Verify the update
+            const [verifyResult] = await this.db!.executeSql(
+                'SELECT quantity FROM collection_cards WHERE collection_id = ? AND card_uuid = ?',
+                [collectionId, cardUuid]
+            );
+            
+            if (verifyResult.rows.length > 0) {
+                console.log(`[DatabaseService] Card quantity is now: ${verifyResult.rows.item(0).quantity}`);
+            } else {
+                console.error('[DatabaseService] Card not found in collection after update');
+            }
+        } catch (error) {
+            console.error('[DatabaseService] Error marking card as missing:', error);
+            throw error;
+        }
+    }
+    //mtg.db get all collected cards
     async getAllCollectedCards(): Promise<{ cards: ExtendedCard[], uuids: string[] }> {
         return new Promise((resolve, reject) => {
             this.db!.transaction(tx => {
@@ -3250,8 +3242,8 @@ export default class DatabaseService {
                 );
             });
         });
-    }
-
+        }
+        //mtg.db map collection UUID
     async mapCollectionUUID(collectionUUID: string[]): Promise<ExtendedCard | null> {
         try {
             // Check local cache first
@@ -3278,192 +3270,6 @@ export default class DatabaseService {
         }
     }
 
-    async diagnoseCollectionIssues(): Promise<{ 
-        mainDatabaseStatus: boolean;
-        mtgJsonDatabaseStatus: boolean;
-        lorcanaDatabaseStatus: boolean;
-        collectionsCount: number;
-        collectionsData: Array<Record<string, any>>;
-        collectionsCardCount: { [key: string]: number };
-        cacheStatus: { count: number; sampleEntries: Array<Record<string, any>> };
-        issues: string[];
-    }> {
-        const result = {
-            mainDatabaseStatus: false,
-            mtgJsonDatabaseStatus: false,
-            lorcanaDatabaseStatus: false,
-            collectionsCount: 0,
-            collectionsData: [] as Array<Record<string, any>>,
-            collectionsCardCount: {} as { [key: string]: number },
-            cacheStatus: { count: 0, sampleEntries: [] as Array<Record<string, any>> },
-            issues: [] as string[]
-        };
-        
-        try {
-            // Check main database
-            if (this.db) {
-                result.mainDatabaseStatus = true;
-            } else {
-                result.issues.push('Main database is not initialized');
-            }
-
-            // Check MTGJson database
-            if (this.isMTGJsonDatabaseInitialized()) {
-                result.mtgJsonDatabaseStatus = true;
-            } else {
-                result.issues.push('MTGJson database is not initialized');
-            }
-
-            // Check Lorcana database
-            try {
-                const lorcanaDb = await SQLite.openDatabase({
-                    name: 'lorcana.db',
-                    location: 'default',
-                });
-                if (lorcanaDb) {
-                    result.lorcanaDatabaseStatus = true;
-                    // Check if collections table exists in Lorcana database
-                    const [tables] = await lorcanaDb.executeSql(
-                        "SELECT name FROM sqlite_master WHERE type='table' AND name='lorcana_collections'"
-                    );
-                    if (tables.rows.length === 0) {
-                        result.issues.push('Lorcana collections table not found');
-                    }
-                }
-            } catch (error) {
-                result.issues.push(`Lorcana database error: ${error}`);
-            }
-
-            // Get collections from both databases
-            if (this.db) {
-                // MTG Collections
-                const [mtgCollections] = await this.db.executeSql('SELECT * FROM collections');
-                const mtgCollectionsData = mtgCollections.rows.raw();
-                result.collectionsData.push(...mtgCollectionsData);
-
-                // Count cards in each MTG collection
-                for (const collection of mtgCollectionsData) {
-                    const [cardCount] = await this.db.executeSql(
-                        'SELECT COUNT(*) as count FROM collection_cards WHERE collection_id = ?',
-                        [collection.id]
-                    );
-                    result.collectionsCardCount[collection.id] = cardCount.rows.item(0).count;
-                }
-
-                // Lorcana Collections
-                try {
-                    const lorcanaDb = await SQLite.openDatabase({
-                        name: 'lorcana.db',
-                        location: 'default',
-                    });
-                    const [lorcanaCollections] = await lorcanaDb.executeSql('SELECT * FROM lorcana_collections');
-                    const lorcanaCollectionsData = lorcanaCollections.rows.raw();
-                    result.collectionsData.push(...lorcanaCollectionsData);
-
-                    // Count cards in each Lorcana collection
-                    for (const collection of lorcanaCollectionsData) {
-                        const [cardCount] = await lorcanaDb.executeSql(
-                            'SELECT COUNT(*) as count FROM lorcana_collection_cards WHERE collection_id = ?',
-                            [collection.id]
-                        );
-                        result.collectionsCardCount[collection.id] = cardCount.rows.item(0).count;
-                    }
-                } catch (error) {
-                    result.issues.push(`Error getting Lorcana collections: ${error}`);
-                }
-
-                result.collectionsCount = result.collectionsData.length;
-            }
-
-            return result;
-        } catch (error) {
-            console.error('Error diagnosing collection issues:', error);
-            result.issues.push(`Diagnostic error: ${error}`);
-            return result;
-        }
-    }
-
-    // Add this near the database initialization
-    private async createTables() {
-        try {
-            // ... existing code ...
-
-            // Create card rulings table
-            await this.db!.executeSql(`
-                CREATE TABLE IF NOT EXISTS cardRulings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    cardUuid TEXT NOT NULL,
-                    date TEXT,
-                    text TEXT,
-                    FOREIGN KEY (cardUuid) REFERENCES cards (uuid)
-                )
-            `);
-
-            // ... existing code ...
-        } catch (error) {
-            console.error('[DatabaseService] Error creating tables:', error);
-            throw error;
-        }
-    }
-
-    // Add a new method to get card rulings
-    async getCardRulings(cardUuid: string): Promise<{date: string, text: string}[]> {
-        try {
-                if (!mtgJsonDb) {
-                    throw new Error('Database not initialized');
-                }
-
-            const [results] = await mtgJsonDb!.executeSql(`
-                SELECT date, text FROM cardRulings
-                WHERE uuid = ?
-                ORDER BY date ASC
-            `, [cardUuid]);
-
-            const rulings: {date: string, text: string}[] = [];
-            for (let i = 0; i < results.rows.length; i++) {
-                rulings.push(results.rows.item(i));
-            }
-
-            return rulings;
-        } catch (error) {
-            console.error('[DatabaseService] Error getting card rulings:', error);
-            return [];
-        }
-    }
-
-    // Add a method to save card rulings to database
-    async saveCardRulings(cardUuid: string, rulings: {date: string, text: string}[]): Promise<void> {
-        try {
-            if (!this.db) {
-                throw new Error('Database not initialized');
-            }
-
-            // Begin transaction
-            await this.db.executeSql('BEGIN TRANSACTION');
-
-            // Delete existing rulings
-            await this.db.executeSql('DELETE FROM cardRulings WHERE cardUuid = ?', [cardUuid]);
-
-            // Insert new rulings
-            for (const ruling of rulings) {
-                await this.db.executeSql(
-                    'INSERT INTO cardRulings (cardUuid, date, text) VALUES (?, ?, ?)',
-                    [cardUuid, ruling.date, ruling.text]
-                );
-            }
-
-            // Commit transaction
-            await this.db.executeSql('COMMIT');
-        } catch (error) {
-            // Rollback on error
-            if (this.db) {
-                await this.db.executeSql('ROLLBACK');
-            }
-            console.error('[DatabaseService] Error saving card rulings:', error);
-            throw error;
-        }
-    }
-
 }
 
 export const getDB = async () => {
@@ -3471,12 +3277,27 @@ export const getDB = async () => {
         if (mtgJsonDb) return mtgJsonDb;
         console.log('[DatabaseService] Initializing database...');
         
-        await databaseService.initializeAllDatabases();
-        return mtgJsonDb;
-    } catch (error) {
+        const dbName = 'mtg.db';
+        console.log('[DatabaseService] Database name:', dbName);
+
+        try {
+            mtgJsonDb = await openDatabase({
+                name: dbName,
+                location: 'default',
+                createFromLocation: 2
+            });
+
+            await mtgJsonDb.executeSql('PRAGMA foreign_keys = ON;');
+            await mtgJsonDb.executeSql('PRAGMA journal_mode = WAL;');
+            
+            return mtgJsonDb;
+        } catch (error) {
+            console.error('[DatabaseService] Initial database open failed, attempting recovery:', error);
+        }
+        } catch (error) {
         console.error('[DatabaseService] Database initialization failed completely:', error);
-        throw error;
-    }
+            throw error;
+        }
 };
 
 export const databaseService = new DatabaseService(); 

@@ -11,6 +11,7 @@ import {
     ScrollView,
     FlatList,
     Image,
+    Alert,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
@@ -23,6 +24,7 @@ import type { ExtendedCard } from '../../types/card';
 import type { SetInfo } from '../../services/DatabaseService';
 import { downloadAndImportPriceData } from '../../utils/priceData';
 import { getCachedImageUri, ensureCacheDirectory } from '../../utils/imageCache';
+import AllPrintingsJsonDatabase from '../../services/database/AllPrintingsJsonDatabase';
 
 const WatchlistScreen = () => {
     const navigation = useNavigation();
@@ -70,7 +72,7 @@ const WatchlistScreen = () => {
                 console.log(`[WatchlistScreen] Loading cards for set: ${selectedSet.code}`);
 
                 // Get all cards from the set with prices
-                const setCards = await databaseService.getAllCardsBySet(selectedSet.code, 1000, 0);
+                const setCards = await AllPrintingsJsonDatabase.getInstance().getAllCardsBySet(selectedSet.code, 1000, 0);
                 console.log(`[WatchlistScreen] Found ${setCards.length} cards in set ${selectedSet.code}`);
 
                 if (setCards.length > 0) {
@@ -89,7 +91,7 @@ const WatchlistScreen = () => {
                 }
             } else {
                 // Get most expensive cards across all sets
-                const cards = await databaseService.getMostExpensiveCards(PAGE_SIZE, (currentPage - 1) * PAGE_SIZE, sortBy);
+                const cards = await AllPrintingsJsonDatabase.getInstance().getMostExpensiveCards(PAGE_SIZE, (currentPage - 1) * PAGE_SIZE, sortBy);
                 if (cards.length < PAGE_SIZE) {
                     setHasMore(false);
                 }
@@ -150,17 +152,17 @@ const WatchlistScreen = () => {
             try {
                 setIsSetModalLoading(true);
                 console.log('[WatchlistScreen] Loading sets...');
-                const setList = await databaseService.getSetList();
+                const setList = await AllPrintingsJsonDatabase.getInstance().getSetList();
                 console.log('[WatchlistScreen] Loaded sets:', setList.length);
                 if (setList.length === 0) {
                     console.log('[WatchlistScreen] No sets found, checking database state...');
                     await databaseService.verifyDatabaseState();
                     // Try loading sets again
-                    const retrySetList = await databaseService.getSetList();
+                    const retrySetList = await AllPrintingsJsonDatabase.getInstance().getSetList();
                     console.log('[WatchlistScreen] Retry loaded sets:', retrySetList.length);
-                    setSets(retrySetList);
+                    setSets(retrySetList.map(set => ({...set, cardCount: 0})));
                 } else {
-                    setSets(setList);
+                    setSets(setList.map(set => ({...set, cardCount: 0})));
                 }
             } catch (error) {
                 console.error('[WatchlistScreen] Error loading sets:', error);
@@ -413,8 +415,24 @@ const WatchlistScreen = () => {
             setIsRefreshing(true);
             console.log('[WatchlistScreen] Starting price refresh...');
             
+            // Check if MTGJson database exists
+            const allPrintingsDb = AllPrintingsJsonDatabase.getInstance();
+            const dbExists = await allPrintingsDb.databaseExists();
+            
+            if (!dbExists) {
+                console.log('[WatchlistScreen] MTGJson database does not exist, downloading...');
+                const downloadSuccess = await allPrintingsDb.downloadMTGJsonDatabase();
+                
+                if (!downloadSuccess) {
+                    console.error('[WatchlistScreen] Failed to download MTGJson database');
+                    throw new Error('Failed to download MTGJson database');
+                }
+                
+                console.log('[WatchlistScreen] MTGJson database downloaded successfully');
+            }
+            
             // Reinitialize database if needed
-            await databaseService.reinitializePrices();
+            await AllPrintingsJsonDatabase.getInstance().reinitializePrices();
             
             // Force the price data update
             const shouldUpdate = await databaseService.shouldUpdatePrices(true);
@@ -436,20 +454,17 @@ const WatchlistScreen = () => {
                     console.error('[WatchlistScreen] Price data import failed - no prices found in database');
                     throw new Error('Price data import failed');
                 }
-            } else {
-                console.error('[WatchlistScreen] Force update failed - shouldUpdate returned false');
-                throw new Error('Force update failed');
             }
             
-            // Reload price data after update
-            console.log('[WatchlistScreen] Reloading price data...');
-            await loadPriceData(searchQuery, false);
-            console.log('[WatchlistScreen] Price refresh completed');
+            // Reload price data
+            loadPriceData(searchQuery, true);
+            
+            setIsRefreshing(false);
+            console.log('[WatchlistScreen] Price refresh completed successfully');
         } catch (error) {
             console.error('[WatchlistScreen] Error refreshing prices:', error);
-            // You might want to show an error message to the user here
-        } finally {
             setIsRefreshing(false);
+            Alert.alert('Error', 'Failed to refresh price data. Please try again later.');
         }
     };
 
@@ -554,13 +569,6 @@ const WatchlistScreen = () => {
                             <Text style={styles.actionButtonText}>Update</Text>
                         </>
                     )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={styles.actionButton}
-                    onPress={() => databaseService.printTenCardsRows()}
-                >
-                    <Icon name="bug" size={20} color="#fff" style={styles.buttonIcon} />
-                    <Text style={styles.actionButtonText}>Debug</Text>
                 </TouchableOpacity>
             </View>
 

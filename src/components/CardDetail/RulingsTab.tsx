@@ -4,7 +4,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { ExtendedCard } from '../../types/card';
 import { databaseService } from '../../services/DatabaseService';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-
+import AllPrintingsJsonDatabase from '../../services/database/AllPrintingsJsonDatabase';
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<any>;
 
 interface CardRuling {
@@ -41,7 +41,7 @@ const fetchCardRulings = async (card: ExtendedCard): Promise<CardRuling[]> => {
     try {
         // First check if we have rulings in the database
         if (card.uuid) {
-            const dbRulings = await databaseService.getCardRulings(card.uuid);
+            const dbRulings = await AllPrintingsJsonDatabase.getInstance().getCardRulings(card.uuid);
             if (dbRulings.length > 0) {
                 // Use console.debug instead of console.log to avoid issues
                 if (__DEV__) {
@@ -74,7 +74,7 @@ const fetchCardRulings = async (card: ExtendedCard): Promise<CardRuling[]> => {
             if (__DEV__) {
                 console.debug(`Saving ${rulings.length} rulings to database for ${card.name}`);
             }
-            await databaseService.saveCardRulings(card.uuid, rulings);
+            await AllPrintingsJsonDatabase.getInstance().saveCardRulings(card.uuid, rulings);
         }
         
         return rulings;

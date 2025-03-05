@@ -3,7 +3,7 @@ import { View, Text, ActivityIndicator, ScrollView, TouchableOpacity, StyleSheet
 import FastImage from "@d11/react-native-fast-image";
 import { useTheme } from '../../context/ThemeContext';
 import { ExtendedCard } from '../../types/card';
-import { databaseService } from '../../services/DatabaseService';
+import { AllPrintingsJsonDatabase } from '../../services/database/AllPrintingsJsonDatabase';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getImageSource, handleImageLoadSuccess, handleImageLoadError } from '../../utils/imageUtils';
 
@@ -86,7 +86,7 @@ const VariationsTab: React.FC<VariationsTabProps> = ({
             // Only load variations if preloadedVariations isn't provided
             if (!preloadedVariations) {
                 // Original loading logic
-                const variantCards = await databaseService.getCardVariants(card.name);
+                const variantCards = await AllPrintingsJsonDatabase.getInstance().getCardVariants(card.name);
                 setVariations(variantCards);
             }
             
