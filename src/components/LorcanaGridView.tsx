@@ -74,11 +74,11 @@ const CardItem = React.memo(({
     const isImageAlreadyLoaded = loadedGridImages.has(imageUrl);
     
     // Only log and track image loading once
-    const logImageLoading = (url: string) => {
+    const logImageLoading = useCallback((url: string) => {
         if (!loadedGridImages.has(url) && url) {
             loadedGridImages.add(url);
         }
-    };
+    }, []);
     
     // Debug image URLs
     useEffect(() => {
@@ -149,6 +149,16 @@ const CardItem = React.memo(({
                 </Text>
             </View>
         </TouchableOpacity>
+    );
+}, (prevProps, nextProps) => {
+    // Custom equality check that only re-renders if necessary properties change
+    return (
+        prevProps.isCollected === nextProps.isCollected &&
+        prevProps.item.Unique_ID === nextProps.item.Unique_ID &&
+        prevProps.item.Name === nextProps.item.Name &&
+        prevProps.item.Card_Num === nextProps.item.Card_Num &&
+        prevProps.item.prices?.usd === nextProps.item.prices?.usd &&
+        prevProps.item.Image === nextProps.item.Image
     );
 });
 
@@ -271,6 +281,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [hasMore, setHasMore] = useState(true);
     const [showVersionModal, setShowVersionModal] = useState(false);
     const [availableVersions, setAvailableVersions] = useState<PartialLorcanaCardWithPrice[]>([]);
+    const [isLoadingVersions, setIsLoadingVersions] = useState(false);
     // Add a ref to track cards that failed price lookup
     const failedPriceLookups = React.useRef<Set<string>>(new Set());
 
@@ -505,16 +516,9 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         }
     };
 
-    const handleLongPress = (card: PartialLorcanaCardWithPrice) => {
-        setSelectedCard(null); // Close the card details modal first
-        // Fetch available versions for the card
-        fetchAvailableVersions(card);
-        setSelectedCard(card);
-        setShowVersionModal(true);
-    };
-
-    const fetchAvailableVersions = async (card: PartialLorcanaCardWithPrice) => {
+    const fetchAvailableVersions = useCallback(async (card: PartialLorcanaCardWithPrice) => {
         try {
+            setIsLoadingVersions(true);
             const db = await getDB();
             const [results] = await db.executeSql(
                 'SELECT * FROM lorcana_cards WHERE Name = ?',
@@ -526,9 +530,20 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             }
             setAvailableVersions(versions);
         } catch (error) {
-            console.error('Error fetching card versions:', error);
+            console.error('[LorcanaGridView] Error fetching card versions:', error);
+            setAvailableVersions([]);
+        } finally {
+            setIsLoadingVersions(false);
         }
-    };
+    }, []);
+
+    const handleLongPress = useCallback((card: PartialLorcanaCardWithPrice) => {
+        setSelectedCard(null); // Close the card details modal first
+        // Fetch available versions for the card
+        fetchAvailableVersions(card);
+        setSelectedCard(card);
+        setShowVersionModal(true);
+    }, [fetchAvailableVersions]);
 
     const handleVersionChange = async (newVersion: PartialLorcanaCardWithPrice) => {
         try {
@@ -615,10 +630,8 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         );
     };
 
-    
-
-    // Replace the renderCard function with a wrapper that uses our component
-    const renderCard = ({ item }: { item: PartialLorcanaCardWithPrice }) => {
+    // Memoize the renderCard function with useCallback to prevent re-creation on each render
+    const renderCard = useCallback(({ item }: { item: PartialLorcanaCardWithPrice }) => {
         // Force boolean evaluation to ensure consistent behavior
         const isCollected = !!item.collected;
         return (
@@ -629,7 +642,12 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 onLongPress={() => handleLongPress(item)}
             />
         );
-    };
+    }, [handleLongPress, setSelectedCard]);
+
+    // Memoize the keyExtractor function to prevent re-creation on each render
+    const keyExtractor = useCallback((item: PartialLorcanaCardWithPrice) => 
+        (item.Unique_ID || `${item.Name}-${item.Card_Num}-${item.Set_Num}`).toString(),
+    []);
 
     const renderVersionModal = () => (
         <Modal
@@ -959,17 +977,32 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                     sortDirection
                 ])}
                 renderItem={renderCard}
-                keyExtractor={(item) => 
-                    (item.Unique_ID || `${item.Name}-${item.Card_Num}-${item.Set_Num}`).toString()
-                }
+                keyExtractor={keyExtractor}
                 numColumns={3}
                 contentContainerStyle={styles.flatListContent}
                 onEndReached={loadMoreCards}
-                onEndReachedThreshold={0.5}
-                initialNumToRender={15}
-                maxToRenderPerBatch={10}
-                windowSize={5}
-                removeClippedSubviews={true}
+                // Add performance optimizations
+                initialNumToRender={9} // Just what's visible initially (3 columns x 3 rows)
+                maxToRenderPerBatch={9} // Render in smaller batches
+                windowSize={5} // Reduce window size for better performance
+                removeClippedSubviews={true} // Detach off-screen views
+                updateCellsBatchingPeriod={50} // Batch updates
+                onEndReachedThreshold={0.5} // Load more when halfway to the end
+                // Use getItemLayout if all items have fixed dimensions
+                getItemLayout={(data, index) => ({
+                    length: 160, // Height of each item (adjust based on your actual item height)
+                    offset: 160 * Math.floor(index / 3), // Calculate offset based on row
+                    index,
+                })}
+                // Add list optimization props
+                CellRendererComponent={({ children, index, style, ...props }) => (
+                    <View style={[style]} {...props}>
+                        {children}
+                    </View>
+                )}
+                maintainVisibleContentPosition={{
+                    minIndexForVisible: 0
+                }}
             />
             {renderVersionModal()}
         </View>
