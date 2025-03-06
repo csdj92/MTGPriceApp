@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -8,17 +8,14 @@ import {
     Alert,
     Modal,
     SafeAreaView,
-    FlatList,
     ActivityIndicator,
     BackHandler,
     Platform,
-    ToastAndroid,
-    Linking,
-    NativeModules
+    ToastAndroid
 } from 'react-native';
 import { scryfallService } from '../../services/ScryfallService';
 import { databaseService } from '../../services/DatabaseService';
-import { searchLorcanaCards, getLorcanaCardWithPrice, markCardAsCollected, initializeLorcanaDatabase, listAllCardNames, clearLorcanaDatabase, reloadLorcanaCards, getOrCreateLorcanaSetCollection, addCardToLorcanaCollection } from '../../services/LorcanaService';
+import { searchLorcanaCards, markCardAsCollected, initializeLorcanaDatabase, listAllCardNames, getOrCreateLorcanaSetCollection, addCardToLorcanaCollection } from '../../services/LorcanaService';
 import { CardProcessingService, VerificationStatus } from '../../services/CardProcessingService';
 import CardList from '../../components/CardList';
 import CardScanner from '../../components/CardScanner';
@@ -30,12 +27,8 @@ import type { RootStackParamList } from '../../navigation/AppNavigator';
 import CollectionSelector from '../../components/CollectionSelector';
 import type { Collection } from '../../services/DatabaseService';
 import LorcanaCardList from '../../components/LorcanaCardList';
-import { CommonActions } from '@react-navigation/native';
 import LorcanaCardSelectionModal from '../../components/LorcanaCardSelectionModal';
-import CameraTest from '../../components/test';
-import { Camera } from 'react-native-vision-camera';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import { LiveOcrModule } from '../../types/NativeModules';
 import { CameraService } from '../../services/CameraService';
 import { Logger } from '../../utils/logger';
 import ZoomControls from '../../components/price-lookup/ZoomControls';
@@ -77,7 +70,6 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     } | null>(null);
     const recentScansRef = useRef<Set<string>>(new Set());
     const [cameraPermission, setCameraPermission] = useState<'not-determined' | 'granted' | 'denied'>('not-determined');
-    const [useClassifier, setUseClassifier] = useState(false);
     const [verificationStatus, setVerificationStatus] = useState<VerificationStatus>({
         isVerifying: false,
         card: null,
@@ -434,30 +426,6 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         
         // Set the native module to Lorcana scan mode
         CameraService.setLorcanaScanMode(true);
-        setUseClassifier(false); // Use OCR instead of classifier for Lorcana cards
-    };
-
-    const handleClearLorcanaDB = async () => {
-        try {
-            await clearLorcanaDatabase();
-            Alert.alert('Success', 'Lorcana database cleared successfully');
-        } catch (error) {
-            console.error('Error clearing Lorcana database:', error);
-            Alert.alert('Error', 'Failed to clear Lorcana database');
-        }
-    };
-
-    const handleReloadLorcanaCards = async () => {
-        try {
-            setIsLoading(true);
-            await reloadLorcanaCards();
-            Alert.alert('Success', 'Lorcana cards reloaded successfully');
-        } catch (error) {
-            console.error('Error reloading Lorcana cards:', error);
-            Alert.alert('Error', 'Failed to reload Lorcana cards');
-        } finally {
-            setIsLoading(false);
-        }
     };
 
     const handleCardCollection = (card: any) => {
@@ -501,14 +469,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             <CardScanner
                 onTextDetected={(result: any) => {
                     // Adapt the result to match OcrResult type
-                    const ocrResult: OcrResult = useClassifier 
-                        ? {
-                            text: result.text,
-                            mainName: result.text,
-                            subtype: '',
-                            isLorcana: isLorcanaScan
-                        } 
-                        : {
+                    const ocrResult: OcrResult =  {
                             // For LiveOcr results, preserve all properties including setCode and cardNumber
                             text: result.text,
                             mainName: result.mainName || result.text,
@@ -524,7 +485,6 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 totalPrice={totalPrice}
                 onCardPress={handleCardPress}
                 isPaused={isScanningPaused}
-                useClassifier={false}
                 cardVariations={showVersionSelector ? cardVersions : []}
                 onVariationSelect={setSelectedVersion}
                 selectedVariation={selectedVersion}
@@ -840,38 +800,6 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                     >
                         <Icon name="cards" size={24} color="#fff" />
                         <Text style={styles.actionButtonText}>Lorcana</Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: '#d32f2f' }]}
-                        onPress={handleClearLorcanaDB}
-                    >
-                        <Icon name="database-remove" size={24} color="#fff" />
-                        <Text style={styles.actionButtonText}>Clear DB</Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: '#388e3c' }]}
-                        onPress={handleReloadLorcanaCards}
-                        disabled={isLoading}
-                    >
-                        <Icon name="database-sync" size={24} color="#fff" />
-                        <Text style={styles.actionButtonText}>Reload</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: '#388e3c' }]}
-                        onPress={() => navigation.navigate('CameraTest')}
-                        disabled={isLoading}
-                    >
-                        <Icon name="camera" size={24} color="#fff" />
-                        <Text style={styles.actionButtonText}>React Camera</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: '#FF9800' }]}
-                        onPress={() => setUseClassifier(prev => !prev)}
-                    >
-                        <Icon name="robot" size={24} color="#fff" />
-                        <Text style={styles.actionButtonText}>Classifier</Text>
                     </TouchableOpacity>
                 </View>
             </View>

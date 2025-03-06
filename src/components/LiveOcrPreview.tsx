@@ -5,7 +5,6 @@ import type { HostComponent } from 'react-native';
 interface NativeLiveOcrPreviewProps {
     style?: StyleProp<ViewStyle>;
     isActive: boolean;
-    type?: 'ocr' | 'classifier';  // Add type prop to specify which preview to use
 }
 
 interface LiveOcrPreviewProps extends NativeLiveOcrPreviewProps {}
@@ -18,7 +17,6 @@ const LiveOcrPreviewWithOverlay: React.FC<LiveOcrPreviewProps> = (props) => {
             <NativeLiveOcrPreview 
                 style={[props.style, styles.preview]} 
                 isActive={props.isActive}
-                type={props.type || 'ocr'}  // Default to 'ocr' if not specified
             />
             <View style={styles.overlay} />
         </View>

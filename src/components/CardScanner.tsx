@@ -7,20 +7,14 @@ import {
   NativeEventEmitter,
   PermissionsAndroid,
   Dimensions,
-  AppState,
   Platform,
   ToastAndroid,
-  Image,
   TouchableOpacity,
   Modal,
   ScrollView,
   SafeAreaView,
-  Alert,
   ActivityIndicator,
   FlatList,
-  Animated,
-  Switch,
-  BackHandler,
 } from 'react-native';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { ExtendedCard, OcrResult } from '../types/card';
@@ -28,15 +22,12 @@ import { LiveOcrModule } from '../types/NativeModules';
 import { CameraService } from '../services/CameraService';
 import { Logger } from '../utils/logger';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import { getImageSource, handleImageLoadError, handleImageLoadSuccess, getLorcanaImageUrl } from '../utils/imageUtils';
+import { handleImageLoadError, handleImageLoadSuccess, getLorcanaImageUrl } from '../utils/imageUtils';
 import FastImage from '@d11/react-native-fast-image';
 
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
-// Only import LiveImageClassifier directly for now until we create a service for it
-const { LiveImageClassifier } = NativeModules;
 const liveOcrEmitter = LiveOcrModule ? new NativeEventEmitter(NativeModules.LiveOcr) : null;
-const liveImageClassifierEmitter = LiveImageClassifier ? new NativeEventEmitter(LiveImageClassifier) : null;
 
 interface CardScannerProps {
   onTextDetected: (result: any) => void;
@@ -45,7 +36,6 @@ interface CardScannerProps {
   totalPrice: number;
   onCardPress?: (card: ExtendedCard) => void;
   isPaused?: boolean;
-  useClassifier?: boolean;
   cardVariations?: ExtendedCard[];
   onVariationSelect?: (card: ExtendedCard) => void;
   selectedVariation?: ExtendedCard | null;
@@ -59,7 +49,6 @@ const CardScanner: React.FC<CardScannerProps> = ({
   totalPrice,
   onCardPress,
   isPaused = false,
-  useClassifier = false,
   cardVariations = [],
   onVariationSelect,
   selectedVariation = null,
@@ -74,27 +63,21 @@ const CardScanner: React.FC<CardScannerProps> = ({
   const [isRecentCardsCollapsed, setIsRecentCardsCollapsed] = useState(false);
   const [showingVariations, setShowingVariations] = useState(false);
 
-  const emitter = useClassifier ? liveImageClassifierEmitter : liveOcrEmitter;
-  const eventName = useClassifier ? 'LiveImageClassification' : 'LiveOcrResult';
+  const emitter = liveOcrEmitter;
+  const eventName = 'LiveOcrResult';
 
   useEffect(() => {
     checkPermission();
 
-    const subscription = emitter?.addListener(eventName, (event) => {
+    const subscription = emitter?.addListener(eventName, (event: any) => {
       if (!isPaused) {
-        if (useClassifier) {
-          if (event.label) {
-            onTextDetected({ text: event.label });
-          }
-        } else {
-          if (event.text) {
-            onTextDetected(event);
-          }
+        if (event.text) {
+          onTextDetected(event);
         }
       }
     });
 
-    const sizeSubscription = emitter?.addListener('PreviewSize', (event) => {
+    const sizeSubscription = emitter?.addListener('PreviewSize', (event: any) => {
       const { width, height } = event;
       setPreviewSize({ width, height });
       updateAspectRatio(width, height);
@@ -129,44 +112,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
         // If we're paused and active, temporarily stop processing
         if (isActive) {
           try {
-            if (useClassifier) {
-              await LiveImageClassifier.pauseProcessing();
-            } else {
-              await LiveOcrModule.pauseProcessing();
-            }
-          } catch (error) {
-            console.warn('Failed to pause processing:', error);
-          }
-        }
-      } else if (isActive) {
-        // If we're no longer paused and still active, resume processing
-        try {
-          if (useClassifier) {
-            await LiveImageClassifier.resumeProcessing();
-          } else {
-            await LiveOcrModule.resumeProcessing();
-          }
-        } catch (error) {
-          console.warn('Failed to resume processing:', error);
-        }
-      }
-    };
-
-    handlePauseStateChange();
-  }, [isPaused, isActive, useClassifier]);
-
-  // Add useEffect to handle pause state changes
-  useEffect(() => {
-    const handlePauseStateChange = async () => {
-      if (isPaused) {
-        // If we're paused and active, temporarily stop processing
-        if (isActive) {
-          try {
-            if (useClassifier) {
-              await LiveImageClassifier.pauseProcessing();
-            } else {
-              await CameraService.pauseProcessing();
-            }
+            await CameraService.pauseProcessing();
           } catch (error) {
             Logger.error('Failed to pause processing:', error);
             showErrorToast('Failed to pause camera');
@@ -175,11 +121,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
       } else if (isActive) {
         // If we're no longer paused and still active, resume processing
         try {
-          if (useClassifier) {
-            await LiveImageClassifier.resumeProcessing();
-          } else {
-            await CameraService.resumeProcessing();
-          }
+          await CameraService.resumeProcessing();
         } catch (error) {
           Logger.error('Failed to resume processing:', error);
           showErrorToast('Failed to resume camera');
@@ -188,7 +130,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
     };
 
     handlePauseStateChange();
-  }, [isPaused, isActive, useClassifier]);
+  }, [isPaused, isActive]);
 
   // Handle card press - either use the passed handler or show our own modal
   const handleCardPress = useCallback((card: ExtendedCard) => {
@@ -688,15 +630,9 @@ const CardScanner: React.FC<CardScannerProps> = ({
   const startSession = async () => {
     try {
       Logger.debug('CardScanner: Starting camera session');
-      if (useClassifier) {
-        await LiveImageClassifier.startClassificationSession();
-        const { width, height } = await LiveImageClassifier.getPreviewSize();
-        updateAspectRatio(width, height);
-      } else {
-        await CameraService.startOcrSession();
-        const { width, height } = await CameraService.getPreviewSize();
-        updateAspectRatio(width, height);
-      }
+      await CameraService.startOcrSession();
+      const { width, height } = await CameraService.getPreviewSize();
+      updateAspectRatio(width, height);
       setIsActive(true);
     } catch (error: any) {
       Logger.error('Failed to start camera session:', error);
@@ -709,11 +645,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
   const stopSession = async () => {
     try {
       Logger.debug('CardScanner: Stopping camera session');
-      if (useClassifier) {
-        await LiveImageClassifier.stopClassificationSession();
-      } else {
-        await CameraService.stopOcrSession();
-      }
+      await CameraService.stopOcrSession();
     } catch (error) {
       Logger.error('Failed to stop camera session:', error);
       // Don't show toast here as this is often called during unmount
@@ -741,7 +673,6 @@ const CardScanner: React.FC<CardScannerProps> = ({
         <LiveOcrPreviewWithOverlay 
           style={StyleSheet.absoluteFill} 
           isActive={isActive && !isPaused}
-          type={useClassifier ? 'classifier' : 'ocr'}
         />
         {isPaused && !showingVariations && (
           <View style={styles.pausedOverlay}>

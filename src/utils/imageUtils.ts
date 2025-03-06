@@ -11,6 +11,9 @@ const successfulImageLoads: Record<string, { lastSuccess: number, loadCount: num
 // Using a Map where key is a hash of the URLs and value is a timestamp
 const preloadedImageSets: Map<string, number> = new Map();
 
+// Track already logged image URLs to prevent duplicate logging
+const loggedImageUrls: Set<string> = new Set();
+
 // Time period (in ms) before we consider refreshing a previously preloaded set
 // Default: 30 minutes
 const PRELOAD_REFRESH_THRESHOLD = 30 * 60 * 1000;
@@ -96,8 +99,11 @@ export const getImageSource = (imageUrl: string | null | undefined) => {
     return null;
   }
 
-  // Log the full image URL we're trying to load
-  console.log(`[ImageUtils] Loading full URL: ${imageUrl}`);
+  // Log the full image URL we're trying to load only if it hasn't been logged before
+  if (!loggedImageUrls.has(imageUrl)) {
+    console.log(`[ImageUtils] Loading full URL: ${imageUrl}`);
+    loggedImageUrls.add(imageUrl);
+  }
 
   // Check if this image has failed too many times recently
   const failRecord = failedImageAttempts[imageUrl];

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     View,
     Text,
@@ -23,6 +23,9 @@ import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '..
 
 // Use a more flexible type for cards
 type LorcanaCardType = LorcanaCard | PartialLorcanaCard | PartialLorcanaCardWithPrice;
+
+// Track already loaded images to prevent duplicate loading
+const loadedImages = new Set<string>();
 
 interface LorcanaCardListProps {
     cards: LorcanaCardType[];
@@ -95,7 +98,8 @@ const PriceDisplay = ({ card }: { card: LorcanaCardType }) => {
     );
 };
 
-const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: { 
+// Memoize the LorcanaCardItem component to prevent unnecessary re-renders
+const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete }: { 
     card: LorcanaCardType; 
     onPress?: () => void;
     onAddToCollection?: (card: LorcanaCardType) => void;
@@ -109,11 +113,23 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
     }>({ usd: null, usd_foil: null });
     const [isLoadingPrices, setIsLoadingPrices] = useState(false);
     const [imageError, setImageError] = useState(false);
+    const [imageLoaded, setImageLoaded] = useState(false);
 
     // Safe access to properties with nullish coalescing
     const cardName = card.Name || 'Unknown Card';
     const cardUniqueId = card.Unique_ID;
     const cardSet = card.Set_Name || 'Unknown Set';
+    
+    // Check if image was already loaded
+    const imageUrl = card.Image || '';
+    const isImageAlreadyLoaded = loadedImages.has(imageUrl);
+
+    // Only log image loading the first time
+    const logImageLoading = (url: string) => {
+        if (!loadedImages.has(url) && url) {
+            loadedImages.add(url);
+        }
+    };
 
     const openTCGPlayer = () => {
         if (prices.tcgplayer_id) {
@@ -245,7 +261,13 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
                                         setImageError(true);
                                     }}
                                     onLoad={() => {
-                                        handleImageLoadSuccess(card.Image, { name: cardName, id: cardUniqueId });
+                                        if (!isImageAlreadyLoaded) {
+                                            if (card.Image) {
+                                                logImageLoading(card.Image);
+                                            }
+                                            handleImageLoadSuccess(card.Image, { name: cardName, id: cardUniqueId });
+                                        }
+                                        setImageLoaded(true);
                                         setImageError(false);
                                     }}
                                 />
@@ -290,7 +312,7 @@ const LorcanaCardItem = ({ card, onPress, onAddToCollection, onDelete }: {
             )}
         </TouchableOpacity>
     );
-};
+});
 
 const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
     cards,
@@ -299,13 +321,21 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
     onAddToCollection,
     onDeleteCard,
 }) => {
+    // Memoize the card data to prevent re-renders when the reference hasn't changed
+    const memoizedCards = useMemo(() => cards, [
+        // Only update when the array length changes or IDs change
+        cards.length,
+        // Use a stable string representation of card IDs for comparison
+        cards.map(card => card.Unique_ID).join(',')
+    ]);
+
     if (isLoading) {
         return <ActivityIndicator style={styles.loader} size="large" color="#2196F3" />;
     }
 
     return (
         <FlatList
-            data={cards}
+            data={memoizedCards}
             renderItem={({ item }) => (
                 <LorcanaCardItem
                     card={item}
@@ -314,7 +344,15 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
                     onDelete={onDeleteCard}
                 />
             )}
-            keyExtractor={(item) => item.Unique_ID?.toString() || Math.random().toString()}
+            keyExtractor={(item) => {
+                // Create a stable, unique key for each card
+                return item.Unique_ID?.toString() || 
+                       `${item.Name}-${item.Card_Num}-${item.Set_Num}`;
+            }}
+            initialNumToRender={5}
+            maxToRenderPerBatch={5}
+            windowSize={5}
+            removeClippedSubviews={true}
             contentContainerStyle={styles.listContainer}
         />
     );

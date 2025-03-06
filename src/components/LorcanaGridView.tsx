@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
     View,
     Text,
@@ -49,6 +49,11 @@ interface Filters {
 
 const ITEMS_PER_PAGE = 12;
 
+// Add a shared Set to track loaded images (near the top of the file)
+// Access the same set from LorcanaCardList if possible
+// If not, create a new one here
+const loadedGridImages = new Set<string>();
+
 // Create a separate CardItem component
 const CardItem = React.memo(({ 
     item, 
@@ -63,6 +68,17 @@ const CardItem = React.memo(({
 }) => {
     const [imageError, setImageError] = useState(false);
     const [fixedImageUrl, setFixedImageUrl] = useState<string | null>(null);
+    
+    // Check if image is already loaded
+    const imageUrl = fixedImageUrl || item.Image || '';
+    const isImageAlreadyLoaded = loadedGridImages.has(imageUrl);
+    
+    // Only log and track image loading once
+    const logImageLoading = (url: string) => {
+        if (!loadedGridImages.has(url) && url) {
+            loadedGridImages.add(url);
+        }
+    };
     
     // Debug image URLs
     useEffect(() => {
@@ -101,7 +117,10 @@ const CardItem = React.memo(({
                             setImageError(true);
                         }}
                         onLoad={() => {
-                            handleImageLoadSuccess(item.Image, { name: item.Name, id: item.Unique_ID });
+                            if (!isImageAlreadyLoaded && imageUrl) {
+                                logImageLoading(imageUrl);
+                                handleImageLoadSuccess(imageUrl, { name: item.Name, id: item.Unique_ID });
+                            }
                             setImageError(false);
                         }}
                     />
@@ -147,6 +166,10 @@ const CardDetailModal = React.memo(({
     
     if (!selectedCard) return null;
     
+    // Check if image is already loaded
+    const modalImageUrl = selectedCard.Image || '';
+    const isModalImageAlreadyLoaded = loadedGridImages.has(modalImageUrl);
+    
     return (
         <Modal
             visible={visible}
@@ -168,11 +191,14 @@ const CardDetailModal = React.memo(({
                                         setModalImageError(true);
                                     }}
                                     onLoad={() => {
-                                        handleImageLoadSuccess(selectedCard.Image, { 
-                                            name: selectedCard.Name, 
-                                            id: selectedCard.Unique_ID, 
-                                            context: 'modal' 
-                                        });
+                                        if (!isModalImageAlreadyLoaded && modalImageUrl) {
+                                            loadedGridImages.add(modalImageUrl);
+                                            handleImageLoadSuccess(selectedCard.Image, { 
+                                                name: selectedCard.Name, 
+                                                id: selectedCard.Unique_ID, 
+                                                context: 'modal' 
+                                            });
+                                        }
                                         setModalImageError(false);
                                     }}
                                 />
@@ -616,42 +642,50 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 <View style={styles.modalContent}>
                     <Text style={styles.modalTitle}>Select Card Version</Text>
                     <ScrollView>
-                        {availableVersions.map(version => (
-                            <TouchableOpacity
-                                key={version.Unique_ID}
-                                style={styles.versionOption}
-                                onPress={() => handleVersionChange(version)}
-                            >
-                                <Text style={styles.versionText}>{version.Name}</Text>
-                                {version.Image ? (
-                                    <FastImage
-                                        source={getImageSource(version.Image) || { 
-                                            uri: version.Image,
-                                            priority: FastImage.priority.high,
-                                            cache: FastImage.cacheControl.immutable
-                                        }}
-                                        style={styles.versionImage}
-                                        resizeMode={FastImage.resizeMode.contain}
-                                        onError={() => {
-                                            console.log(`[LorcanaGridView] Version image load error for ${version.Name}: ${version.Image}`);
-                                            handleImageLoadError(version.Image, version.Name);
-                                        }}
-                                        onLoad={() => {
-                                            console.log(`[LorcanaGridView] Version image loaded successfully: ${version.Name}`);
-                                            handleImageLoadSuccess(version.Image, { 
-                                                name: version.Name, 
-                                                id: version.Unique_ID, 
-                                                context: 'version_modal'
-                                            });
-                                        }}
-                                    />
-                                ) : (
-                                    <View style={[styles.versionImage, {backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center'}]}>
-                                        <Icon name="image-off" size={24} color="#666" />
-                                    </View>
-                                )}
-                            </TouchableOpacity>
-                        ))}
+                        {availableVersions.map(version => {
+                            // Check if image is already loaded
+                            const versionImageUrl = version.Image || '';
+                            const isVersionImageAlreadyLoaded = loadedGridImages.has(versionImageUrl);
+                            
+                            return (
+                                <TouchableOpacity
+                                    key={version.Unique_ID}
+                                    style={styles.versionOption}
+                                    onPress={() => handleVersionChange(version)}
+                                >
+                                    <Text style={styles.versionText}>{version.Name}</Text>
+                                    {version.Image ? (
+                                        <FastImage
+                                            source={getImageSource(version.Image) || { 
+                                                uri: version.Image,
+                                                priority: FastImage.priority.high,
+                                                cache: FastImage.cacheControl.immutable
+                                            }}
+                                            style={styles.versionImage}
+                                            resizeMode={FastImage.resizeMode.contain}
+                                            onError={() => {
+                                                console.log(`[LorcanaGridView] Version image load error for ${version.Name}: ${version.Image}`);
+                                                handleImageLoadError(version.Image, version.Name);
+                                            }}
+                                            onLoad={() => {
+                                                if (!isVersionImageAlreadyLoaded && versionImageUrl) {
+                                                    loadedGridImages.add(versionImageUrl);
+                                                    handleImageLoadSuccess(version.Image, { 
+                                                        name: version.Name, 
+                                                        id: version.Unique_ID, 
+                                                        context: 'version_modal'
+                                                    });
+                                                }
+                                            }}
+                                        />
+                                    ) : (
+                                        <View style={[styles.versionImage, {backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center'}]}>
+                                            <Icon name="image-off" size={24} color="#666" />
+                                        </View>
+                                    )}
+                                </TouchableOpacity>
+                            );
+                        })}
                     </ScrollView>
                     {/* Only show the Add to Collection button if the card is not collected */}
                     {selectedCard && !selectedCard.collected && (
@@ -912,13 +946,30 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         <View style={styles.container}>
             {renderFilters()}
             <FlatList
-                data={filteredCards()}
+                data={useMemo(() => filteredCards(), [
+                    // Dependencies for filtered cards
+                    cards.length,
+                    filters.search,
+                    filters.rarities,
+                    filters.colors,
+                    filters.collectionStatus,
+                    filters.priceRange.min,
+                    filters.priceRange.max,
+                    sortBy,
+                    sortDirection
+                ])}
                 renderItem={renderCard}
-                keyExtractor={(item) => (item.Unique_ID || Math.random().toString()).toString()}
+                keyExtractor={(item) => 
+                    (item.Unique_ID || `${item.Name}-${item.Card_Num}-${item.Set_Num}`).toString()
+                }
                 numColumns={3}
                 contentContainerStyle={styles.flatListContent}
                 onEndReached={loadMoreCards}
                 onEndReachedThreshold={0.5}
+                initialNumToRender={15}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                removeClippedSubviews={true}
             />
             {renderVersionModal()}
         </View>
