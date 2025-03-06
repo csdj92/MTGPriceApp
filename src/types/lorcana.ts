@@ -23,7 +23,7 @@ export interface LorcanaCard {
     Date_Added?: string;
     Date_Modified?: string;
     Franchise?: string;
-    Inkable?: boolean;
+    Inkable?: number;
     Lore?: number;
 }
 

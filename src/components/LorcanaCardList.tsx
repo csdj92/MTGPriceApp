@@ -147,6 +147,24 @@ const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete
                 return;
             }
             
+            // Guard clause: Skip price fetching for cards that are clearly MTG cards or invalid Lorcana cards
+            const isMTGCard = 'name' in card && !('Name' in card);
+            const isMissingEssentials = !cardName || (
+                !cardUniqueId && 
+                (!card.Card_Num || !card.Set_Num || !card.Rarity)
+            );
+            
+            if (isMTGCard || isMissingEssentials) {
+                console.log(`[LorcanaCardList] Skipping price fetch for ${isMTGCard ? 'MTG' : 'incomplete'} card:`, 
+                    cardName || (card as any).name || 'Unknown');
+                setPrices({
+                    usd: null,
+                    usd_foil: null,
+                    tcgplayer_id: undefined
+                });
+                return;
+            }
+            
             setIsLoadingPrices(true);
             try {
                 // Debug card data integrity

@@ -14,6 +14,9 @@ const preloadedImageSets: Map<string, number> = new Map();
 // Track already logged image URLs to prevent duplicate logging
 const loggedImageUrls: Set<string> = new Set();
 
+// Cache of processed image URLs to their final source objects
+const processedImageCache: Map<string, any> = new Map();
+
 // Time period (in ms) before we consider refreshing a previously preloaded set
 // Default: 30 minutes
 const PRELOAD_REFRESH_THRESHOLD = 30 * 60 * 1000;
@@ -25,7 +28,7 @@ const MAX_RETRY_COUNT = 3;
 const RETRY_COOLDOWN = 5 * 60 * 1000;
 
 // Enable or disable detailed logging
-const ENABLE_DEBUG_LOGGING = true;
+const ENABLE_DEBUG_LOGGING = false;
 
 /**
  * Generate a short hash for an array of strings
@@ -48,30 +51,18 @@ const generateImageSetHash = (urls: string[]): string => {
  * Configure global FastImage settings
  */
 export const setupFastImage = () => {
-  // Configure default cache behavior - immutable gives the best caching
-  const defaultCache = FastImage.cacheControl.immutable;
-  
-  // Configure FastImage's image loading behavior with improved settings
   try {
-    // Set the cache size and priority 
+    console.log('[ImageUtils] Configuring FastImage');
+    
+    // Simple initialization without excessive configuration
     FastImage.preload([{
-      uri: 'https://example.com/init.png', // This is just for initialization
-      priority: FastImage.priority.high,
-      cache: defaultCache,
-      headers: {
-        'User-Agent': 'MTGPriceApp/1.0',
-        'Cache-Control': 'max-age=31536000, immutable'
-      }
+      uri: 'https://example.com/init.png',
+      cache: FastImage.cacheControl.immutable
     }]);
     
-    // Increase the memory cache size by preallocating some space
-    for (let i = 0; i < 5; i++) {
-      FastImage.preload([]);
-    }
-    
-    console.log('[ImageUtils] FastImage configured with enhanced caching');
+    console.log('[ImageUtils] FastImage configured');
   } catch (error) {
-    console.warn('Failed to initialize FastImage with optimal settings', error);
+    console.warn('Failed to initialize FastImage', error);
   }
 };
 
@@ -99,37 +90,52 @@ export const getImageSource = (imageUrl: string | null | undefined) => {
     return null;
   }
 
-  // Log the full image URL we're trying to load only if it hasn't been logged before
-  if (!loggedImageUrls.has(imageUrl)) {
-    console.log(`[ImageUtils] Loading full URL: ${imageUrl}`);
-    loggedImageUrls.add(imageUrl);
+  // Strip query parameters first to get a clean URL for caching
+  let finalUri = imageUrl;
+  if (imageUrl.includes('?')) {
+    finalUri = imageUrl.split('?')[0];
+    logDebug(`Stripped query parameters from URL for caching: ${finalUri}`);
+  }
+
+  // Check if we already have this image in our cache
+  if (processedImageCache.has(finalUri)) {
+    return processedImageCache.get(finalUri);
+  }
+
+  // Log using finalUri if not already logged
+  if (!loggedImageUrls.has(finalUri)) {
+    logDebug(`Loading full URL: ${finalUri}`);
+    loggedImageUrls.add(finalUri);
   }
 
   // Check if this image has failed too many times recently
-  const failRecord = failedImageAttempts[imageUrl];
+  const failRecord = failedImageAttempts[finalUri];
   if (failRecord && failRecord.count >= MAX_RETRY_COUNT) {
     const now = Date.now();
     const timeSinceLastAttempt = now - failRecord.lastAttempt;
     
     if (timeSinceLastAttempt < RETRY_COOLDOWN) {
-      logDebug(`Skipping recently failed image (in cooldown): ${imageUrl.substring(0, 30)}...`);
+      logDebug(`Skipping recently failed image (in cooldown): ${finalUri.substring(0, 30)}...`);
       return null;
     }
     
     // Reset the failure count if we're trying again after cooldown
-    logDebug(`Retry cooled-down image: ${imageUrl.substring(0, 30)}...`);
-    failedImageAttempts[imageUrl].count = 0;
+    logDebug(`Retry cooled-down image: ${finalUri.substring(0, 30)}...`);
+    failedImageAttempts[finalUri].count = 0;
   }
 
-  // Simplified for immediate loading - skip complex checks
-  return {
-    uri: imageUrl,
-    priority: FastImage.priority.high, // Prioritize visibility
-    cache: FastImage.cacheControl.immutable,
-    headers: {
-      'Cache-Control': 'max-age=31536000, immutable'
-    }
+  // Create the source object with minimal properties to avoid errors
+  const source = {
+    uri: finalUri,
+    priority: FastImage.priority.high,
+    cache: FastImage.cacheControl.immutable
+    // Remove headers completely to avoid formatting issues
   };
+
+  // Store it in our cache
+  processedImageCache.set(finalUri, source);
+  
+  return source;
 };
 
 /**

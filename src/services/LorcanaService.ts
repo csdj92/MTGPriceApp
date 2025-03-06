@@ -271,6 +271,20 @@ export const searchLorcanaCards = async (name: string, subtype?: string | null) 
         }
 }
 
+const insertTcgplayerId = async (cardId: string, tcgplayerId: string) => {
+    try {
+        const db = await getDB();
+        await db.executeSql(
+            'INSERT OR REPLACE INTO lorcana_card_prices (card_id, tcgplayer_id, last_updated) VALUES (?, ?, ?)',    
+            [cardId, tcgplayerId, new Date().toISOString()]
+        );
+    } catch (error) {
+        console.error('[LorcanaService] Error inserting TCGPlayer ID:', error);
+        throw error;
+    }
+};
+
+
 // Function to fetch current price for a card
 export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number; Rarity?: string; Card_Num?: number; Unique_ID?: string }) => {
     try {
@@ -296,6 +310,9 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
                         if (enchantedData.image_uris?.digital?.normal) {
                             // Update the image URL in the database
                             await updateCardImageUrl(card.Unique_ID, enchantedData.image_uris.digital.normal);
+                        }
+                        if (enchantedData.tcgplayer_id) {
+                            await insertTcgplayerId(card.Unique_ID, enchantedData.tcgplayer_id);
                         }
                         
                         // For enchanted cards, which only come in foil, use the foil price as the regular price too
@@ -356,6 +373,7 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
                         if (cardData.image_uris?.digital?.normal && card.Unique_ID) {
                             await updateCardImageUrl(card.Unique_ID, cardData.image_uris.digital.normal);
                         }
+                        
                         
                         // For enchanted cards, which only come in foil, use the foil price as the regular price too
                         const foilPrice = cardData.prices?.usd_foil || cardData.prices?.foil || null;
@@ -422,6 +440,12 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
 export const debugCardData = (card: any, source: string) => {
     if (!card) {
         console.log(`[LorcanaService] WARNING: Null card object from ${source}`);
+        return;
+    }
+    
+    // Skip debugging for MTG cards
+    if ('name' in card && !('Name' in card)) {
+        console.log(`[LorcanaService] Received MTG card in ${source}, skipping Lorcana debug checks`);
         return;
     }
     
@@ -795,6 +819,12 @@ export const addCardToLorcanaCollection = async (cardId: string, collectionId: s
         }
 
         const card = cardDetails.rows.item(0);
+        
+        // Verify this is a Lorcana card (has Name not name property)
+        if (!('Name' in card) || ('name' in card && !('Name' in card))) {
+            console.error('[LorcanaService] Attempted to add non-Lorcana card to Lorcana collection:', card);
+            throw new Error('Invalid Lorcana card object');
+        }
 
         // Verify the collection exists
         const [collectionExists] = await db.executeSql(

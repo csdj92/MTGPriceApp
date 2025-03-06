@@ -214,7 +214,29 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             
             // For Lorcana cards, additional processing may be needed
             if (scannedCard.type === 'Lorcana') {
-                await handleLorcanaCollection(scannedCard as any); // Type cast as any since the types might not match exactly
+                // Ensure we have a properly formatted Lorcana card object
+                const lorcanaCard: LorcanaCard = {
+                    Unique_ID: scannedCard.id || scannedCard.uuid || '',
+                    Name: scannedCard.name || '',
+                    Set_Name: scannedCard.setName || '',
+                    Set_ID: scannedCard.setCode || '',
+                    Set_Num: parseInt(scannedCard.collectorNumber || '0', 10) || undefined,
+                    Card_Num: parseInt(scannedCard.collectorNumber || '0', 10) || undefined,
+                    Rarity: scannedCard.rarity || 'Unknown',
+                    Color: 'Unknown',
+                    Cost: 0,
+                    Type: scannedCard.type || 'Unknown',
+                    Image: scannedCard.imageUris?.normal || scannedCard.imageUrl,
+                    price_usd: scannedCard.prices?.usd || null,
+                    price_usd_foil: scannedCard.prices?.usdFoil || null
+                };
+                
+                // Only proceed if we have the minimum required fields
+                if (lorcanaCard.Unique_ID && lorcanaCard.Name) {
+                    await handleLorcanaCollection(lorcanaCard);
+                } else {
+                    Logger.warn('Incomplete Lorcana card data from scan:', lorcanaCard);
+                }
             }
         } catch (error) {
             Logger.error('Error processing scan:', error);
@@ -263,6 +285,18 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     };
 
     const handleLorcanaCollection = async (cardWithPrice: LorcanaCard) => {
+        // Verify this is actually a Lorcana card with required fields
+        if (!cardWithPrice || !cardWithPrice.Unique_ID) {
+            console.error('[PriceLookupScreen] Invalid Lorcana card object:', cardWithPrice);
+            return;
+        }
+        
+        // Check if this might be an MTG card that was incorrectly passed
+        if ('name' in cardWithPrice && !('Name' in cardWithPrice)) {
+            console.error('[PriceLookupScreen] MTG card incorrectly passed to handleLorcanaCollection');
+            return;
+        }
+        
         if (cardWithPrice.Set_ID && cardWithPrice.Set_Name) {
             try {
                 console.log('[PriceLookupScreen] Adding to Lorcana set collection...');
@@ -278,6 +312,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
             } catch (error) {
                 console.error('[PriceLookupScreen] Error adding to set collection:', error);
             }
+        } else {
+            console.log('[PriceLookupScreen] Missing Set_ID or Set_Name for Lorcana card:', cardWithPrice);
         }
     };
 

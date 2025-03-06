@@ -135,14 +135,14 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                                             <Text style={[styles.statText, { color: theme.text }]}>Lore: {card.Lore}</Text>
                                         </View>
                                     )}
-                                    {card.Inkable !== undefined && (
+                                    {/* {card.Inkable !== undefined && (
                                         <View style={styles.statItem}>
                                             <Icon name="water" size={18} color={theme.icon || theme.text} />
                                             <Text style={[styles.statText, { color: theme.text }]}>
-                                                Inkable: {card.Inkable ? 'No' : 'Yes'}
+                                                Inkable: {card.Inkable} {card.Inkable === 1 ? 'Yes' : 'No'}
                                             </Text>
                                         </View>
-                                    )}
+                                    )} */}
                                 </View>
                             </View>
                         </View>
