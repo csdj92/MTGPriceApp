@@ -115,6 +115,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
     };
 
     const renderCollectionItem = ({ item }: { item: Collection }) => (
+        console.log('[CollectionSelector] item:', item),
         <TouchableOpacity
             style={styles.collectionItem}
             onPress={() => onSelectCollection(item)}
@@ -125,7 +126,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
             <View style={styles.collectionInfo}>
                 <Text style={styles.collectionName}>{item.name}</Text>
                 <Text style={styles.collectionStats}>
-                    {item.cardCount} cards · ${item.totalValue.toFixed(2)}
+                    {item.cardCount} cards · ${(item.totalValue || 0).toFixed(2)}
                 </Text>
             </View>
             <IconComponent name="chevron-right" size={24} color="#666" />

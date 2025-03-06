@@ -462,22 +462,38 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     useEffect(() => {
         if (collection?.type === 'Lorcana' && lorcanaCards.length > 0) {
             const totalValue = lorcanaCards.reduce((sum, card) => {
+                // Only count collected cards
+                if (!card.collected) return sum;
                 const price = card.prices?.usd ? parseFloat(card.prices.usd) : 0;
-                return sum + price;
+                return sum + (isNaN(price) ? 0 : price);
             }, 0);
             setCollection(prev => prev ? { ...prev, totalValue } : null);
         }
     }, [lorcanaCards]);
+
+    // Add useEffect hook to update totalValue when mtgCards changes
+    useEffect(() => {
+        if (collection?.type === 'MTG' && mtgCards.length > 0) {
+            const totalValue = mtgCards.reduce((sum, card) => {
+                // Only count collected cards
+                if (!card.collected) return sum;
+                // Parse price from card data
+                const price = card.prices?.usd ? parseFloat(card.prices.usd) : 0;
+                return sum + (isNaN(price) ? 0 : price);
+            }, 0);
+            setCollection(prev => prev ? { ...prev, totalValue } : null);
+        }
+    }, [mtgCards]);
 
     return (
         <View style={[styles.container]}>
             <View style={styles.header}>
                 <View style={styles.headerContent}>
                     <Text style={styles.statsText}>
-                        {cards.length} cards · ${collection?.type === 'Lorcana' ? 
+                    {cards.length} cards · ${collection?.type === 'Lorcana' ? 
                             lorcanaCards.reduce((sum, card) => 
                                 sum + (card.collected && card.prices?.usd ? Number(card.prices.usd) : 0), 0).toFixed(2) 
-                            : Number(collection?.totalValue || 0).toFixed(2)}
+                            :Number(collection?.totalValue || 0).toFixed(2)}
                     </Text>
                     <View style={styles.headerButtons}>
                         {collection?.type === 'Lorcana' && (
