@@ -37,6 +37,7 @@ import ScanHeaderInfo from '../../components/price-lookup/ScanHeaderInfo';
 import ScannedCardsList from '../../components/price-lookup/ScannedCardsList';
 import ScanningNotification from '../../components/price-lookup/ScanningNotification';
 import VariationsTab from '../../components/CardDetail/VariationsTab';
+import SetSelector from '../../components/price-lookup/SetSelector';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 type PriceLookupScreenProps = {
@@ -87,6 +88,7 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
     const [isCardNewToCollection, setIsCardNewToCollection] = useState(false);
     const [notificationSetCode, setNotificationSetCode] = useState('');
     const scanNotificationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const [selectedSet, setSelectedSet] = useState<string | null>(null);
 
     // Handle back button press
     useEffect(() => {
@@ -208,8 +210,8 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
         Logger.debug(`Scan result: ${result.text} (isLorcana: ${result.isLorcana})`);
         
         try {
-            // Use CardProcessingService to handle OCR processing 
-            const processedResult: ProcessedOcrResult = await CardProcessingService.processOcrResult(result);
+            // Use CardProcessingService to handle OCR processing with selected set
+            const processedResult: ProcessedOcrResult = await CardProcessingService.processOcrResult(result, selectedSet);
             
             // If no result was found, just return
             if (!processedResult) {
@@ -686,21 +688,22 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
 
     const renderCameraContent = () => (
         <View style={styles.cameraContainer}>
+            <View style={styles.headerContainer}>
+                <ScanHeaderInfo
+                    isLorcanaScan={isLorcanaScan}
+                    verificationStatus={verificationStatus}
+                />
+                {isLorcanaScan && (
+                    <SetSelector
+                        selectedSet={selectedSet}
+                        onSetSelected={setSelectedSet}
+                    />
+                )}
+            </View>
             <CardScanner
-                onTextDetected={(result: any) => {
-                    // Adapt the result to match OcrResult type
-                    const ocrResult: OcrResult = {
-                        // For LiveOcr results, preserve all properties including setCode and cardNumber
-                        text: result.text,
-                        mainName: result.mainName || result.text,
-                        subtype: result.subtype || '',
-                        isLorcana: isLorcanaScan,
-                        setCode: result.setCode || null,
-                        cardNumber: result.cardNumber || null
-                    };
-                    handleScan(ocrResult);
-                }}
+                onScan={handleScan}
                 onError={handleScanError}
+                isLorcanaScan={isLorcanaScan}
                 scannedCards={scannedCards}
                 totalPrice={totalPrice}
                 onCardPress={handleCardPress}
@@ -710,36 +713,13 @@ const PriceLookupScreen: React.FC<PriceLookupScreenProps> = ({ navigation }) => 
                 selectedVariation={selectedVersion}
                 onConfirmVariation={handleVersionConfirm}
             />
-            
-            {/* Card Version Checker */}
-            <CardVersionChecker
-                card={verificationStatus.card}
-                originalText={verificationStatus.originalText}
-                verificationScore={verificationStatus.verificationScore}
-                isVerifying={verificationStatus.isVerifying}
-                isVerified={verificationStatus.isVerified}
-            />
-            
-            {/* Camera Controls using our new components */}
-            <CameraControls
-                isScanning={!isScanningPaused}
-                isLorcanaScan={isLorcanaScan}
-                onToggleScan={() => setIsScanningPaused(!isScanningPaused)}
-                onToggleLorcanaScan={() => setIsLorcanaScan(!isLorcanaScan)}
-            />
-            
-            {/* Zoom Controls using our new component */}
-            <ZoomControls 
-                disabled={isScanningPaused}
-            />
-            
-            {/* Show ScanningNotification during scanning */}
-            <ScanningNotification
-                isVisible={showScanNotification}
-                cardName={scannedCardName}
-                isNewToCollection={isCardNewToCollection}
-                setCode={notificationSetCode}
-            />
+            <View style={styles.controlsContainer}>
+                <CameraControls
+                    isScanningPaused={isScanningPaused}
+                    onPausePress={() => setIsScanningPaused(!isScanningPaused)}
+                    onClosePress={() => setIsCameraActive(false)}
+                />
+            </View>
         </View>
     );
 
@@ -1871,6 +1851,21 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
         marginBottom: 12,
+    },
+    headerContainer: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 2,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        padding: 10,
+    },
+    controlsContainer: {
+        position: 'absolute',
+        right: 20,
+        bottom: 100,
+        gap: 16,
     },
 });
 

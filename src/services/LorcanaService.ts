@@ -3,6 +3,7 @@ import RNFS from 'react-native-fs'
 import { updateAllImageUrlsInDatabase } from '../utils/imageUtils'
 import { LorcanaCard, LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../types/lorcana'
 import DatabaseInitializer from './DatabaseInitializer'
+import { Logger } from '../utils/logger'
 
 // Enable promise support for SQLite
 enablePromise(true)
@@ -203,28 +204,64 @@ export const getLorcanaCards = async () => {
     }
 };
 
+export const setNames = async () => {
+    const db = await getDB();
+    const [results] = await db.executeSql(`
+        SELECT DISTINCT Set_ID, Set_Name 
+        FROM lorcana_cards 
+        WHERE Set_ID IS NOT NULL AND Set_Name IS NOT NULL
+        ORDER BY Set_ID;
+    `);
+    const sets = results.rows.raw();
+    
+    // Map the sets to the format expected by SetSelector
+    const setOptions = sets.map((set: { Set_ID: string; Set_Name: string }) => ({
+        label: set.Set_Name,
+        value: set.Set_ID
+    })).filter(option => option.label && option.value); // Filter out any null values
+    
+    Logger.debug("[LorcanaService] Set Options:", setOptions);
+    return setOptions;
+};
+
 // Helper function to search Lorcana cards by name
-export const searchLorcanaCards = async (name: string, subtype?: string | null) => {
+export const searchLorcanaCards = async (name: string, subtype?: string | null, setCode?: string | null) => {
     if (!isInitialized) {
         await initializeLorcanaDatabase();
     }
     
     const mainName = name.trim();
     const version = subtype?.trim();
+    const setId = setCode?.trim();
     const db = await getDB();
     
     let results;
+    let params: any[] = [];
+    let addSetIdToQuery = '';
     
     // If we have both name and version, try exact match first
     if (version) {
         const fullName = `${mainName} - ${version}`;
+        params = [fullName];
+        
+        if (setId) {
+            addSetIdToQuery = ` AND Set_ID = ?`;
+            params.push(setId);
+        }
+        
         [results] = await db.executeSql(
-            'SELECT * FROM lorcana_cards WHERE Name IS NOT NULL AND UPPER(Name) = UPPER(?);',
-            [fullName]
+            `SELECT * FROM lorcana_cards WHERE Name IS NOT NULL AND UPPER(Name) = UPPER(?) ${addSetIdToQuery};`,
+            params
         );
         
         // If no results, try matching with fuzzy version match
         if (results.rows.length === 0) {
+            params = [mainName, `%${version}%`, `${version}%`, version, version];
+            if (setId) {
+                addSetIdToQuery = ` AND Set_ID = ?`;
+                params.push(setId);
+            }
+            
             [results] = await db.executeSql(
                 `SELECT * FROM lorcana_cards 
                  WHERE Name IS NOT NULL 
@@ -234,23 +271,35 @@ export const searchLorcanaCards = async (name: string, subtype?: string | null) 
                      OR UPPER(SUBSTR(Name, INSTR(Name, " - ") + 3)) LIKE UPPER(?)
                      OR UPPER(?) LIKE UPPER(SUBSTR(Name, INSTR(Name, " - ") + 3)) || '%'
                      OR UPPER(SUBSTR(Name, INSTR(Name, " - ") + 3)) LIKE '%' || UPPER(?) || '%'
-                 );`,
-                [mainName, `%${version}%`, `${version}%`, version, version]
+                 ) ${addSetIdToQuery};`,
+                params
             );
         }
     } else {
         // Try matching just the main name
+        params = [mainName];
+        if (setId) {
+            addSetIdToQuery = ` AND Set_ID = ?`;
+            params.push(setId);
+        }
+        
         [results] = await db.executeSql(
-            'SELECT * FROM lorcana_cards WHERE Name IS NOT NULL AND UPPER(SUBSTR(Name, 1, INSTR(Name, " - ") - 1)) = UPPER(?);',
-            [mainName]
+            `SELECT * FROM lorcana_cards WHERE Name IS NOT NULL AND UPPER(SUBSTR(Name, 1, INSTR(Name, " - ") - 1)) = UPPER(?) ${addSetIdToQuery};`,
+            params
         );
     }
     
     // If still no results, try a more flexible match on the main name
     if (results.rows.length === 0) {
+        params = [`%${mainName}%`];
+        if (setId) {
+            addSetIdToQuery = ` AND Set_ID = ?`;
+            params.push(setId);
+        }
+        
         [results] = await db.executeSql(
-            'SELECT * FROM lorcana_cards WHERE Name IS NOT NULL AND UPPER(Name) LIKE UPPER(?);',
-            [`%${mainName}%`]
+            `SELECT * FROM lorcana_cards WHERE Name IS NOT NULL AND UPPER(Name) LIKE UPPER(?) ${addSetIdToQuery};`,
+            params
         );
     }
     

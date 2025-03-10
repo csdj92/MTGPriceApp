@@ -29,30 +29,32 @@ const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
 const liveOcrEmitter = LiveOcrModule ? new NativeEventEmitter(NativeModules.LiveOcr) : null;
 
-interface CardScannerProps {
-  onTextDetected: (result: any) => void;
+export type CardScannerProps = {
+  onScan: (result: OcrResult) => Promise<void>;
   onError: (error: Error) => void;
+  isLorcanaScan: boolean;
   scannedCards: ExtendedCard[];
   totalPrice: number;
-  onCardPress?: (card: ExtendedCard) => void;
-  isPaused?: boolean;
-  cardVariations?: ExtendedCard[];
-  onVariationSelect?: (card: ExtendedCard) => void;
-  selectedVariation?: ExtendedCard | null;
-  onConfirmVariation?: () => void;
-}
+  onCardPress: (card: any) => void;
+  isPaused: boolean;
+  cardVariations: ExtendedCard[];
+  onVariationSelect: (card: ExtendedCard) => void;
+  selectedVariation: ExtendedCard | null;
+  onConfirmVariation: () => void;
+};
 
 const CardScanner: React.FC<CardScannerProps> = ({
-  onTextDetected,
+  onScan,
   onError,
+  isLorcanaScan,
   scannedCards,
   totalPrice,
   onCardPress,
-  isPaused = false,
-  cardVariations = [],
+  isPaused,
+  cardVariations,
   onVariationSelect,
-  selectedVariation = null,
-  onConfirmVariation,
+  selectedVariation,
+  onConfirmVariation
 }) => {
   const [hasPermission, setHasPermission] = useState(false);
   const [isActive, setIsActive] = useState(false);
@@ -72,7 +74,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
     const subscription = emitter?.addListener(eventName, (event: any) => {
       if (!isPaused) {
         if (event.text) {
-          onTextDetected(event);
+          handleTextDetected(event);
         }
       }
     });
@@ -659,6 +661,19 @@ const CardScanner: React.FC<CardScannerProps> = ({
     }
   }, []);
 
+  const handleTextDetected = (result: any) => {
+    // Adapt the result to match OcrResult type
+    const ocrResult: OcrResult = {
+      text: result.text,
+      mainName: result.mainName || result.text,
+      subtype: result.subtype || '',
+      isLorcana: isLorcanaScan,
+      setCode: result.setCode || null,
+      cardNumber: result.cardNumber || null
+    };
+    onScan(ocrResult);
+  };
+
   if (!hasPermission) {
     return (
       <View style={styles.container}>
@@ -997,7 +1012,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.95)',
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
-    maxHeight: '40%',
+    maxHeight: '50%',
     elevation: 20,
     zIndex: 25,
     shadowColor: '#000',
@@ -1011,13 +1026,13 @@ const styles = StyleSheet.create({
   },
   variationsContainer: {
     padding: 12,
-    paddingBottom: 16,
+    paddingBottom: 8,
     display: 'flex',
     flexDirection: 'column',
     height: 'auto',
   },
   variationsListContainer: {
-    height: 220,
+    height: 250,
   },
   variationsList: {
     flexGrow: 0,

@@ -122,7 +122,7 @@ export const CardProcessingService = {
   /**
    * Process OCR result text to identify cards
    */
-  async processOcrResult(result: OcrResult): Promise<ProcessedOcrResult> {
+  async processOcrResult(result: OcrResult, selectedSet?: string | null): Promise<ProcessedOcrResult | null> {
     try {
       if (!result?.text?.trim()) {
         return null;
@@ -151,13 +151,13 @@ export const CardProcessingService = {
         if (!processedResult.mainName) {
           return null;
         }
-        return await this.processLorcanaOcrText(processedResult.mainName, processedResult.subtype ?? undefined);
+        return await this.processLorcanaOcrText(processedResult.mainName, processedResult.subtype, selectedSet);
       } else {
         return await this.processMTGOcrText(processedResult.text, processedResult.setCode, processedResult.cardNumber);
       }
     } catch (error) {
       Logger.error('Error processing OCR result:', error);
-      throw error;
+      return null;
     }
   },
   
@@ -441,7 +441,7 @@ export const CardProcessingService = {
   /**
    * Process Lorcana OCR text
    */
-  async processLorcanaOcrText(mainName: string, subtype?: string): Promise<ScannedCard | { multipleCards: LorcanaCard[] } | null> {
+  async processLorcanaOcrText(mainName: string, subtype?: string | null | undefined, selectedSet?: string | null | undefined): Promise<ScannedCard | { multipleCards: LorcanaCard[] } | null> {
     try {
       // Emit verification starting
       verificationEmitter.emit(EVENT_NAME, {
@@ -485,7 +485,7 @@ export const CardProcessingService = {
       }
       
       Logger.debug(`Searching for Lorcana card: ${mainName} (subtype: ${subtype || 'none'})`);
-      const lorcanaResults = await searchLorcanaCards(mainName, subtype);
+      const lorcanaResults = await searchLorcanaCards(mainName, subtype, selectedSet || undefined);
       
       if (!lorcanaResults || lorcanaResults.length === 0) {
         Logger.debug(`No Lorcana cards found for text: ${mainName}`);

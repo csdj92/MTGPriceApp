@@ -111,8 +111,8 @@ const SettingsScreen = () => {
     };
 
     const resyncLorcana = async () => {
-        await getNewSetCards();
-        // await deleteAllSet7Cards();
+        // await getNewSetCards();
+        await deleteAllSet7Cards();
         // await fixCardSetIdentifiers('7');
         
     };

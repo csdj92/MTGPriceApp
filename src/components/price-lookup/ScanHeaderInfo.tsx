@@ -1,92 +1,80 @@
-import React, { memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import type { VerificationStatus } from '../../services/CardProcessingService';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
-const Icon = MaterialCommunityIcons as any; // Temporary type assertion
+const Icon = MaterialCommunityIcons as any;
 
-export interface ScanHeaderInfoProps {
+export type ScanHeaderInfoProps = {
   isLorcanaScan: boolean;
-  scannedCardsCount: number;
-  totalPrice: number;
-  onClose: () => void;
-}
+  verificationStatus?: VerificationStatus;
+  scannedCardsCount?: number;
+  totalPrice?: number;
+  onClose?: () => void;
+};
 
-/**
- * Header component for the scanning modal
- * Shows scan type, counter, and close button
- */
-const ScanHeaderInfo: React.FC<ScanHeaderInfoProps> = ({
-  isLorcanaScan,
+const ScanHeaderInfo: React.FC<ScanHeaderInfoProps> = ({ 
+  isLorcanaScan, 
+  verificationStatus,
   scannedCardsCount,
   totalPrice,
   onClose
 }) => {
   return (
-    <View style={styles.modalHeader}>
-      <TouchableOpacity
-        style={styles.closeButton}
-        onPress={onClose}
-        accessibilityLabel="Close scanner"
-        accessibilityHint="Closes the card scanner and returns to the list"
-      >
-        <Icon name="close" size={24} color="#fff" />
-      </TouchableOpacity>
-      
-      <View style={styles.scanningInfo}>
-        <Icon name="camera" size={16} color="#fff" style={styles.cameraIcon} />
-        <Text style={styles.scanningText}>
-          {isLorcanaScan ? 'Scanning Lorcana Cards' : 'Scanning MTG Cards'}
+    <View style={styles.container}>
+      <View style={styles.contentContainer}>
+        <Text style={styles.text}>
+          {isLorcanaScan ? 'Scanning for Lorcana Cards' : 'Scanning for MTG Cards'}
         </Text>
-        
-        <View style={styles.counterBadge}>
-          <Text style={styles.counterText}>
-            {scannedCardsCount} ${totalPrice.toFixed(2)}
+        {verificationStatus?.isVerifying && (
+          <Text style={styles.verifyingText}>Verifying card...</Text>
+        )}
+        {typeof scannedCardsCount === 'number' && (
+          <Text style={styles.statsText}>
+            Cards: {scannedCardsCount} | Total: ${totalPrice?.toFixed(2) || '0.00'}
           </Text>
-        </View>
+        )}
       </View>
+      {onClose && (
+        <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+          <Icon name="close" size={24} color="white" />
+        </TouchableOpacity>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  modalHeader: {
+  container: {
+    padding: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#121212',
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    justifyContent: 'space-between',
+  },
+  contentContainer: {
+    flex: 1,
+  },
+  text: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  verifyingText: {
+    color: '#aaa',
+    fontSize: 14,
+    marginTop: 5,
+  },
+  statsText: {
+    color: '#4CAF50',
+    fontSize: 14,
+    marginTop: 5,
+    fontWeight: '500',
   },
   closeButton: {
     padding: 8,
-  },
-  scanningInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
     marginLeft: 16,
-  },
-  cameraIcon: {
-    marginRight: 8,
-  },
-  scanningText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  counterBadge: {
-    marginLeft: 'auto',
-    backgroundColor: '#2196F3',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 16,
-  },
-  counterText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
   },
 });
 
-// Use memo to prevent unnecessary re-renders
-export default memo(ScanHeaderInfo); 
+export default ScanHeaderInfo; 
