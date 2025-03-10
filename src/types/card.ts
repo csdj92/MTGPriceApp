@@ -88,6 +88,8 @@ export interface ExtendedCard {
 export type ScannedCard = Omit<ExtendedCard, 'type'> & { 
   type: 'MTG' | 'Lorcana';
   bypassVariantSelection?: boolean; // Flag to bypass variant selection when true
+  originalText?: string; // The original OCR text used to identify the card
+  source?: string; // The source of the scan (e.g., 'camera', 'manual')
 };
 
 export interface OcrResult {

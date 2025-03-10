@@ -15,6 +15,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 import { Logger } from '../../utils/logger';
 import { getLorcanaImageUrl, getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
 import FastImage from '@d11/react-native-fast-image';
+import NewToCollectionLabel from './NewToCollectionLabel';
 
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
@@ -23,6 +24,7 @@ export interface ScannedCardsListProps {
   isLoading?: boolean;
   onCardPress: (card: ScannedCard) => void;
   keyExtractor?: (item: ScannedCard) => string;
+  newToCollectionCards?: Set<string>; // Set of card UUIDs that are new to the collection
 }
 
 /**
@@ -32,7 +34,8 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
   cards,
   isLoading = false,
   onCardPress,
-  keyExtractor = (item) => item.id || item.name || Math.random().toString()
+  keyExtractor = (item: ScannedCard) => item.id || item.name || Math.random().toString(),
+  newToCollectionCards = new Set()
 }) => {
   
   // Card image component with loading state
@@ -117,6 +120,38 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
                  item.imageUrl || null;
     }
 
+    // Check if the card is new to the collection
+    const isNewToCollection = (() => {
+      // For MTG cards
+      if (item.type === 'MTG' && (item.id || item.uuid)) {
+        return newToCollectionCards.has(item.id || item.uuid || '');
+      }
+      
+      // For Lorcana cards - first check if Unique_ID exists on the card
+      if (item.type === 'Lorcana') {
+        const uniqueId = (item as any).Unique_ID;
+        if (uniqueId) {
+          return newToCollectionCards.has(uniqueId);
+        }
+        // Fallback to id if Unique_ID doesn't exist
+        return newToCollectionCards.has(item.id || '');
+      }
+      
+      // Default fallback
+      return newToCollectionCards.has(item.id || item.uuid || '');
+    })();
+    
+    // Debug log
+    if (__DEV__) {
+      console.log(`[ScannedCardsList] Card (${item.name}): New to collection: ${isNewToCollection}`, {
+        id: item.id,
+        uuid: item.uuid,
+        Unique_ID: (item as any).Unique_ID, // Check if Lorcana Unique_ID exists
+        inNewSet: Array.from(newToCollectionCards),
+        cardType: item.type
+      });
+    }
+
     // Log the image URI for debugging
     if (__DEV__) {
       console.log(`[ScannedCardsList] Card (${item.name}): Using image URI: ${imageUri || 'none'}`);
@@ -130,6 +165,9 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
         accessibilityHint="Press to view card details"
       >
         <CardImage uri={imageUri} name={item.name} />
+        
+        {/* Show "New to Collection" label if the card is new */}
+        {isNewToCollection && <NewToCollectionLabel setCode={item.setCode} />}
         
         <View style={styles.cardInfo}>
           <Text style={styles.cardName} numberOfLines={2}>
@@ -155,7 +193,7 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
         </View>
       </TouchableOpacity>
     );
-  }, [onCardPress, CardImage]);
+  }, [onCardPress, CardImage, newToCollectionCards]);
 
   // Use memo to prevent recreating the empty component on each render
   const EmptyListComponent = useCallback(() => (

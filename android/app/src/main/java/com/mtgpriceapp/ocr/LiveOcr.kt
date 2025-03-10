@@ -60,7 +60,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                     "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" +
                     "counter|dies|enters|destroy|exile|return|flying|" +
                     "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
-                    "Power|Toughness|FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE)"
+                    "Power|Toughness|FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE|Disney Lorcana)"
         )
         // Updated regex for Lorcana card names - more permissive to catch different formats
         private val LORCANA_NAME_REGEX = Regex("^[A-Z][A-Z\\s',\\-]+\$")

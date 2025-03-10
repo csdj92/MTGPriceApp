@@ -69,6 +69,9 @@ export type VerificationStatus = {
   isVerified: boolean | null;
 };
 
+// Add this type near the top of the file with other type definitions
+export type ProcessedOcrResult = ScannedCard | { multipleCards: LorcanaCard[] } | null;
+
 /**
  * Service for processing card data
  */
@@ -119,7 +122,7 @@ export const CardProcessingService = {
   /**
    * Process OCR result text to identify cards
    */
-  async processOcrResult(result: OcrResult): Promise<ScannedCard | null> {
+  async processOcrResult(result: OcrResult): Promise<ProcessedOcrResult> {
     try {
       if (!result?.text?.trim()) {
         return null;
@@ -438,7 +441,7 @@ export const CardProcessingService = {
   /**
    * Process Lorcana OCR text
    */
-  async processLorcanaOcrText(mainName: string, subtype?: string): Promise<ScannedCard | null> {
+  async processLorcanaOcrText(mainName: string, subtype?: string): Promise<ScannedCard | { multipleCards: LorcanaCard[] } | null> {
     try {
       // Emit verification starting
       verificationEmitter.emit(EVENT_NAME, {
@@ -499,8 +502,13 @@ export const CardProcessingService = {
         return null;
       }
       
-      // If multiple cards found, just use the first one for now
-      // In the actual app this would be handled by showing a selection modal
+      // If multiple cards found, return them all for selection
+      if (lorcanaResults.length > 1) {
+        Logger.debug(`Multiple Lorcana cards found for: ${mainName}, count: ${lorcanaResults.length}`);
+        return { multipleCards: lorcanaResults };
+      }
+      
+      // Single card found, proceed with price lookup
       const cardWithPrice = await getLorcanaCardWithPrice(lorcanaResults[0].Unique_ID);
       
       if (!cardWithPrice) {

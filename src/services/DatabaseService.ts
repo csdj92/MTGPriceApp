@@ -3298,6 +3298,113 @@ export default class DatabaseService {
         }
     }
 
+    /**
+     * Checks if a card is in a specific set collection
+     * @param cardUuid The UUID of the card to check
+     * @param setCode The set code to check against
+     * @returns Promise resolving to {isInCollection: boolean, setName: string} with the collection check result and actual set name
+     */
+    async isCardInSetCollection(cardUuid: string, setCode: string): Promise<{isInCollection: boolean, setName: string}> {
+        if (!this.db) {
+            await this.initDatabase();
+            if (!this.db) {
+                console.error('[DatabaseService] Failed to initialize database');
+                return {isInCollection: false, setName: setCode};
+            }
+        }
+        
+        try {
+            console.log(`[DatabaseService] Checking if card ${cardUuid} is in set collection ${setCode}`);
+            
+            // First get the collection ID for this set
+            let collectionId: string | null = null;
+            let actualSetName = setCode;
+             
+            // Try to find collection by set code first
+            const [codeResult] = await this.db.executeSql(
+                "SELECT id FROM collections WHERE name = ?",
+                [`Set: ${setCode}`]
+            );
+
+            console.log(`[DatabaseService] Collection search for Set: ${setCode} found ${codeResult.rows.length} results`);
+
+            if (codeResult.rows.length > 0) {
+                collectionId = codeResult.rows.item(0).id;
+                console.log(`[DatabaseService] Found collection ID: ${collectionId}`);
+            } else {
+                // Try to find by set name from MTGJson database
+                console.log(`[DatabaseService] Trying to find collection by set name...`);
+                const setName = await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
+                    const [setResult] = await db.executeSql(
+                        "SELECT name FROM sets WHERE code = ?",
+                        [setCode.toUpperCase()]
+                    );
+                    return setResult.rows.length > 0 ? setResult.rows.item(0).name : null;
+                });
+
+                console.log(`[DatabaseService] Set name lookup returned: ${setName}`);
+                
+                if (setName) {
+                    actualSetName = setName;
+                    const [nameResult] = await this.db.executeSql(
+                        "SELECT id FROM collections WHERE name = ?",
+                        [`Set: ${setName}`]
+                    );
+                    
+                    console.log(`[DatabaseService] Collection search for Set: ${setName} found ${nameResult.rows.length} results`);
+                    
+                    if (nameResult.rows.length > 0) {
+                        collectionId = nameResult.rows.item(0).id;
+                        console.log(`[DatabaseService] Found collection ID by set name: ${collectionId}`);
+                    }
+                }
+            }
+            
+            // If we couldn't find the collection, the card can't be in it
+            if (!collectionId) {
+                console.log(`[DatabaseService] No collection found for set ${setCode}, assuming card is new`);
+                return {isInCollection: false, setName: actualSetName};
+            }
+            
+            // Now try to find all collections like the set name to debug issues
+            try {
+                const [allCollections] = await this.db.executeSql(
+                    "SELECT id, name FROM collections WHERE name LIKE ?",
+                    [`%${setCode}%`]
+                );
+                
+                console.log(`[DatabaseService] Found ${allCollections.rows.length} collections with names like ${setCode}:`);
+                for (let i = 0; i < allCollections.rows.length; i++) {
+                    const row = allCollections.rows.item(i);
+                    console.log(`[DatabaseService] - ${row.id}: ${row.name}`);
+                }
+            } catch (error) {
+                console.log(`[DatabaseService] Error searching for similar collections:`, error);
+            }
+            
+            // Check if the card exists in the collection
+            console.log(`[DatabaseService] Checking if card ${cardUuid} exists in collection ${collectionId}`);
+            const [cardResult] = await this.db.executeSql(
+                "SELECT quantity FROM collection_cards WHERE collection_id = ? AND card_uuid = ?",
+                [collectionId, cardUuid]
+            );
+            
+            console.log(`[DatabaseService] Card check query returned ${cardResult.rows.length} rows`);
+            if (cardResult.rows.length > 0) {
+                console.log(`[DatabaseService] Card quantity: ${cardResult.rows.item(0).quantity}`);
+            }
+            
+            // Determine if the card is in the collection based on row count and quantity
+            const isInCollection = cardResult.rows.length > 0 && cardResult.rows.item(0).quantity > 0;
+            console.log(`[DatabaseService] Card ${cardUuid} in collection ${collectionId} result: ${isInCollection}`);
+            
+            return {isInCollection, setName: actualSetName};
+        } catch (error) {
+            console.error(`[DatabaseService] Error checking if card is in set collection: ${error}`);
+            return {isInCollection: false, setName: setCode};
+        }
+    }
+
 }
 
 export const getDB = async () => {

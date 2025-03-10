@@ -13,7 +13,7 @@ import {
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
 import { databaseService } from '../../services/DatabaseService';
-import { fixCardNames } from '../../services/LorcanaService';
+import { fixCardNames, getNewSetCards, safeRefreshLorcanaCards,fixCardSetIdentifiers,deleteAllSet7Cards} from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import { downloadAndImportPriceData } from '../../utils/priceData';
 
@@ -108,6 +108,13 @@ const SettingsScreen = () => {
                 },
             ]
         );
+    };
+
+    const resyncLorcana = async () => {
+        await getNewSetCards();
+        // await deleteAllSet7Cards();
+        // await fixCardSetIdentifiers('7');
+        
     };
 
     const handleRebuildDatabase = async () => {
@@ -227,6 +234,12 @@ const SettingsScreen = () => {
                     subtitle="Download latest MTG data"
                     onPress={handleRebuildDatabase}
                 />
+                <SettingsItem
+                    icon="database-refresh"
+                    title="Resync Lorcana"
+                    subtitle="Resync Lorcana data"
+                    onPress={resyncLorcana}
+                />
                 {isRebuilding && (
                     <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
                         <ActivityIndicator size="small" color={theme.primary} />
@@ -266,6 +279,7 @@ const SettingsScreen = () => {
                     subtitle="Remove all app data"
                     onPress={handleClearData}
                 />
+                
             </SettingsSection>
 
             <SettingsSection title="About">

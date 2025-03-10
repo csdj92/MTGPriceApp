@@ -42,7 +42,9 @@ export class CollectionCacheService {
         
         console.log('[CollectionCacheService] Loading collections from database');
         //show toast
-        ToastAndroid.show('Loading collections from database', ToastAndroid.SHORT);
+        if(__DEV__) {
+            ToastAndroid.show('Loading collections from database', ToastAndroid.SHORT);
+        }
         try {
             const loadedCollections = await databaseService.getCollections();
             
