@@ -82,6 +82,25 @@ export interface ExtendedCard {
     flavorText?: string;
     frameEffects: string[];
     isOriginalScan?: boolean;
+    // Double-sided card properties
+    isDoubleSided?: boolean;
+    layout?: string;
+    otherSide?: any;
+    otherSideName?: string;
+    side?: string;
+    card_faces?: {
+        name: string;
+        type_line?: string;
+        oracle_text?: string;
+        mana_cost?: string;
+        colors?: string[];
+        image_uris?: {
+            small?: string;
+            normal?: string;
+            large?: string;
+            art_crop?: string;
+        };
+    }[];
 }
 
 // Define the ScannedCard type using the ExtendedCard as a base

@@ -227,12 +227,26 @@ const WatchlistScreen = () => {
     const handleCardPress = async (card: any) => {
         try {
             setIsModalVisible(true);
+            
+            // Check if this is a double-sided card
+            const isDoubleSided = 
+                card.layout === 'transform' || 
+                card.layout === 'modal_dfc' || 
+                card.layout === 'flip' || 
+                (card.side === 'a' && card.otherSide) || 
+                (card.card_faces && card.card_faces.length > 1);
+            
+            // Get card details from Scryfall
             const details = await scryfallService.getCardByNameAndSet(card.number, card.setCode);
             if (details) {
                 setCardDetails([{
                     ...details,
                     prices: card.prices || details.prices,
-                    isExpanded: true
+                    isExpanded: true,
+                    isDoubleSided: isDoubleSided,
+                    otherSide: card.otherSide,
+                    otherSideName: card.otherSideName,
+                    layout: card.layout || details.layout
                 }]);
             } else {
                 // Fallback to name-only search if exact match fails
@@ -240,7 +254,11 @@ const WatchlistScreen = () => {
                 if (fallbackDetails) {
                     setCardDetails([{
                         ...fallbackDetails,
-                        isExpanded: true
+                        isExpanded: true,
+                        isDoubleSided: isDoubleSided,
+                        otherSide: card.otherSide,
+                        otherSideName: card.otherSideName,
+                        layout: card.layout || fallbackDetails.layout
                     }]);
                 }
             }
@@ -281,29 +299,58 @@ const WatchlistScreen = () => {
             prices.cardsphere.foil
         );
 
-        const [imageUri, setImageUri] = useState<string | null>(null);
+        const [frontImageUri, setFrontImageUri] = useState<string | null>(null);
+        const [backImageUri, setBackImageUri] = useState<string | null>(null);
+        
+        // Check if card is double-sided based on layout or side property
+        const isDoubleSided = 
+            card.layout === 'transform' || 
+            card.layout === 'modal_dfc' || 
+            card.layout === 'flip' || 
+            (card.side === 'a' && card.otherSide) || 
+            (card.card_faces && card.card_faces.length > 1);
 
         useEffect(() => {
             let isMounted = true;
             const loadImage = async () => {
                 try {
-                    // Check cache first
-                    const cacheKey = `${card.setCode}_${card.number}`;
-                    if (imageCache[cacheKey]) {
+                    // Front side image
+                    const frontCacheKey = `${card.setCode}_${card.number}_front`;
+                    if (imageCache[frontCacheKey]) {
                         if (isMounted) {
-                            setImageUri(imageCache[cacheKey]);
+                            setFrontImageUri(imageCache[frontCacheKey]);
                         }
-                        return;
+                    } else {
+                        const uri = await getCachedImageUri(card.setCode, card.number);
+                        if (isMounted) {
+                            setFrontImageUri(uri);
+                            // Update cache
+                            setImageCache(prev => ({
+                                ...prev,
+                                [frontCacheKey]: uri
+                            }));
+                        }
                     }
 
-                    const uri = await getCachedImageUri(card.setCode, card.number);
-                    if (isMounted) {
-                        setImageUri(uri);
-                        // Update cache
-                        setImageCache(prev => ({
-                            ...prev,
-                            [cacheKey]: uri
-                        }));
+                    // Back side image for double-sided cards
+                    if (isDoubleSided) {
+                        const backCacheKey = `${card.setCode}_${card.number}_back`;
+                        if (imageCache[backCacheKey]) {
+                            if (isMounted) {
+                                setBackImageUri(imageCache[backCacheKey]);
+                            }
+                        } else {
+                            // For scryfall, usually adding ?back to the URL gives the back face
+                            const backUri = await getCachedImageUri(card.setCode, card.number, true);
+                            if (isMounted) {
+                                setBackImageUri(backUri);
+                                // Update cache
+                                setImageCache(prev => ({
+                                    ...prev,
+                                    [backCacheKey]: backUri
+                                }));
+                            }
+                        }
                     }
                 } catch (error) {
                     console.error('[WatchlistScreen] Error loading cached image:', error);
@@ -311,7 +358,13 @@ const WatchlistScreen = () => {
             };
             loadImage();
             return () => { isMounted = false; };
-        }, [card.setCode, card.number]);
+        }, [card.setCode, card.number, isDoubleSided]);
+
+        // Function to handle double-sided card name display - always show just the front side name
+        const getCardNameDisplay = () => {
+            // Always show only the front name regardless of card type
+            return card.name;
+        };
 
         return (
             <TouchableOpacity 
@@ -321,12 +374,13 @@ const WatchlistScreen = () => {
                 <View style={styles.cardHeader}>
                     <View style={styles.cardNameRow}>
                         <View style={styles.cardNameAndImage}>
+                            {/* Always display just the front image */}
                             <Image 
-                                source={{ uri: imageUri || `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image&version=small` }}
+                                source={{ uri: frontImageUri || `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image` }}
                                 style={styles.cardThumbnail}
                                 resizeMode="contain"
                             />
-                            <Text style={styles.cardName}>{card.name}</Text>
+                            <Text style={styles.cardName}>{getCardNameDisplay()}</Text>
                         </View>
                         <View style={styles.priceRow}>
                             <Text style={styles.priceLabel}>Normal:</Text>
@@ -962,6 +1016,22 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 14,
     },
+    doubleSidedImageContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        width: 64,
+        marginRight: 4,
+    },
+    doubleSidedThumbnail: {
+        width: 32,
+        height: 45,
+        borderRadius: 3,
+        backgroundColor: '#f5f5f5',
+        marginRight: -10, // Slightly overlapping images
+    },
+    backFaceThumbnail: {
+        transform: [{rotate: '2deg'}], // Slight rotation for visual effect
+    }
 });
 
 export default WatchlistScreen; 

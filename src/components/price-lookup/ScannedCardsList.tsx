@@ -141,21 +141,21 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
       return newToCollectionCards.has(item.id || item.uuid || '');
     })();
     
-    // Debug log
-    if (__DEV__) {
-      console.log(`[ScannedCardsList] Card (${item.name}): New to collection: ${isNewToCollection}`, {
-        id: item.id,
-        uuid: item.uuid,
-        Unique_ID: (item as any).Unique_ID, // Check if Lorcana Unique_ID exists
-        inNewSet: Array.from(newToCollectionCards),
-        cardType: item.type
-      });
-    }
+    // // Debug log
+    // if (__DEV__) {
+    //   console.log(`[ScannedCardsList] Card (${item.name}): New to collection: ${isNewToCollection}`, {
+    //     id: item.id,
+    //     uuid: item.uuid,
+    //     Unique_ID: (item as any).Unique_ID, // Check if Lorcana Unique_ID exists
+    //     inNewSet: Array.from(newToCollectionCards),
+    //     cardType: item.type
+    //   });
+    // }
 
-    // Log the image URI for debugging
-    if (__DEV__) {
-      console.log(`[ScannedCardsList] Card (${item.name}): Using image URI: ${imageUri || 'none'}`);
-    }
+    // // Log the image URI for debugging
+    // if (__DEV__) {
+    //   console.log(`[ScannedCardsList] Card (${item.name}): Using image URI: ${imageUri || 'none'}`);
+    // }
 
     return (
       <TouchableOpacity 

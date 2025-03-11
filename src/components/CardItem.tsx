@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -32,9 +32,26 @@ const CardItem: React.FC<CardItemProps> = ({
     onAddToCollection,
     onDeleteCard
 }) => {
+    // State to track which face of a double-sided card is shown (0 = front, 1 = back)
+    const [activeFace, setActiveFace] = useState(0);
+    
     // Creating an animated value for card press effect
     const scaleAnim = React.useRef(new Animated.Value(1)).current;
     
+    // Add useEffect for debugging card data
+    useEffect(() => {
+        console.log('Card Data:', {
+            name: card.name,
+            isDoubleSided: card.isDoubleSided,
+            hasCardFaces: !!card.card_faces,
+            cardFacesLength: card.card_faces?.length,
+            mainImageUris: card.imageUris,
+            mainImageUrl: card.imageUrl,
+            cardFaces: card.card_faces,
+            layout: card.layout
+        });
+    }, [card]);
+
     const onPressIn = () => {
         Animated.spring(scaleAnim, {
             toValue: 0.97,
@@ -75,6 +92,103 @@ const CardItem: React.FC<CardItemProps> = ({
 
     // Determine if card should be displayed in expanded view
     const shouldShowExpanded = card.isExpanded === true;
+    
+    // Toggle between front and back faces for double-sided cards
+    const toggleFace = (e: any) => {
+        e.stopPropagation();
+        console.log('Toggling face:', {
+            currentFace: activeFace,
+            newFace: activeFace === 0 ? 1 : 0
+        });
+        setActiveFace(activeFace === 0 ? 1 : 0);
+    };
+    
+    // Check if this is a double-sided card
+    const isDoubleSided = card.isDoubleSided || (card.card_faces && card.card_faces.length > 1);
+    
+    // Log double-sided status whenever it changes
+    useEffect(() => {
+        console.log('Double-sided status:', {
+            isDoubleSided,
+            reason: card.isDoubleSided ? 'isDoubleSided flag' : 
+                   (card.card_faces && card.card_faces.length > 1) ? 'has multiple faces' : 'single sided'
+        });
+    }, [isDoubleSided, card]);
+
+    // Get the appropriate image URI based on whether it's a double-sided card
+    const getCardImage = () => {
+        let imageUrl;
+        console.log('Getting card image:', {
+            cardName: card.name,
+            isDoubleSided,
+            activeFace,
+            layout: card.layout,
+            hasCardFaces: !!card.card_faces,
+            cardFacesLength: card.card_faces?.length
+        });
+
+        if (isDoubleSided && card.card_faces && card.card_faces.length > activeFace) {
+            const face = card.card_faces[activeFace];
+            imageUrl = face.image_uris?.normal || face.image_uris?.small;
+            console.log('Double-sided card image:', {
+                activeFace,
+                faceName: face.name,
+                faceImageUris: face.image_uris,
+                selectedUrl: imageUrl
+            });
+
+            // Fallback to constructing URL if no image_uris present
+            if (!imageUrl) {
+                imageUrl = `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.collectorNumber}?format=image${activeFace === 1 ? '&face=back' : ''}`;
+                console.log('Using fallback URL for double-sided card:', imageUrl);
+            }
+        } else {
+            imageUrl = card.imageUris?.normal || card.imageUris?.small || card.imageUrl;
+            console.log('Single-sided card image:', {
+                imageUris: card.imageUris,
+                imageUrl: card.imageUrl,
+                selectedUrl: imageUrl
+            });
+
+            // Fallback to constructing URL if no image URL present
+            if (!imageUrl && card.setCode && card.collectorNumber) {
+                imageUrl = `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.collectorNumber}?format=image`;
+                console.log('Using fallback URL for single-sided card:', imageUrl);
+            }
+        }
+
+        return imageUrl;
+    };
+    
+    // Log whenever active face changes
+    useEffect(() => {
+        if (isDoubleSided) {
+            console.log('Active face changed:', {
+                activeFace,
+                faceName: card.card_faces?.[activeFace]?.name,
+                faceImageUris: card.card_faces?.[activeFace]?.image_uris
+            });
+        }
+    }, [activeFace, card]);
+
+    // Get the current face's name for double-sided cards
+    const getCardName = () => {
+        if (isDoubleSided && card.card_faces && card.card_faces.length > activeFace) {
+            return card.card_faces[activeFace].name;
+        } else {
+            return card.name;
+        }
+    };
+
+    // Get the final image URL that will be used
+    const finalImageUrl = getCardImage();
+    useEffect(() => {
+        console.log('Final image URL:', {
+            url: finalImageUrl,
+            viewMode,
+            isExpanded: card.isExpanded
+        });
+    }, [finalImageUrl, viewMode, card.isExpanded]);
 
     return (
         <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
@@ -99,27 +213,53 @@ const CardItem: React.FC<CardItemProps> = ({
                 )}
                 
                 <View style={shouldShowExpanded ? styles.expandedContent : (viewMode === 'grid' ? styles.gridContent : styles.listContent)}>
-                    {(card.imageUris?.normal || card.imageUris?.small || card.imageUrl) ? (
-                        <Image 
-                            source={{ uri: card.imageUris?.normal || card.imageUris?.small || card.imageUrl }} 
-                            style={shouldShowExpanded ? styles.expandedImage : (viewMode === 'grid' ? styles.gridImage : styles.listImage)}
-                            resizeMode="contain"
-                        />
-                    ) : (
-                        <View style={[
-                            shouldShowExpanded ? styles.noImageExpanded : (viewMode === 'grid' ? styles.noImageGrid : styles.noImageList),
-                            { backgroundColor: '#e0e0e0' }
-                        ]}>
-                            <Icon name="image-off" size={shouldShowExpanded ? 60 : (viewMode === 'grid' ? 40 : 24)} color="#999" />
-                        </View>
-                    )}
+                    <View style={styles.imageContainer}>
+                        {finalImageUrl ? (
+                            <Image 
+                                source={{ uri: finalImageUrl }} 
+                                style={shouldShowExpanded ? styles.expandedImage : (viewMode === 'grid' ? styles.gridImage : styles.listImage)}
+                                resizeMode="contain"
+                                onError={(error) => {
+                                    console.log('Image loading error:', {
+                                        error: error.nativeEvent,
+                                        attemptedUrl: finalImageUrl
+                                    });
+                                }}
+                                onLoad={() => {
+                                    console.log('Image loaded successfully:', {
+                                        url: finalImageUrl
+                                    });
+                                }}
+                            />
+                        ) : (
+                            <View style={[
+                                shouldShowExpanded ? styles.noImageExpanded : (viewMode === 'grid' ? styles.noImageGrid : styles.noImageList),
+                                { backgroundColor: '#e0e0e0' }
+                            ]}>
+                                <Icon name="image-off" size={shouldShowExpanded ? 60 : (viewMode === 'grid' ? 40 : 24)} color="#999" />
+                            </View>
+                        )}
+                        
+                        {/* Toggle button for double-sided cards */}
+                        {isDoubleSided && (
+                            <TouchableOpacity 
+                                style={[
+                                    styles.flipCardButton,
+                                    shouldShowExpanded ? styles.flipCardButtonExpanded : {}
+                                ]} 
+                                onPress={toggleFace}
+                            >
+                                <Icon name="card-multiple" size={shouldShowExpanded ? 24 : 16} color="#fff" />
+                            </TouchableOpacity>
+                        )}
+                    </View>
                     
                     <View style={shouldShowExpanded ? styles.expandedDetails : (viewMode === 'list' ? styles.listDetails : styles.gridDetails)}>
                         <Text 
                             style={styles.cardName} 
                             numberOfLines={shouldShowExpanded ? 0 : (viewMode === 'grid' ? 2 : 1)}
                         >
-                            {card.name}
+                            {getCardName()}
                         </Text>
                         
                         {(viewMode === 'list' || shouldShowExpanded) && card.type && (
@@ -155,12 +295,18 @@ const CardItem: React.FC<CardItemProps> = ({
 
                         {shouldShowExpanded && (
                             <View style={styles.expandedCardInfo}>
-                                {card.text && (
+                                {/* Show the current face's text if it's a double-sided card */}
+                                {isDoubleSided && card.card_faces && card.card_faces.length > activeFace && card.card_faces[activeFace].oracle_text ? (
+                                    <View style={styles.textSection}>
+                                        <Text style={styles.sectionTitle}>Card Text:</Text>
+                                        <Text style={styles.cardText}>{card.card_faces[activeFace].oracle_text}</Text>
+                                    </View>
+                                ) : card.text ? (
                                     <View style={styles.textSection}>
                                         <Text style={styles.sectionTitle}>Card Text:</Text>
                                         <Text style={styles.cardText}>{card.text}</Text>
                                     </View>
-                                )}
+                                ) : null}
                                 
                                 {card.flavorText && (
                                     <View style={styles.textSection}>
@@ -318,6 +464,9 @@ const styles = StyleSheet.create({
     expandedContent: {
         flexDirection: 'column',
     },
+    imageContainer: {
+        position: 'relative',
+    },
     gridImage: {
         width: '100%',
         height: 140,
@@ -351,6 +500,23 @@ const styles = StyleSheet.create({
         height: 300,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    flipCardButton: {
+        position: 'absolute',
+        bottom: 8,
+        right: 8,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        borderRadius: 20,
+        width: 32,
+        height: 32,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 10,
+    },
+    flipCardButtonExpanded: {
+        width: 40,
+        height: 40,
+        borderRadius: 24,
     },
     gridDetails: {
         padding: 8,

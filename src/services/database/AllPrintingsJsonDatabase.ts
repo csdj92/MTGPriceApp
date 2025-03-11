@@ -303,6 +303,8 @@ export class AllPrintingsJsonDatabase {
                     c.setCode,
                     c.number, 
                     c.rarity,
+                    c.layout,
+                    c.side,
                     COALESCE(p.normal_price, 0) as normal_price,
                     COALESCE(p.foil_price, 0) as foil_price,
                     COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
@@ -317,38 +319,79 @@ export class AllPrintingsJsonDatabase {
                 FROM cards c
                 LEFT JOIN prices p ON c.uuid = p.uuid
                 WHERE UPPER(c.setCode) = ?
-                ORDER BY c.number ASC
+                ORDER BY c.number ASC, c.side ASC
                 LIMIT ? OFFSET ?
             `, [setCode.toUpperCase(), pageSize, offset]);
 
-            const cards = result.rows.raw().map(card => ({
-                uuid: card.uuid,
-                name: card.name,
-                setCode: card.setCode,
-                number: card.number,
-                rarity: card.rarity,
-                normal_price: parseFloat(card.normal_price) || 0,
-                foil_price: parseFloat(card.foil_price) || 0,
-                prices: {
-                    tcgplayer: {
-                        normal: parseFloat(card.tcg_normal_price) || 0,
-                        foil: parseFloat(card.tcg_foil_price) || 0
-                    },
-                    cardmarket: {
-                        normal: parseFloat(card.cardmarket_normal_price) || 0,
-                        foil: parseFloat(card.cardmarket_foil_price) || 0
-                    },
-                    cardkingdom: {
-                        normal: parseFloat(card.cardkingdom_normal_price) || 0,
-                        foil: parseFloat(card.cardkingdom_foil_price) || 0
-                    },
-                    cardsphere: {
-                        normal: parseFloat(card.cardsphere_normal_price) || 0,
-                        foil: parseFloat(card.cardsphere_foil_price) || 0
+            const rawCards = result.rows.raw();
+            
+            // Group double-sided cards
+            const cardMap = new Map();
+            
+            for (const card of rawCards) {
+                // Check if this is a double-sided card by side property
+                if (card.side === 'b') {
+                    // This is a back face, find the corresponding front face
+                    const baseNumber = card.number.replace(/b$/, '').replace(/\d+b$/, (match: string) => match.slice(0, -1));
+                    
+                    // Look for the matching front face card in our processed cards
+                    for (const [key, frontCard] of cardMap.entries()) {
+                        // If the card numbers match (ignoring a/b suffix)
+                        const frontNumber = frontCard.number.replace(/a$/, '').replace(/\d+a$/, (match: string) => match.slice(0, -1));
+                        
+                        if (frontNumber === baseNumber && frontCard.setCode === card.setCode) {
+                            // Add back face information to the front face card
+                            frontCard.otherSide = {
+                                uuid: card.uuid,
+                                name: card.name
+                            };
+                            frontCard.otherSideName = card.name;
+                            frontCard.layout = 'transform'; // Mark as double-sided
+                            break;
+                        }
                     }
-                },
-                last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
-            }));
+                    
+                    // Skip adding the back face as a separate card
+                    continue;
+                }
+                
+                // For front face cards or single-sided cards
+                const cardKey = `${card.setCode}_${card.number}`;
+                
+                cardMap.set(cardKey, {
+                    uuid: card.uuid,
+                    name: card.name,
+                    setCode: card.setCode,
+                    number: card.number,
+                    rarity: card.rarity,
+                    side: card.side || 'a', // Default to 'a' if no side is specified
+                    layout: card.layout || 'normal',
+                    normal_price: parseFloat(card.normal_price) || 0,
+                    foil_price: parseFloat(card.foil_price) || 0,
+                    prices: {
+                        tcgplayer: {
+                            normal: parseFloat(card.tcg_normal_price) || 0,
+                            foil: parseFloat(card.tcg_foil_price) || 0
+                        },
+                        cardmarket: {
+                            normal: parseFloat(card.cardmarket_normal_price) || 0,
+                            foil: parseFloat(card.cardmarket_foil_price) || 0
+                        },
+                        cardkingdom: {
+                            normal: parseFloat(card.cardkingdom_normal_price) || 0,
+                            foil: parseFloat(card.cardkingdom_foil_price) || 0
+                        },
+                        cardsphere: {
+                            normal: parseFloat(card.cardsphere_normal_price) || 0,
+                            foil: parseFloat(card.cardsphere_foil_price) || 0
+                        }
+                    },
+                    last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
+                });
+            }
+            
+            // Convert map back to array
+            const cards = Array.from(cardMap.values());
 
             // Cache the results
             this.setCardsCache[cacheKey] = {
@@ -395,6 +438,8 @@ export class AllPrintingsJsonDatabase {
                     c.setCode,
                     c.number,
                     c.rarity,
+                    c.layout,
+                    c.side,
                     COALESCE(p.normal_price, 0) as normal_price,
                     COALESCE(p.foil_price, 0) as foil_price,
                     COALESCE(p.tcg_normal_price, 0) as tcg_normal_price,
@@ -411,36 +456,83 @@ export class AllPrintingsJsonDatabase {
                 WHERE p.${sortBy} > 0
                 ORDER BY p.${sortBy} DESC
                 LIMIT ? OFFSET ?
-            `, [pageSize, offset]);
+            `, [pageSize * 2, offset]); // Get more rows to account for filtering out back faces
 
-            const cards = result.rows.raw().map(card => ({
-                uuid: card.uuid,
-                name: card.name,
-                setCode: card.setCode,
-                number: card.number,
-                rarity: card.rarity,
-                normal_price: parseFloat(card.normal_price) || 0,
-                foil_price: parseFloat(card.foil_price) || 0,
-                prices: {
-                    tcgplayer: {
-                        normal: parseFloat(card.tcg_normal_price) || 0,
-                        foil: parseFloat(card.tcg_foil_price) || 0
-                    },
-                    cardmarket: {
-                        normal: parseFloat(card.cardmarket_normal_price) || 0,
-                        foil: parseFloat(card.cardmarket_foil_price) || 0
-                    },
-                    cardkingdom: {
-                        normal: parseFloat(card.cardkingdom_normal_price) || 0,
-                        foil: parseFloat(card.cardkingdom_foil_price) || 0
-                    },
-                    cardsphere: {
-                        normal: parseFloat(card.cardsphere_normal_price) || 0,
-                        foil: parseFloat(card.cardsphere_foil_price) || 0
+            const rawCards = result.rows.raw();
+            
+            // Group double-sided cards
+            const cardMap = new Map();
+            
+            for (const card of rawCards) {
+                // Check if this is a double-sided card by side property
+                if (card.side === 'b') {
+                    // This is a back face, find the corresponding front face
+                    const baseNumber = card.number.replace(/b$/, '').replace(/\d+b$/, (match: string) => match.slice(0, -1));
+                    
+                    // Look for the matching front face card in our processed cards
+                    for (const [key, frontCard] of cardMap.entries()) {
+                        // If the card numbers match (ignoring a/b suffix)
+                        const frontNumber = frontCard.number.replace(/a$/, '').replace(/\d+a$/, (match: string) => match.slice(0, -1));
+                        
+                        if (frontNumber === baseNumber && frontCard.setCode === card.setCode) {
+                            // Add back face information to the front face card
+                            frontCard.otherSide = {
+                                uuid: card.uuid,
+                                name: card.name
+                            };
+                            frontCard.otherSideName = card.name;
+                            frontCard.layout = 'transform'; // Mark as double-sided
+                            break;
+                        }
                     }
-                },
-                last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
-            }));
+                    
+                    // Skip adding the back face as a separate card
+                    continue;
+                }
+                
+                // For front face cards or single-sided cards
+                const cardKey = `${card.setCode}_${card.number}`;
+                
+                cardMap.set(cardKey, {
+                    uuid: card.uuid,
+                    name: card.name,
+                    setCode: card.setCode,
+                    number: card.number,
+                    rarity: card.rarity,
+                    side: card.side || 'a', // Default to 'a' if no side is specified
+                    layout: card.layout || 'normal',
+                    normal_price: parseFloat(card.normal_price) || 0,
+                    foil_price: parseFloat(card.foil_price) || 0,
+                    prices: {
+                        tcgplayer: {
+                            normal: parseFloat(card.tcg_normal_price) || 0,
+                            foil: parseFloat(card.tcg_foil_price) || 0
+                        },
+                        cardmarket: {
+                            normal: parseFloat(card.cardmarket_normal_price) || 0,
+                            foil: parseFloat(card.cardmarket_foil_price) || 0
+                        },
+                        cardkingdom: {
+                            normal: parseFloat(card.cardkingdom_normal_price) || 0,
+                            foil: parseFloat(card.cardkingdom_foil_price) || 0
+                        },
+                        cardsphere: {
+                            normal: parseFloat(card.cardsphere_normal_price) || 0,
+                            foil: parseFloat(card.cardsphere_foil_price) || 0
+                        }
+                    },
+                    last_updated: card.last_updated ? new Date(card.last_updated).getTime() : null
+                });
+            }
+            
+            // Convert map back to array
+            let cards = Array.from(cardMap.values());
+            
+            // Re-sort by price since we might have modified the order while processing
+            cards.sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0));
+            
+            // Trim back to requested pageSize
+            cards = cards.slice(0, pageSize);
 
             // Cache the results
             this.expensiveCardsCache[cacheKey] = {

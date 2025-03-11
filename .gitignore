@@ -79,3 +79,4 @@ android/app/src/main/assets/AllPrintings.sqlite
 *.db
 android/app/src/main/assets/mtg_classifier_classes.txt
 android/app/src/main/assets/mtg_classifier.tflite
+.cursor/mcp.json

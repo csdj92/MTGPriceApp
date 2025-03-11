@@ -6,11 +6,14 @@ import {
     ActivityIndicator,
     ScrollView,
     Image,
+    TouchableOpacity,
 } from 'react-native';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { scryfallService } from '../services/ScryfallService';
 import type { ExtendedCard } from '../types/card';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import Icon from 'react-native-vector-icons/FontAwesome';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface CardDetailScreenProps {
     route: RouteProp<RootStackParamList, 'CardDetails'>;
@@ -23,6 +26,7 @@ const CardDetailsScreen: React.FC<CardDetailScreenProps> = ({ route }) => {
     const [isLoading, setIsLoading] = useState(true);
     const navigation = useNavigation();
     const cardId = route.params.card.id;
+    const [showBackFace, setShowBackFace] = useState(false);
 
     useEffect(() => {
         const loadCard = async () => {
@@ -39,6 +43,10 @@ const CardDetailsScreen: React.FC<CardDetailScreenProps> = ({ route }) => {
 
         loadCard();
     }, [cardId, navigation]);
+
+    const toggleCardFace = () => {
+        setShowBackFace(prev => !prev);
+    };
 
     if (isLoading) {
         return (
@@ -57,15 +65,22 @@ const CardDetailsScreen: React.FC<CardDetailScreenProps> = ({ route }) => {
         );
     }
 
+    const isDoubleSided = cardData.card_faces && cardData.card_faces.length === 2;
+    const imageToShow = showBackFace && isDoubleSided && cardData.card_faces?.[1]?.image_uris?.normal 
+        ? cardData.card_faces[1].image_uris.normal 
+        : (showBackFace && isDoubleSided 
+            ? `https://api.scryfall.com/cards/${cardData.setCode.toLowerCase()}/${cardData.collectorNumber}?format=image&face=back`
+            : (cardData.imageUris?.normal || `https://api.scryfall.com/cards/${cardData.setCode.toLowerCase()}/${cardData.collectorNumber}?format=image`)
+        );
+
     return (
         <ScrollView style={styles.container}>
-            {cardData.imageUrl && (
-                <Image
-                    source={{ uri: cardData.imageUrl }}
-                    style={styles.cardImage}
-                    resizeMode="contain"
-                />
-            )}
+            <Image
+                source={{ uri: imageToShow }}
+                style={styles.cardImage}
+                resizeMode="contain"
+            />
+            
             <View style={styles.detailsContainer}>
                 <Text style={styles.name}>{cardData.name}</Text>
                 <Text style={styles.type}>{cardData.type}</Text>
@@ -83,6 +98,12 @@ const CardDetailsScreen: React.FC<CardDetailScreenProps> = ({ route }) => {
                     </Text>
                 )}
             </View>
+            {isDoubleSided && (
+                <TouchableOpacity style={styles.flipButton} onPress={toggleCardFace}>
+                    <Text style={styles.flipButtonIcon}>⟲</Text>
+                    <Text style={styles.flipButtonText}>Flip Card</Text>
+                </TouchableOpacity>
+            )}
         </ScrollView>
     );
 };
@@ -160,6 +181,24 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#4caf50',
         marginTop: 8,
+    },
+    flipButton: {
+        backgroundColor: '#2196F3',
+        padding: 10,
+        borderRadius: 5,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        margin: 10,
+    },
+    flipButtonIcon: {
+        color: '#fff',
+        fontSize: 16,
+        marginRight: 10,
+    },
+    flipButtonText: {
+        color: '#fff',
+        fontSize: 16,
     },
 });
 

@@ -244,10 +244,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
                              card.imageUrl || null;
                 }
                 
-                // Log the image URI for debugging
-                if (__DEV__) {
-                  console.log(`[CardScanner] Card ${index} (${card.name}): Using image URI: ${imageUri || 'none'}`);
-                }
+               
                   
                 return (
                   <TouchableOpacity

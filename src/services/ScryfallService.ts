@@ -81,6 +81,22 @@ interface ScryfallCard {
     cmc?: number;
     flavor_text?: string;
     frame_effects?: string[];
+    // Double-sided card properties
+    layout?: 'normal' | 'transform' | 'modal_dfc' | 'flip' | string;
+    card_faces?: Array<{
+        name: string;
+        type_line: string;
+        oracle_text?: string;
+        mana_cost?: string;
+        colors?: string[];
+        image_uris?: {
+            small?: string;
+            normal?: string;
+            large?: string;
+            art_crop?: string;
+        };
+        flavor_text?: string;
+    }>;
 }
 
 interface PriceData {
@@ -140,6 +156,12 @@ class ScryfallService {
         }
     }
     private transformScryfallCard = (scryfallCard: ScryfallCard): ExtendedCard => {
+        // Check if this is a double-sided card
+        const isDoubleSided = scryfallCard.layout === 'transform' || 
+                            scryfallCard.layout === 'modal_dfc' || 
+                            scryfallCard.layout === 'flip' ||
+                            (scryfallCard.card_faces && scryfallCard.card_faces.length > 1);
+
         return {
             id: scryfallCard.id,
             name: scryfallCard.name,
@@ -180,6 +202,17 @@ class ScryfallService {
             cmc: scryfallCard.cmc ?? 0,
             flavorText: scryfallCard.flavor_text,
             frameEffects: scryfallCard.frame_effects ?? [],
+            // Double-sided card properties
+            isDoubleSided,
+            layout: scryfallCard.layout,
+            card_faces: scryfallCard.card_faces?.map(face => ({
+                name: face.name,
+                type_line: face.type_line,
+                oracle_text: face.oracle_text,
+                mana_cost: face.mana_cost,
+                colors: face.colors,
+                image_uris: face.image_uris
+            }))
         };
     };
 
