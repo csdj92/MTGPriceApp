@@ -8,10 +8,10 @@ import {
     TextInput,
     SectionList,
     Modal,
-    ScrollView,
     FlatList,
     Image,
     Alert,
+    Animated
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
@@ -28,6 +28,24 @@ import AllPrintingsJsonDatabase from '../../services/database/AllPrintingsJsonDa
 import { PriceService } from '../../services/price/PriceService';
 import { DatabaseManager } from '../../services/database/DatabaseManager';
 
+const AnimatedTouchable = Animated.createAnimatedComponent(TouchableOpacity);
+
+// Extracted components for better organization
+const PriceRow = ({ label, value, formatPrice }: { label: string; value: number; formatPrice: (price: number) => string }) => (
+    <View style={styles.priceGridRow}>
+        <Text style={styles.priceGridLabel}>{label}:</Text>
+        <Text style={styles.priceGridValue}>{formatPrice(value)}</Text>
+    </View>
+);
+
+const PriceColumn = ({ title, prices, formatPrice }: { title: string; prices: { normal: number; foil: number }; formatPrice: (price: number) => string }) => (
+    <View style={styles.priceColumn}>
+        <Text style={styles.priceSourceTitle}>{title}</Text>
+        <PriceRow label="Normal" value={prices.normal} formatPrice={formatPrice} />
+        <PriceRow label="Foil" value={prices.foil} formatPrice={formatPrice} />
+    </View>
+);
+
 const WatchlistScreen = () => {
     const navigation = useNavigation();
     const [isLoading, setIsLoading] = useState(false);
@@ -43,12 +61,15 @@ const WatchlistScreen = () => {
     const [sets, setSets] = useState<SetInfo[]>([]);
     const [isSetModalVisible, setIsSetModalVisible] = useState(false);
     const [selectedSet, setSelectedSet] = useState<SetInfo | null>(null);
-    const PAGE_SIZE = 10;
+    const PAGE_SIZE = 20; // Increased from 10 to show more cards at once
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [setSearchText, setSetSearchText] = useState('');
     const [isSetLoading, setIsSetLoading] = useState(false);
     const [isSetModalLoading, setIsSetModalLoading] = useState(false);
     const [imageCache, setImageCache] = useState<{[key: string]: string}>({});
+
+    // Format price helper function
+    const formatPrice = useCallback((price: number) => price ? `$${price.toFixed(2)}` : 'N/A', []);
 
     // Remove the cleanup effects that clear data
     useEffect(() => {
@@ -274,7 +295,21 @@ const WatchlistScreen = () => {
 
     // Memoize the card rendering function
     const renderCard = useCallback(({ item: card }: { item: any }) => {
-        const formatPrice = (price: number) => price ? `$${price.toFixed(2)}` : 'N/A';
+        const scaleValue = React.useRef(new Animated.Value(1)).current;
+        
+        const onPressIn = () => {
+            Animated.spring(scaleValue, {
+                toValue: 0.98,
+                useNativeDriver: true,
+            }).start();
+        };
+        
+        const onPressOut = () => {
+            Animated.spring(scaleValue, {
+                toValue: 1,
+                useNativeDriver: true,
+            }).start();
+        };
 
         // Get prices from the card's prices object
         const prices = card.prices || {
@@ -360,70 +395,70 @@ const WatchlistScreen = () => {
             return () => { isMounted = false; };
         }, [card.setCode, card.number, isDoubleSided]);
 
-        // Function to handle double-sided card name display - always show just the front side name
-        const getCardNameDisplay = () => {
-            // Always show only the front name regardless of card type
-            return card.name;
-        };
-
         return (
-            <TouchableOpacity 
-                style={styles.cardItem}
+            <AnimatedTouchable
+                style={[styles.cardItem, { transform: [{ scale: scaleValue }] }]}
+                onPressIn={onPressIn}
+                onPressOut={onPressOut}
                 onPress={() => handleCardPress(card)}
+                activeOpacity={0.9}
             >
                 <View style={styles.cardHeader}>
-                    <View style={styles.cardNameRow}>
-                        <View style={styles.cardNameAndImage}>
-                            {/* Always display just the front image */}
-                            <Image 
-                                source={{ uri: frontImageUri || `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image` }}
-                                style={styles.cardThumbnail}
-                                resizeMode="contain"
-                            />
-                            <Text style={styles.cardName}>{getCardNameDisplay()}</Text>
-                        </View>
-                        <View style={styles.priceRow}>
-                            <Text style={styles.priceLabel}>Normal:</Text>
-                            <Text style={styles.highestPrice}>{formatPrice(highestNormal)}</Text>
-                            <Text style={styles.priceLabel}>Foil:</Text>
-                            <Text style={styles.highestPrice}>{formatPrice(highestFoil)}</Text>
+                    <View style={styles.cardImageContainer}>
+                        <Image 
+                            source={{ uri: frontImageUri || `https://api.scryfall.com/cards/${card.setCode.toLowerCase()}/${card.number}?format=image` }}
+                            style={styles.cardImage}
+                            resizeMode="contain"
+                        />
+                        <View style={styles.setBadge}>
+                            <Text style={styles.setCodeText}>{card.setCode}</Text>
                         </View>
                     </View>
-                    <Text style={styles.setCode}>{card.setCode} #{card.number}</Text>
+                    
+                    <View style={styles.cardInfo}>
+                        <Text style={styles.cardName} numberOfLines={2}>{card.name}</Text>
+                        <View style={styles.pricePillContainer}>
+                            <View style={[styles.pricePill, styles.normalPill]}>
+                                <Text style={styles.pricePillText}>Normal</Text>
+                                <Text style={styles.pricePillValue}>{formatPrice(highestNormal)}</Text>
+                            </View>
+                            <View style={[styles.pricePill, styles.foilPill]}>
+                                <Text style={styles.pricePillText}>Foil</Text>
+                                <Text style={styles.pricePillValue}>{formatPrice(highestFoil)}</Text>
+                            </View>
+                        </View>
+                    </View>
                 </View>
-                
+
                 <View style={styles.priceGrid}>
-                    <View style={styles.priceSource}>
-                        <Text style={styles.sourceHeader}>TCGplayer</Text>
-                        <Text>Normal: {formatPrice(prices.tcgplayer.normal)}</Text>
-                        <Text>Foil: {formatPrice(prices.tcgplayer.foil)}</Text>
-                    </View>
-                    
-                    <View style={styles.priceSource}>
-                        <Text style={styles.sourceHeader}>Cardmarket</Text>
-                        <Text>Normal: {formatPrice(prices.cardmarket.normal)}</Text>
-                        <Text>Foil: {formatPrice(prices.cardmarket.foil)}</Text>
-                    </View>
-                    
-                    <View style={styles.priceSource}>
-                        <Text style={styles.sourceHeader}>Card Kingdom</Text>
-                        <Text>Normal: {formatPrice(prices.cardkingdom.normal)}</Text>
-                        <Text>Foil: {formatPrice(prices.cardkingdom.foil)}</Text>
-                    </View>
-                    
-                    <View style={styles.priceSource}>
-                        <Text style={styles.sourceHeader}>Cardsphere</Text>
-                        <Text>Normal: {formatPrice(prices.cardsphere.normal)}</Text>
-                        <Text>Foil: {formatPrice(prices.cardsphere.foil)}</Text>
-                    </View>
+                    <PriceColumn 
+                        title="TCGplayer" 
+                        prices={prices.tcgplayer} 
+                        formatPrice={formatPrice} 
+                    />
+                    <PriceColumn 
+                        title="Cardmarket" 
+                        prices={prices.cardmarket} 
+                        formatPrice={formatPrice} 
+                    />
+                    <PriceColumn 
+                        title="Card Kingdom" 
+                        prices={prices.cardkingdom} 
+                        formatPrice={formatPrice} 
+                    />
+                    <PriceColumn 
+                        title="Cardsphere" 
+                        prices={prices.cardsphere} 
+                        formatPrice={formatPrice} 
+                    />
                 </View>
 
                 <Text style={styles.lastUpdated}>
-                    Last updated: {card.last_updated ? new Date(card.last_updated).toLocaleString() : 'Never'}
+                    Updated: {card.last_updated ? new Date(card.last_updated).toLocaleString() : 'N/A'}
                 </Text>
-            </TouchableOpacity>
+            </AnimatedTouchable>
         );
-    }, [imageCache]);
+    }, [imageCache, formatPrice]);
 
     // Memoize section header rendering
     const renderSetSection = useCallback(({ section }: { section: { setCode: string; data: any[] } }) => (
@@ -470,8 +505,10 @@ const WatchlistScreen = () => {
             }}
         >
             <Text style={styles.setItemText}>{set.name}</Text>
-            <Text style={styles.setItemCode}>{set.code}</Text>
-            <Text style={styles.setItemCount}>{set.cardCount} cards</Text>
+            <View style={styles.setItemDetails}>
+                <Text style={styles.setItemCode}>{set.code}</Text>
+                <Text style={styles.setItemCount}>{set.cardCount} cards</Text>
+            </View>
         </TouchableOpacity>
     ), [loadPriceData]);
 
@@ -562,7 +599,7 @@ const WatchlistScreen = () => {
             }}
             statusBarTranslucent={true}
         >
-            <View style={[styles.modalOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}>
+            <View style={styles.modalOverlay}>
                 <View style={styles.setModalContainer}>
                     <View style={styles.setModalHeader}>
                         <Text style={styles.setModalTitle}>Select a Set</Text>
@@ -598,6 +635,9 @@ const WatchlistScreen = () => {
                             keyExtractor={(set) => set.code}
                             keyboardShouldPersistTaps="handled"
                             keyboardDismissMode="on-drag"
+                            initialNumToRender={15}
+                            maxToRenderPerBatch={20}
+                            windowSize={10}
                         />
                     )}
                 </View>
@@ -622,37 +662,39 @@ const WatchlistScreen = () => {
                     <Text style={styles.loadingText}>Loading set data...</Text>
                 </View>
             )}
-            <View style={styles.searchContainer}>
-                <TouchableOpacity
-                    style={styles.setButton}
-                    onPress={handleSetModalOpen}
-                >
-                    <Text style={styles.setButtonText}>
-                        {selectedSet ? selectedSet.code : 'All Sets'}
-                    </Text>
-                    <Icon name="chevron-down" size={20} color="#000" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={styles.sortButton}
-                    onPress={() => setSortBy(prev => prev === 'normal_price' ? 'foil_price' : 'normal_price')}
-                >
-                    <Icon name="sort" size={20} color="#000" style={styles.buttonIcon} />
-                    <Text style={styles.buttonText}>Sort: {sortBy === 'normal_price' ? 'Normal' : 'Foil'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.actionButton, isRefreshing && styles.refreshButtonDisabled]}
-                    onPress={handleRefreshPrices}
-                    disabled={isRefreshing}
-                >
-                    {isRefreshing ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                        <>
-                            <Icon name="refresh" size={20} color="#fff" style={styles.buttonIcon} />
-                            <Text style={styles.actionButtonText}>Update</Text>
-                        </>
-                    )}
-                </TouchableOpacity>
+            <View style={styles.header}>
+                <View style={styles.searchContainer}>
+                    <TouchableOpacity
+                        style={styles.setButton}
+                        onPress={handleSetModalOpen}
+                    >
+                        <Text style={styles.setButtonText}>
+                            {selectedSet ? selectedSet.code : 'All Sets'}
+                        </Text>
+                        <Icon name="chevron-down" size={20} color="#000" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.sortButton}
+                        onPress={() => setSortBy(prev => prev === 'normal_price' ? 'foil_price' : 'normal_price')}
+                    >
+                        <Icon name="sort" size={20} color="#000" style={styles.buttonIcon} />
+                        <Text style={styles.buttonText}>Sort: {sortBy === 'normal_price' ? 'Normal' : 'Foil'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.actionButton, isRefreshing && styles.refreshButtonDisabled]}
+                        onPress={handleRefreshPrices}
+                        disabled={isRefreshing}
+                    >
+                        {isRefreshing ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                            <>
+                                <Icon name="refresh" size={20} color="#fff" style={styles.buttonIcon} />
+                                <Text style={styles.actionButtonText}>Update</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+                </View>
             </View>
 
             <SectionList
@@ -676,6 +718,11 @@ const WatchlistScreen = () => {
                         <ActivityIndicator size="small" color="#2196F3" style={styles.footer} />
                     ) : null
                 )}
+                initialNumToRender={10}
+                maxToRenderPerBatch={5}
+                windowSize={5}
+                removeClippedSubviews={true}
+                contentContainerStyle={styles.listContent}
             />
 
             {renderSetModal()}
@@ -706,112 +753,188 @@ const WatchlistScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#fff',
+        backgroundColor: '#F8FAFD',
+    },
+    header: {
+        paddingTop: 8,
+        paddingBottom: 8,
+        backgroundColor: '#FFFFFF',
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E6EF',
     },
     searchContainer: {
-        padding: 10,
-        backgroundColor: '#f5f5f5',
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        padding: 12,
+        marginHorizontal: 16,
+        borderRadius: 16,
+        backgroundColor: '#FFFFFF',
+        shadowColor: '#1A2D4D',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        elevation: 2,
     },
-    searchInputContainer: {
-        flex: 1,
+    setButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#fff',
-        borderRadius: 20,
-        marginRight: 10,
-    },
-    searchInput: {
-        flex: 1,
-        height: 40,
-        paddingHorizontal: 15,
-    },
-    searchSpinner: {
-        marginRight: 10,
+        backgroundColor: '#FFFFFF',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#E0E6EF',
+        marginRight: 8,
     },
     sortButton: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#fff',
-        paddingHorizontal: 15,
-        paddingVertical: 10,
-        borderRadius: 20,
-        minWidth: 120,
-        justifyContent: 'center',
+        backgroundColor: '#FFFFFF',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#E0E6EF',
     },
-    setHeader: {
-        backgroundColor: '#f0f0f0',
-        padding: 10,
+    actionButton: {
         flexDirection: 'row',
-        justifyContent: 'space-between',
         alignItems: 'center',
-    },
-    setTitle: {
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
-    cardCount: {
-        color: '#666',
+        backgroundColor: '#4A6FA5',
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        marginLeft: 'auto',
     },
     cardItem: {
-        backgroundColor: 'white',
-        padding: 16,
-        marginVertical: 8,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
         marginHorizontal: 16,
-        borderRadius: 8,
-        elevation: 2,
-        shadowColor: '#000',
+        marginVertical: 6,
+        padding: 12,
+        shadowColor: '#1A2D4D',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+        elevation: 2,
     },
     cardHeader: {
+        flexDirection: 'row',
         marginBottom: 12,
     },
-    cardName: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: '#1a1a1a',
+    cardImageContainer: {
+        position: 'relative',
+        marginRight: 12,
     },
-    setCode: {
+    cardImage: {
+        width: 70,
+        height: 98,
+        borderRadius: 6,
+        resizeMode: 'contain',
+    },
+    setBadge: {
+        position: 'absolute',
+        bottom: -6,
+        right: -6,
+        backgroundColor: '#4A6FA5',
+        paddingVertical: 2,
+        paddingHorizontal: 6,
+        borderRadius: 4,
+    },
+    setCodeText: {
+        color: '#FFFFFF',
+        fontSize: 10,
+        fontWeight: '600',
+    },
+    cardInfo: {
+        flex: 1,
+        justifyContent: 'space-between',
+    },
+    cardName: {
         fontSize: 14,
-        color: '#666',
-        marginTop: 4,
+        fontWeight: '600',
+        color: '#1A2D4D',
+        marginBottom: 6,
+    },
+    pricePillContainer: {
+        flexDirection: 'row',
+        gap: 6,
+    },
+    pricePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 4,
+        paddingHorizontal: 8,
+        borderRadius: 16,
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: 'rgba(74, 111, 165, 0.1)',
+    },
+    normalPill: {
+        backgroundColor: '#F8FAFD',
+        borderWidth: 1,
+        borderColor: '#E0E7FF',
+    },
+    foilPill: {
+        backgroundColor: '#FFF4E5',
+        borderWidth: 1,
+        borderColor: '#FFE0B2',
+    },
+    pricePillText: {
+        fontSize: 10,
+        fontWeight: '600',
+        color: '#4A6FA5',
+        marginRight: 4,
+    },
+    pricePillValue: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: '#1A2D4D',
     },
     priceGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'space-between',
-        marginVertical: 8,
-    },
-    priceSource: {
-        width: '48%',
-        backgroundColor: '#f5f5f5',
-        padding: 8,
-        borderRadius: 4,
         marginBottom: 8,
     },
-    sourceHeader: {
+    priceColumn: {
+        width: '48%',
+        marginBottom: 8,
+    },
+    priceSourceTitle: {
+        fontSize: 11,
         fontWeight: '600',
-        marginBottom: 4,
-        color: '#333',
+        color: '#6B7C95',
+        marginBottom: 2,
+    },
+    priceGridRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 2,
+    },
+    priceGridLabel: {
+        fontSize: 11,
+        color: '#6B7C95',
+    },
+    priceGridValue: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: '#1A2D4D',
     },
     lastUpdated: {
-        fontSize: 12,
-        color: '#999',
-        marginTop: 8,
+        fontSize: 9,
+        color: '#A3B2C8',
         textAlign: 'right',
+        marginTop: 4,
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
     },
     loadingText: {
-        marginTop: 16,
-        fontSize: 16,
+        marginTop: 12,
+        fontSize: 14,
         color: '#666',
     },
     footer: {
@@ -825,16 +948,6 @@ const styles = StyleSheet.create({
         padding: 16,
         alignItems: 'flex-end',
     },
-    refreshButton: {
-        backgroundColor: '#2196F3',
-        padding: 10,
-        borderRadius: 20,
-        marginLeft: 10,
-        width: 40,
-        height: 40,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
     refreshButtonDisabled: {
         opacity: 0.7,
     },
@@ -842,20 +955,14 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        padding: 40,
     },
     emptyText: {
         fontSize: 16,
-        color: '#666',
-    },
-    debugButton: {
-        backgroundColor: '#FF9800',
-        padding: 10,
-        borderRadius: 20,
-        marginLeft: 10,
-        width: 40,
-        height: 40,
-        justifyContent: 'center',
-        alignItems: 'center',
+        color: '#6B7C95',
+        fontWeight: '500',
+        textAlign: 'center',
+        lineHeight: 24,
     },
     modalOverlay: {
         flex: 1,
@@ -865,11 +972,16 @@ const styles = StyleSheet.create({
         padding: 20,
     },
     setModalContainer: {
-        backgroundColor: 'white',
-        width: '100%',
+        backgroundColor: '#FFFFFF',
+        width: '90%',
         height: '80%',
-        borderRadius: 10,
+        borderRadius: 24,
         overflow: 'hidden',
+        shadowColor: '#1A2D4D',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.15,
+        shadowRadius: 24,
+        elevation: 5,
     },
     setModalHeader: {
         flexDirection: 'row',
@@ -884,36 +996,30 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: 'bold',
     },
-    setList: {
-        flex: 1,
-    },
     setItem: {
         paddingVertical: 12,
-        paddingHorizontal: 15,
+        paddingHorizontal: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#eee',
-        backgroundColor: 'white',
+        borderBottomColor: '#F0F4F9',
+        backgroundColor: '#FFFFFF',
     },
     setItemText: {
-        fontSize: 16,
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#1A2D4D',
+        marginBottom: 4,
+    },
+    setItemDetails: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
     },
     setItemCount: {
         fontSize: 12,
         color: '#666',
-        marginTop: 4,
-    },
-    setButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff',
-        paddingHorizontal: 15,
-        paddingVertical: 10,
-        borderRadius: 20,
-        minWidth: 100,
-        justifyContent: 'center',
     },
     setButtonText: {
         marginRight: 5,
+        fontSize: 13,
     },
     setSearchContainer: {
         flexDirection: 'row',
@@ -932,106 +1038,68 @@ const styles = StyleSheet.create({
         paddingHorizontal: 10,
         fontSize: 16,
     },
-    itemCode: {
-        fontSize: 12,
-        color: '#666',
-        marginTop: 4,
-    },
     setItemCode: {
-        fontSize: 14,
-        color: '#666',
-        marginTop: 2,
+        fontSize: 12,
+        color: '#6B7C95',
+        fontWeight: '500',
     },
     loadingOverlay: {
-        flex: 1,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        zIndex: 10,
     },
     setModalLoadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
     },
-    setItemRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    setItemPrice: {
-        fontSize: 14,
-        color: '#2196F3',
-        fontWeight: 'bold',
-    },
-    cardNameRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-    },
-    priceRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
-    priceLabel: {
-        fontSize: 14,
-        color: '#666',
-        marginLeft: 8,
-    },
-    highestPrice: {
-        fontSize: 16,
-        color: '#2196F3',
-        fontWeight: 'bold',
-    },
-    cardNameAndImage: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    cardThumbnail: {
-        width: 40,
-        height: 56,
-        borderRadius: 4,
-        backgroundColor: '#f5f5f5',
-    },
     buttonIcon: {
         marginRight: 4,
     },
     buttonText: {
         color: '#000',
-        fontSize: 14,
-    },
-    actionButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#2196F3',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: 20,
-        minWidth: 90,
-        justifyContent: 'center',
+        fontSize: 13,
     },
     actionButtonText: {
         color: '#fff',
-        fontSize: 14,
+        fontSize: 13,
     },
-    doubleSidedImageContainer: {
+    setHeader: {
+        backgroundColor: '#FFFFFF',
+        padding: 12,
+        marginHorizontal: 16,
+        marginTop: 8,
+        marginBottom: 4,
+        borderRadius: 12,
+        shadowColor: '#1A2D4D',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 6,
+        elevation: 2,
         flexDirection: 'row',
+        justifyContent: 'space-between',
         alignItems: 'center',
-        width: 64,
-        marginRight: 4,
     },
-    doubleSidedThumbnail: {
-        width: 32,
-        height: 45,
-        borderRadius: 3,
-        backgroundColor: '#f5f5f5',
-        marginRight: -10, // Slightly overlapping images
+    setTitle: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#1A2D4D',
+        letterSpacing: 0.5,
     },
-    backFaceThumbnail: {
-        transform: [{rotate: '2deg'}], // Slight rotation for visual effect
+    cardCount: {
+        fontSize: 12,
+        color: '#6B7C95',
+        fontWeight: '500',
+    },
+    listContent: {
+        paddingBottom: 20,
     }
 });
 
-export default WatchlistScreen; 
+export default WatchlistScreen;

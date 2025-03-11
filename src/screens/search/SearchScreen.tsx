@@ -116,7 +116,11 @@ const SearchScreen = () => {
                             cards={[selectedCard]}
                             isLoading={false}
                             onCardPress={() => {}}
-                            onAddToCollection={(card) => handleAddToCollection(card)}
+                            onAddToCollection={(card) => {
+                                if (card && card.Unique_ID) {
+                                    handleAddToCollection(card as LorcanaCard);
+                                }
+                            }}
                         />
                     ) : (
                         <CardList
