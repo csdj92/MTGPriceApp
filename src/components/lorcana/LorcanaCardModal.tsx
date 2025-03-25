@@ -5,6 +5,7 @@ import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityI
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
 import { useTheme } from '../../context/ThemeContext';
+import { LorcanaPriceDetails } from './LorcanaPriceDetails';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -228,6 +229,16 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                                     </Text>
                                 )}
                             </View>
+
+                            {/* Price History Section */}
+                            {card.Unique_ID && (
+                                <View style={styles.priceHistoryContainer}>
+                                    <LorcanaPriceDetails 
+                                        cardId={card.Unique_ID}
+                                        cardName={card.Name}
+                                    />
+                                </View>
+                            )}
                         </View>
                     </ScrollView>
 
@@ -436,6 +447,12 @@ const styles = StyleSheet.create({
     buttonText: {
         fontWeight: 'bold',
         marginLeft: 8,
+    },
+    priceHistoryContainer: {
+        marginTop: 16,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0, 0, 0, 0.1)',
+        paddingTop: 16,
     },
 });
 

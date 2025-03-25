@@ -13,7 +13,7 @@ import {
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
 import { databaseService } from '../../services/DatabaseService';
-import { fixCardNames, getNewSetCards, safeRefreshLorcanaCards,fixCardSetIdentifiers,deleteAllSet7Cards} from '../../services/LorcanaService';
+import { fixCardNames, getNewSetCards, safeRefreshLorcanaCards,fixCardSetIdentifiers,deleteAllSet7Cards, updateAllLorcanaPrices} from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import { downloadAndImportPriceData } from '../../utils/priceData';
 
@@ -81,6 +81,7 @@ const SettingsScreen = () => {
     const { isDark, setDarkMode, theme } = useTheme();
     const [isRebuilding, setIsRebuilding] = useState(false);
     const [isFixingNames, setIsFixingNames] = useState(false);
+    const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 
     const handleBackup = () => {
         Alert.alert('Coming Soon', 'Backup functionality will be available in a future update.');
@@ -240,6 +241,32 @@ const SettingsScreen = () => {
                     subtitle="Resync Lorcana data"
                     onPress={resyncLorcana}
                 />
+                <SettingsItem
+                    icon="cash-sync"
+                    title="Refresh Lorcana Prices"
+                    subtitle="Update all Lorcana card prices"
+                    onPress={async () => {
+                        try {
+                            setIsUpdatingPrices(true);
+                            const result = await updateAllLorcanaPrices(0); // Pass 0 to force update all prices
+                            Alert.alert(
+                                'Price Update Complete',
+                                `Updated: ${result.updated} cards\nSkipped: ${result.skipped} cards`
+                            );
+                        } catch (error) {
+                            console.error('Error updating prices:', error);
+                            Alert.alert('Error', 'Failed to update prices. Please try again.');
+                        } finally {
+                            setIsUpdatingPrices(false);
+                        }
+                    }}
+                />
+                {isUpdatingPrices && (
+                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
+                        <ActivityIndicator size="small" color={theme.primary} />
+                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Updating prices...</Text>
+                    </View>
+                )}
                 {isRebuilding && (
                     <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
                         <ActivityIndicator size="small" color={theme.primary} />

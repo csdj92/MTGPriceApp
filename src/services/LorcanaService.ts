@@ -119,6 +119,57 @@ export const initializeLorcanaDatabase = async () => {
         // Use DatabaseInitializer to ensure database is initialized
         await DatabaseInitializer.initializeAllDatabases();
         
+        // Create and populate tables specific to our implementation
+        await populateLorcanaCardPricesTable();
+        await createLorcanaPriceHistoryTable();
+        await createLorcanaAppSettingsTable();
+        
+        // Check if we need to update prices (run once per day)
+        try {
+            // Get the last update timestamp
+            const db = await getDB();
+            const [lastUpdateResult] = await db.executeSql(
+                `SELECT value FROM lorcana_app_settings WHERE key = 'last_price_update'`
+            );
+            
+            let shouldUpdate = true;
+            if (lastUpdateResult.rows.length > 0) {
+                const lastUpdate = new Date(lastUpdateResult.rows.item(0).value);
+                const now = new Date();
+                const oneDayAgo = new Date(now);
+                oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+                
+                // Only update if it's been more than a day since the last update
+                shouldUpdate = lastUpdate < oneDayAgo;
+            }
+            
+            if (shouldUpdate) {
+                console.log('[LorcanaService] Running daily price update...');
+                
+                // Update in the background to not block initialization
+                setTimeout(async () => {
+                    try {
+                        const result = await updateAllLorcanaPrices();
+                        
+                        // Update the last update timestamp
+                        const timestamp = new Date().toISOString();
+                        await db.executeSql(
+                            `INSERT OR REPLACE INTO lorcana_app_settings (key, value) VALUES (?, ?)`,
+                            ['last_price_update', timestamp]
+                        );
+                        
+                        console.log(`[LorcanaService] Daily price update completed. Updated: ${result.updated}, Skipped: ${result.skipped}`);
+                    } catch (error) {
+                        console.error('[LorcanaService] Error during background price update:', error);
+                    }
+                }, 5000); // Wait 5 seconds after initialization before starting updates
+            } else {
+                console.log('[LorcanaService] Daily price update already performed recently. Skipping.');
+            }
+        } catch (error) {
+            console.error('[LorcanaService] Error checking for price updates:', error);
+        }
+        
         // The database and tables will be ready after calling initializeAllDatabases
         console.log('[LorcanaService] Lorcana database initialized successfully');
         isInitialized = true;
@@ -190,6 +241,59 @@ const populateLorcanaCardPricesTable = async () => {
         }
     } catch (error) {
         console.error('[LorcanaService] Error populating lorcana_card_prices table:', error);
+    }
+};
+
+// Add function to create a lorcana_price_history table
+const createLorcanaPriceHistoryTable = async () => {
+    try {
+        console.log('[LorcanaService] Checking lorcana_price_history table...');
+        const db = await getDB();
+        
+        // First check if the table exists
+        const [tableResult] = await db.executeSql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='lorcana_price_history'");
+        
+        if (tableResult.rows.length === 0) {
+            console.log('[LorcanaService] lorcana_price_history table not found, creating it...');
+            await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_id TEXT NOT NULL,
+                usd TEXT,
+                usd_foil TEXT,
+                tcgplayer_id TEXT,
+                recorded_at TEXT NOT NULL,
+                first_scan INTEGER DEFAULT 0,
+                FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
+            )`);
+            
+            await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_price_history_card_id ON lorcana_price_history(card_id)');
+            await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_price_history_recorded_at ON lorcana_price_history(recorded_at)');
+            
+            console.log('[LorcanaService] lorcana_price_history table created successfully');
+        } else {
+            console.log('[LorcanaService] lorcana_price_history table already exists');
+            
+            // Check if we need to add the first_scan column
+            const [columnResult] = await db.executeSql("PRAGMA table_info(lorcana_price_history)");
+            
+            let hasFirstScanColumn = false;
+            for (let i = 0; i < columnResult.rows.length; i++) {
+                const column = columnResult.rows.item(i);
+                if (column.name === 'first_scan') {
+                    hasFirstScanColumn = true;
+                    break;
+                }
+            }
+            
+            if (!hasFirstScanColumn) {
+                console.log('[LorcanaService] Adding first_scan column to lorcana_price_history table');
+                await db.executeSql('ALTER TABLE lorcana_price_history ADD COLUMN first_scan INTEGER DEFAULT 0');
+                console.log('[LorcanaService] first_scan column added successfully');
+            }
+        }
+    } catch (error) {
+        console.error('[LorcanaService] Error creating/updating lorcana_price_history table:', error);
     }
 };
 
@@ -334,12 +438,71 @@ const insertTcgplayerId = async (cardId: string, tcgplayerId: string) => {
     }
 };
 
+// Function to save price history data
+const saveLorcanaPriceHistory = async (
+    cardId: string, 
+    normalPrice: string | null, 
+    foilPrice: string | null,
+    tcgplayerId: string | null,
+    isFirstScan: boolean = false
+) => {
+    if (!cardId) {
+        console.log('[LorcanaService] Cannot save price history without card ID');
+        return;
+    }
+
+    try {
+        const db = await getDB();
+        
+        // If this is potentially a first scan, check if there are any existing records for this card
+        if (isFirstScan) {
+            const [existingRecords] = await db.executeSql(
+                'SELECT COUNT(*) as count FROM lorcana_price_history WHERE card_id = ?',
+                [cardId]
+            );
+            
+            // If there are existing records, this is not actually a first scan
+            if (existingRecords.rows.item(0).count > 0) {
+                isFirstScan = false;
+            }
+        }
+        
+        const timestamp = new Date().toISOString();
+        
+        await db.executeSql(
+            `INSERT INTO lorcana_price_history (card_id, usd, usd_foil, tcgplayer_id, recorded_at, first_scan) 
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [cardId, normalPrice, foilPrice, tcgplayerId, timestamp, isFirstScan ? 1 : 0]
+        );
+        
+        console.log(`[LorcanaService] Price history saved for card ID: ${cardId}${isFirstScan ? ' (first scan)' : ''}`);
+    } catch (error) {
+        console.error(`[LorcanaService] Error saving price history: ${error}`);
+    }
+};
 
 // Function to fetch current price for a card
 export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number; Rarity?: string; Card_Num?: number; Unique_ID?: string }) => {
     try {
         // Log the card details we're searching for
         console.log(`[LorcanaService] Fetching price for card: ${card.Name}, Set_Num: ${card.Set_Num}, Card_Num: ${card.Card_Num}, Rarity: ${card.Rarity}, Unique_ID: ${card.Unique_ID}`);
+        
+        // Check if this is a first scan by looking for existing price history
+        let isFirstScan = false;
+        if (card.Unique_ID) {
+            try {
+                const db = await getDB();
+                const [existingHistory] = await db.executeSql(
+                    'SELECT COUNT(*) as count FROM lorcana_price_history WHERE card_id = ?', 
+                    [card.Unique_ID]
+                );
+                
+                isFirstScan = existingHistory.rows.item(0).count === 0;
+                console.log(`[LorcanaService] Card ID ${card.Unique_ID} first scan: ${isFirstScan}`);
+            } catch (error) {
+                console.error('[LorcanaService] Error checking for existing price history:', error);
+            }
+        }
         
         // First try using Unique_ID if available (prioritize this for enchanted cards)
         const isEnchanted = card.Rarity === 'Enchanted';
@@ -357,12 +520,8 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
                     
                     if (enchantedData) {
                         // Check if we have an image_uris object with a digital.normal URL
-                        if (enchantedData.image_uris?.digital?.normal) {
-                            // Update the image URL in the database
+                        if (enchantedData.image_uris?.digital?.normal && card.Unique_ID) {
                             await updateCardImageUrl(card.Unique_ID, enchantedData.image_uris.digital.normal);
-                        }
-                        if (enchantedData.tcgplayer_id) {
-                            await insertTcgplayerId(card.Unique_ID, enchantedData.tcgplayer_id);
                         }
                         
                         // For enchanted cards, which only come in foil, use the foil price as the regular price too
@@ -385,6 +544,15 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
                                     ]
                                 );
                                 console.log(`[LorcanaService] Price data saved to database for card ID: ${card.Unique_ID}`);
+                                
+                                // Save price history
+                                await saveLorcanaPriceHistory(
+                                    card.Unique_ID,
+                                    normalPrice,
+                                    foilPrice,
+                                    enchantedData.tcgplayer_id || null,
+                                    isFirstScan
+                                );
                             } catch (err) {
                                 console.error(`[LorcanaService] Error saving price data to database: ${err}`);
                             }
@@ -445,6 +613,15 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
                                     ]
                                 );
                                 console.log(`[LorcanaService] Price data saved to database for card ID: ${card.Unique_ID} (set/number search)`);
+                                
+                                // Save price history
+                                await saveLorcanaPriceHistory(
+                                    card.Unique_ID,
+                                    normalPrice,
+                                    foilPrice,
+                                    cardData.tcgplayer_id || null,
+                                    isFirstScan
+                                );
                             } catch (err) {
                                 console.error(`[LorcanaService] Error saving price data to database (set/number search): ${err}`);
                             }
@@ -475,6 +652,17 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
             if (foundCard.image_uris?.digital?.normal) {
                 await updateCardImageUrl(card.Unique_ID, foundCard.image_uris.digital.normal);
             }
+        }
+        
+        // Save price history for results from the search method too
+        if (card.Unique_ID && searchResult?.usd !== undefined) {
+            await saveLorcanaPriceHistory(
+                card.Unique_ID,
+                searchResult.usd,
+                searchResult.usd_foil,
+                searchResult.tcgplayer_id,
+                isFirstScan
+            );
         }
         
         // Return only the price data to maintain backward compatibility
@@ -2169,6 +2357,436 @@ export const fixAllCardSetIdentifiers = async (): Promise<{
             totalSkipped: 0,
             message: `Error: ${error instanceof Error ? error.message : String(error)}`
         };
+    }
+};
+
+// Interface for price history entry
+export interface LorcanaPriceHistoryEntry {
+    id: number;
+    card_id: string;
+    usd: string | null;
+    usd_foil: string | null;
+    tcgplayer_id: string | null;
+    recorded_at: string;
+}
+
+// Interface for price history statistics
+export interface LorcanaPriceHistoryStats {
+    maxPrice: number;
+    minPrice: number;
+    avgPrice: number;
+    priceChange7d: number;
+    priceChange30d: number;
+    maxFoilPrice: number;
+    minFoilPrice: number;
+    avgFoilPrice: number;
+    foilPriceChange7d: number;
+    foilPriceChange30d: number;
+}
+
+// Get price history for a card
+export const getLorcanaPriceHistory = async (cardId: string): Promise<LorcanaPriceHistoryEntry[]> => {
+    if (!cardId) {
+        console.error('[LorcanaService] Cannot get price history without card ID');
+        return [];
+    }
+    
+    try {
+        const db = await getDB();
+        const [results] = await db.executeSql(
+            `SELECT * FROM lorcana_price_history 
+             WHERE card_id = ? 
+             ORDER BY recorded_at DESC`,
+            [cardId]
+        );
+        
+        const history: LorcanaPriceHistoryEntry[] = [];
+        for (let i = 0; i < results.rows.length; i++) {
+            history.push(results.rows.item(i));
+        }
+        
+        return history;
+    } catch (error) {
+        console.error('[LorcanaService] Error getting price history:', error);
+        return [];
+    }
+};
+
+// Get price statistics for a card
+export const getLorcanaPriceHistoryStats = async (cardId: string): Promise<LorcanaPriceHistoryStats> => {
+    if (!cardId) {
+        console.error('[LorcanaService] Cannot get price statistics without card ID');
+        return {
+            maxPrice: 0,
+            minPrice: 0,
+            avgPrice: 0,
+            priceChange7d: 0,
+            priceChange30d: 0,
+            maxFoilPrice: 0,
+            minFoilPrice: 0,
+            avgFoilPrice: 0,
+            foilPriceChange7d: 0,
+            foilPriceChange30d: 0
+        };
+    }
+    
+    try {
+        const db = await getDB();
+        
+        // Get statistics for normal prices (non-null values only)
+        const [normalResults] = await db.executeSql(
+            `SELECT 
+                MAX(CAST(usd AS REAL)) as max_price,
+                MIN(CAST(usd AS REAL)) as min_price,
+                AVG(CAST(usd AS REAL)) as avg_price
+             FROM lorcana_price_history
+             WHERE card_id = ? AND usd IS NOT NULL`,
+            [cardId]
+        );
+        
+        // Get statistics for foil prices (non-null values only)
+        const [foilResults] = await db.executeSql(
+            `SELECT 
+                MAX(CAST(usd_foil AS REAL)) as max_price,
+                MIN(CAST(usd_foil AS REAL)) as min_price,
+                AVG(CAST(usd_foil AS REAL)) as avg_price
+             FROM lorcana_price_history
+             WHERE card_id = ? AND usd_foil IS NOT NULL`,
+            [cardId]
+        );
+        
+        // Get the most recent price
+        const [currentResults] = await db.executeSql(
+            `SELECT usd, usd_foil
+             FROM lorcana_card_prices
+             WHERE card_id = ?`,
+            [cardId]
+        );
+        
+        // Calculate dates for historical comparisons
+        const now = new Date();
+        const sevenDaysAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)).toISOString();
+        const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)).toISOString();
+        
+        // Get price from 7 days ago
+        const [sevenDayResults] = await db.executeSql(
+            `SELECT usd, usd_foil
+             FROM lorcana_price_history
+             WHERE card_id = ? AND recorded_at <= ?
+             ORDER BY recorded_at DESC
+             LIMIT 1`,
+            [cardId, sevenDaysAgo]
+        );
+        
+        // Get price from 30 days ago
+        const [thirtyDayResults] = await db.executeSql(
+            `SELECT usd, usd_foil
+             FROM lorcana_price_history
+             WHERE card_id = ? AND recorded_at <= ?
+             ORDER BY recorded_at DESC
+             LIMIT 1`,
+            [cardId, thirtyDaysAgo]
+        );
+        
+        // Extract values with appropriate defaults
+        const currentPrice = currentResults.rows.length > 0 
+            ? parseFloat(currentResults.rows.item(0).usd || '0') 
+            : 0;
+            
+        const currentFoilPrice = currentResults.rows.length > 0 
+            ? parseFloat(currentResults.rows.item(0).usd_foil || '0') 
+            : 0;
+            
+        const sevenDayPrice = sevenDayResults.rows.length > 0 
+            ? parseFloat(sevenDayResults.rows.item(0).usd || '0') 
+            : currentPrice;
+            
+        const sevenDayFoilPrice = sevenDayResults.rows.length > 0 
+            ? parseFloat(sevenDayResults.rows.item(0).usd_foil || '0') 
+            : currentFoilPrice;
+            
+        const thirtyDayPrice = thirtyDayResults.rows.length > 0 
+            ? parseFloat(thirtyDayResults.rows.item(0).usd || '0') 
+            : currentPrice;
+            
+        const thirtyDayFoilPrice = thirtyDayResults.rows.length > 0 
+            ? parseFloat(thirtyDayResults.rows.item(0).usd_foil || '0') 
+            : currentFoilPrice;
+        
+        // Calculate price changes (percentage)
+        const priceChange7d = sevenDayPrice === 0 
+            ? 0 
+            : ((currentPrice - sevenDayPrice) / sevenDayPrice) * 100;
+            
+        const priceChange30d = thirtyDayPrice === 0 
+            ? 0 
+            : ((currentPrice - thirtyDayPrice) / thirtyDayPrice) * 100;
+            
+        const foilPriceChange7d = sevenDayFoilPrice === 0 
+            ? 0 
+            : ((currentFoilPrice - sevenDayFoilPrice) / sevenDayFoilPrice) * 100;
+            
+        const foilPriceChange30d = thirtyDayFoilPrice === 0 
+            ? 0 
+            : ((currentFoilPrice - thirtyDayFoilPrice) / thirtyDayFoilPrice) * 100;
+        
+        return {
+            maxPrice: normalResults.rows.item(0).max_price || 0,
+            minPrice: normalResults.rows.item(0).min_price || 0,
+            avgPrice: normalResults.rows.item(0).avg_price || 0,
+            priceChange7d,
+            priceChange30d,
+            maxFoilPrice: foilResults.rows.item(0).max_price || 0,
+            minFoilPrice: foilResults.rows.item(0).min_price || 0,
+            avgFoilPrice: foilResults.rows.item(0).avg_price || 0,
+            foilPriceChange7d,
+            foilPriceChange30d
+        };
+    } catch (error) {
+        console.error('[LorcanaService] Error getting price statistics:', error);
+        return {
+            maxPrice: 0,
+            minPrice: 0,
+            avgPrice: 0,
+            priceChange7d: 0,
+            priceChange30d: 0,
+            maxFoilPrice: 0,
+            minFoilPrice: 0,
+            avgFoilPrice: 0,
+            foilPriceChange7d: 0,
+            foilPriceChange30d: 0
+        };
+    }
+};
+
+// Function to get cards with significant price changes (movers and shakers)
+export const getLorcanaSignificantPriceChanges = async (
+    timeframe: '7d' | '30d' = '7d', 
+    limit: number = 10,
+    minChangePercent: number = 10
+): Promise<{card: LorcanaCard, priceChange: number, foilPriceChange: number}[]> => {
+    try {
+        const db = await getDB();
+        
+        // Calculate the date threshold
+        const now = new Date();
+        const daysAgo = timeframe === '7d' ? 7 : 30;
+        const thresholdDate = new Date(now.getTime() - (daysAgo * 24 * 60 * 60 * 1000)).toISOString();
+        
+        // First get all cards that have price history
+        const [cardIdsWithHistory] = await db.executeSql(
+            `SELECT DISTINCT card_id FROM lorcana_price_history`
+        );
+        
+        // For each card, calculate the price change
+        const results: {card: LorcanaCard, priceChange: number, foilPriceChange: number}[] = [];
+        
+        for (let i = 0; i < cardIdsWithHistory.rows.length; i++) {
+            const cardId = cardIdsWithHistory.rows.item(i).card_id;
+            
+            // Get current price
+            const [currentPrice] = await db.executeSql(
+                `SELECT usd, usd_foil FROM lorcana_card_prices WHERE card_id = ?`,
+                [cardId]
+            );
+            
+            // Get historical price
+            const [historicalPrice] = await db.executeSql(
+                `SELECT usd, usd_foil 
+                 FROM lorcana_price_history 
+                 WHERE card_id = ? AND recorded_at <= ?
+                 ORDER BY recorded_at DESC
+                 LIMIT 1`,
+                [cardId, thresholdDate]
+            );
+            
+            if (currentPrice.rows.length > 0 && historicalPrice.rows.length > 0) {
+                const current = currentPrice.rows.item(0);
+                const historical = historicalPrice.rows.item(0);
+                
+                const currentUsd = parseFloat(current.usd || '0');
+                const historicalUsd = parseFloat(historical.usd || '0');
+                
+                const currentUsdFoil = parseFloat(current.usd_foil || '0');
+                const historicalUsdFoil = parseFloat(historical.usd_foil || '0');
+                
+                let normalPriceChange = 0;
+                if (historicalUsd > 0) {
+                    normalPriceChange = ((currentUsd - historicalUsd) / historicalUsd) * 100;
+                }
+                
+                let foilPriceChange = 0;
+                if (historicalUsdFoil > 0) {
+                    foilPriceChange = ((currentUsdFoil - historicalUsdFoil) / historicalUsdFoil) * 100;
+                }
+                
+                // If either price change exceeds the threshold, include this card
+                if (Math.abs(normalPriceChange) >= minChangePercent || Math.abs(foilPriceChange) >= minChangePercent) {
+                    // Get the card details
+                    const [cardResult] = await db.executeSql(
+                        `SELECT * FROM lorcana_cards WHERE Unique_ID = ?`,
+                        [cardId]
+                    );
+                    
+                    if (cardResult.rows.length > 0) {
+                        results.push({
+                            card: cardResult.rows.item(0),
+                            priceChange: normalPriceChange,
+                            foilPriceChange: foilPriceChange
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Sort by absolute price change (descending)
+        results.sort((a, b) => {
+            const aMaxChange = Math.max(Math.abs(a.priceChange), Math.abs(a.foilPriceChange));
+            const bMaxChange = Math.max(Math.abs(b.priceChange), Math.abs(b.foilPriceChange));
+            return bMaxChange - aMaxChange;
+        });
+        
+        // Return the top N results
+        return results.slice(0, limit);
+    } catch (error) {
+        console.error('[LorcanaService] Error getting significant price changes:', error);
+        return [];
+    }
+};
+
+// Function to clean up old price history records, keeping first_scan records and recent records
+export const cleanupLorcanaPriceHistory = async (daysToKeep: number = 15) => {
+    try {
+        console.log(`[LorcanaService] Cleaning up lorcana_price_history older than ${daysToKeep} days`);
+        const db = await getDB();
+        
+        // Calculate the cutoff date
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+        const cutoffDateString = cutoffDate.toISOString();
+        
+        // Count records before deletion
+        const [countBefore] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_price_history');
+        const beforeCount = countBefore.rows.item(0).count;
+        
+        // Delete records older than the cutoff date, but keep first_scan records
+        await db.executeSql(
+            `DELETE FROM lorcana_price_history 
+             WHERE recorded_at < ? 
+             AND first_scan = 0`,
+            [cutoffDateString]
+        );
+        
+        // Count records after deletion
+        const [countAfter] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_price_history');
+        const afterCount = countAfter.rows.item(0).count;
+        
+        console.log(`[LorcanaService] Price history cleanup complete. Removed ${beforeCount - afterCount} records.`);
+        return beforeCount - afterCount; // Return the number of records removed
+    } catch (error) {
+        console.error('[LorcanaService] Error cleaning up price history:', error);
+        return 0;
+    }
+};
+
+// Function to update prices for all cards in collections or watchlists
+export const updateAllLorcanaPrices = async (daysThreshold: number = 1): Promise<{ updated: number, skipped: number }> => {
+    try {
+        console.log('[LorcanaService] Starting price update for all collected Lorcana cards...');
+        const db = await getDB();
+        
+        // Get the current timestamp
+        const now = new Date();
+        
+        // Calculate the cutoff date for updates (default 1 day)
+        const cutoffDate = new Date(now);
+        cutoffDate.setDate(cutoffDate.getDate() - daysThreshold);
+        const cutoffDateString = cutoffDate.toISOString();
+        
+        // Get all cards that need updates (no price or last updated before cutoff)
+        const [cardsToUpdate] = await db.executeSql(
+            `SELECT lc.* FROM lorcana_cards lc
+             LEFT JOIN lorcana_card_prices lcp ON lc.Unique_ID = lcp.card_id
+             WHERE lc.collected = 1 
+             AND (lcp.card_id IS NULL OR lcp.last_updated < ?)
+             ORDER BY lc.Name`,
+            [cutoffDateString]
+        );
+        
+        console.log(`[LorcanaService] Found ${cardsToUpdate.rows.length} cards that need price updates`);
+        
+        let updated = 0;
+        let skipped = 0;
+        
+        // Update prices in batches to avoid overloading the API
+        const batchSize = 10;
+        for (let i = 0; i < cardsToUpdate.rows.length; i += batchSize) {
+            const batch = [];
+            
+            for (let j = 0; j < batchSize && i + j < cardsToUpdate.rows.length; j++) {
+                batch.push(cardsToUpdate.rows.item(i + j));
+            }
+            
+            console.log(`[LorcanaService] Processing batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(cardsToUpdate.rows.length / batchSize)}`);
+            
+            await Promise.all(batch.map(async (card) => {
+                try {
+                    await getLorcanaCardPrice({
+                        Name: card.Name,
+                        Set_Num: card.Set_Num,
+                        Card_Num: card.Card_Num,
+                        Rarity: card.Rarity,
+                        Unique_ID: card.Unique_ID
+                    });
+                    updated++;
+                } catch (error) {
+                    console.error(`[LorcanaService] Error updating price for card: ${card.Name}`, error);
+                    skipped++;
+                }
+            }));
+            
+            // Add a delay between batches to avoid rate limiting
+            if (i + batchSize < cardsToUpdate.rows.length) {
+                console.log('[LorcanaService] Waiting between batches...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+        
+        // Clean up old price history after updates
+        console.log('[LorcanaService] Running price history cleanup...');
+        const removedRecords = await cleanupLorcanaPriceHistory(15);
+        console.log(`[LorcanaService] Price update complete. Updated: ${updated}, Skipped: ${skipped}, Removed history records: ${removedRecords}`);
+        
+        return { updated, skipped };
+    } catch (error) {
+        console.error('[LorcanaService] Error updating all prices:', error);
+        return { updated: 0, skipped: 0 };
+    }
+};
+
+// Add function to create lorcana_app_settings table
+const createLorcanaAppSettingsTable = async () => {
+    try {
+        console.log('[LorcanaService] Checking lorcana_app_settings table...');
+        const db = await getDB();
+        
+        // First check if the table exists
+        const [tableResult] = await db.executeSql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='lorcana_app_settings'");
+        
+        if (tableResult.rows.length === 0) {
+            console.log('[LorcanaService] lorcana_app_settings table not found, creating it...');
+            await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_app_settings (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT
+            )`);
+            
+            console.log('[LorcanaService] lorcana_app_settings table created successfully');
+        } else {
+            console.log('[LorcanaService] lorcana_app_settings table already exists');
+        }
+    } catch (error) {
+        console.error('[LorcanaService] Error creating lorcana_app_settings table:', error);
     }
 };
 
