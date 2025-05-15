@@ -2,7 +2,6 @@ import SQLite from 'react-native-sqlite-storage';
 import { DatabaseManager } from '../database/DatabaseManager';
 import DatabaseInitializer from '../DatabaseInitializer';
 
-// Define interfaces for price data
 export interface PriceData {
     normal: number;
     foil: number;

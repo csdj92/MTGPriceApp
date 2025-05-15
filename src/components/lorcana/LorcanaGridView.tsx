@@ -1,5 +1,5 @@
 // LorcanaGridView component
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, Suspense } from 'react';
 import { View, StyleSheet, FlatList, ActivityIndicator, Text, TouchableOpacity, Modal, ScrollView } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
@@ -11,9 +11,11 @@ import { useLorcanaCollection } from '../../hooks/useLorcanaCollection';
 import { useLorcanaPrices } from '../../hooks/useLorcanaPrices';
 import { useLorcanaFilters } from '../../hooks/useLorcanaFilters';
 import SortHeader from '../shared/SortHeader';
-import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
+import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils'; 
 import {  fetchCardVersionsByName } from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
+import useThemedStyles from '../../hooks/useThemedStyles';
+import type { Theme } from '../../context/ThemeContext';
 
 // Fix Icon type with proper type assertion
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -28,6 +30,9 @@ interface LorcanaGridViewProps {
     onCardPress: (card: LorcanaCardWithPrice) => void;
     onDeleteCard: (card: LorcanaCardWithPrice) => void;
     onCardsUpdate?: (updatedCards: LorcanaCardWithPrice[]) => void;
+    onExportCollection?: () => void;
+    cardCount?: number;
+    totalValue?: string;
 }
 
 const ITEMS_PER_PAGE = 12;
@@ -37,50 +42,21 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     isLoading,
     onCardPress,
     onDeleteCard,
-    onCardsUpdate
+    onCardsUpdate,
+    onExportCollection,
+    cardCount,
+    totalValue
 }) => {
     const { theme } = useTheme();
+    const styles = useStyles();
 
     // State
     const [selectedCard, setSelectedCard] = useState<LorcanaCardWithPrice | null>(null);
     const [showFilters, setShowFilters] = useState(false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [hasMore, setHasMore] = useState(true);
-    const [cacheStats, setCacheStats] = useState({
-        totalSuccessfulImages: 0,
-        recentlySuccessfulImages: 0,
-        preloadedImageSets: 0
-    });
-    const [refreshingCache, setRefreshingCache] = useState(false);
     const [showVersionModal, setShowVersionModal] = useState(false);
     const [availableVersions, setAvailableVersions] = useState<LorcanaCardWithPrice[]>([]);
-
-    // Update cache stats periodically
-    useEffect(() => {
-        // Initial stats update
-        updateCacheStats();
-        
-        // Set up interval to update stats every 2 seconds
-        const interval = setInterval(updateCacheStats, 2000);
-        
-        return () => clearInterval(interval);
-    }, []);
-
-    const updateCacheStats = useCallback(() => {
-        setCacheStats(getImageLoadingStats());
-    }, []);
-
-    const handleClearCache = useCallback(async () => {
-        setRefreshingCache(true);
-        try {
-            await clearImageCache();
-            updateCacheStats();
-        } catch (error) {
-            console.error('Error clearing cache:', error);
-        } finally {
-            setRefreshingCache(false);
-        }
-    }, [updateCacheStats]);
 
     // Custom hooks
     const { addToCollection, refreshCollectionStatus } = useLorcanaCollection({ onCardsUpdate });
@@ -134,7 +110,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                     card.Unique_ID === selectedCard?.Unique_ID ? latestCardData : card
                 );
                 onCardsUpdate(updatedCards);
-                console.log('[LorcanaGridView] Updated card version:', latestCardData.Name);
+                // console.log('[LorcanaGridView] Updated card version:', latestCardData.Name); // Removed for production
             }
         } catch (error) {
             console.error('[LorcanaGridView] Error changing card version:', error);
@@ -177,6 +153,18 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
     const keyExtractor = useCallback((item: LorcanaCardWithPrice) => item.Unique_ID || '', []);
 
+    // Placeholder item height for getItemLayout - replace with actual calculated height
+    const ITEM_HEIGHT = 200; // Example: Adjust this to the actual height of LorcanaCard + vertical margins
+
+    const getItemLayout = useCallback(
+        (data: any, index: number) => ({
+            length: ITEM_HEIGHT,
+            offset: ITEM_HEIGHT * index,
+            index,
+        }),
+        []
+    );
+
     if (isLoading) {
         return (
             <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
@@ -187,42 +175,28 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
     return (
         <View style={[styles.container, { backgroundColor: theme.background }]}>
-            <View style={[styles.statsContainer, { 
-                backgroundColor: theme.surface,
-                borderBottomColor: theme.border || theme.surface 
-            }]}>
-                <View style={styles.statsRow}>
-                    <Text style={[styles.statsText, { color: theme.text }]}>
-                        <Icon name="image-multiple" size={14} color={theme.primary} /> {cacheStats.totalSuccessfulImages} images cached
-                        {cacheStats.recentlySuccessfulImages > 0 && ` (${cacheStats.recentlySuccessfulImages} recent)`}
-                    </Text>
-                    <TouchableOpacity
-                        style={[styles.cacheButton, { backgroundColor: theme.card || theme.surface }]}
-                        onPress={handleClearCache}
-                        disabled={refreshingCache}
-                    >
-                        {refreshingCache ? (
-                            <ActivityIndicator size="small" color={theme.primary} />
-                        ) : (
-                            <Icon name="cached" size={16} color={theme.primary} />
-                        )}
-                    </TouchableOpacity>
-                </View>
+            <View style={styles.headerControlsContainer}> 
+                <SortHeader
+                    sortBy={sortBy}
+                    sortDirection={sortDirection}
+                    onSortChange={toggleSort}
+                    onFilterPress={() => setShowFilters(!showFilters)}
+                    onExportPress={onExportCollection}
+                    showExportButton={!!onExportCollection}
+                    cardCount={cardCount}
+                    totalValue={totalValue}
+                    showStats={cardCount !== undefined && totalValue !== undefined}
+                />
             </View>
 
-            <SortHeader
-                sortBy={sortBy}
-                sortDirection={sortDirection}
-                onSortChange={toggleSort}
-                onFilterPress={() => setShowFilters(!showFilters)}
-            />
-
-            <LorcanaFilters
-                filters={filters}
-                onFiltersChange={updateFilters}
-                onReset={resetFilters}
-                visible={showFilters}
-            />
+            {showFilters && (
+                <LorcanaFilters
+                    filters={filters}
+                    onFiltersChange={updateFilters}
+                    onReset={resetFilters}
+                    visible={showFilters} 
+                />
+            )}
 
             <FlatList
                 data={filteredAndSortedCards()}
@@ -236,42 +210,58 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 initialNumToRender={12}
                 maxToRenderPerBatch={6}
                 windowSize={15}
-                removeClippedSubviews={false}
+                removeClippedSubviews={false} // Setting to true can have bugs, ensure it works if enabled
                 updateCellsBatchingPeriod={50}
+                getItemLayout={filteredAndSortedCards().length > 0 ? getItemLayout : undefined} // Apply only if data exists
             />
 
             {selectedCard && (
-                <LorcanaCardModal
-                    card={selectedCard}
-                    visible={selectedCard !== null && !showVersionModal}
-                    onClose={() => setSelectedCard(null)}
-                    onDelete={handleDeleteCard}
-                    onAddToCollection={!selectedCard.collected ? handleAddToCollection : undefined}
-                    onRemoveFromCollection={selectedCard.collected ? handleDeleteCard : undefined}
-                />
+                <Suspense fallback={<ActivityIndicator size="small" color={theme.primary} />}>
+                    <LorcanaCardModal
+                        card={selectedCard}
+                        visible={selectedCard !== null && !showVersionModal}
+                        onClose={() => setSelectedCard(null)}
+                        onDelete={handleDeleteCard}
+                        onAddToCollection={!selectedCard.collected ? handleAddToCollection : undefined}
+                        onRemoveFromCollection={selectedCard.collected ? handleDeleteCard : undefined}
+                    />
+                </Suspense>
             )}
 
-            <LorcanaVersionModal
-                card={selectedCard}
-                visible={showVersionModal}
-                availableVersions={availableVersions}
-                onClose={() => setShowVersionModal(false)}
-                onVersionChange={handleVersionChange}
-                onAddToCollection={!selectedCard?.collected ? handleAddToCollection : undefined}
-                onRemoveFromCollection={selectedCard?.collected ? handleDeleteCard : undefined}
-            />
+            {selectedCard && showVersionModal && (
+                <Suspense fallback={<ActivityIndicator size="small" color={theme.primary} />}>
+                    <LorcanaVersionModal
+                        card={selectedCard}
+                        visible={showVersionModal} // Keep visible prop
+                        availableVersions={availableVersions}
+                        onClose={() => setShowVersionModal(false)}
+                        onVersionChange={handleVersionChange}
+                        onAddToCollection={!selectedCard?.collected ? handleAddToCollection : undefined}
+                        onRemoveFromCollection={selectedCard?.collected ? handleDeleteCard : undefined}
+                    />
+                </Suspense>
+            )}
         </View>
     );
 };
 
-const styles = StyleSheet.create({
+const useStyles = () => useThemedStyles((theme: Theme) => ({
     container: {
         flex: 1,
     },
+    headerControlsContainer: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.border,
+        backgroundColor: theme.surface, 
+    },
     loadingContainer: {
         flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
+        justifyContent: 'center' as 'center',
+        alignItems: 'center' as 'center',
     },
     grid: {
         padding: 4,
@@ -281,9 +271,9 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
     },
     statsRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
+        flexDirection: 'row' as 'row',
+        justifyContent: 'space-between' as 'space-between',
+        alignItems: 'center' as 'center',
     },
     statsText: {
         fontSize: 12,
@@ -296,8 +286,8 @@ const styles = StyleSheet.create({
     modalContainer: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        justifyContent: 'center',
-        alignItems: 'center',
+        justifyContent: 'center' as 'center',
+        alignItems: 'center' as 'center',
     },
     modalContent: {
         width: '90%',
@@ -353,6 +343,6 @@ const styles = StyleSheet.create({
     removeButtonText: {
         fontWeight: 'bold',
     },
-});
+}));
 
 export default LorcanaGridView;

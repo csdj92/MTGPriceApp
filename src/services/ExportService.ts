@@ -432,11 +432,18 @@ class ExportService {
                           }
                           
                           // Add each card to the collection
-                          collection.cards.forEach(card => {
+                          collection.cards.forEach(cardFromFile => {
+                            // Correct the Unique_ID format before using it
+                            const correctedUniqueId = this.formatUniqueId(cardFromFile.Unique_ID);
+                            if (!correctedUniqueId) {
+                                console.warn(`[ExportService] Skipping card with invalid Unique_ID: ${cardFromFile.Name}`);
+                                return; // Skip this card if Unique_ID is fundamentally invalid after formatting
+                            }
+
                             // First check if the card exists in lorcana_cards table
                             tx.executeSql(
                               'SELECT Unique_ID FROM lorcana_cards WHERE Unique_ID = ?',
-                              [card.Unique_ID],
+                              [correctedUniqueId], // Use corrected ID
                               (_, cardExistsResult: ResultSet) => {
                                 // If card doesn't exist in the cards table, add it first
                                 if (cardExistsResult.rows.length === 0) {
@@ -445,27 +452,27 @@ class ExportService {
                                       Unique_ID, Name, Set_ID, Set_Name, Type, Color, Rarity, 
                                       Card_Num, Strength, Willpower, Artist, Flavor_Text, 
                                       collected, price_usd, price_usd_foil, last_updated
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
                                     [
-                                      card.Unique_ID,
-                                      card.Name,
-                                      card.Set_ID,
-                                      card.Set_Name,
-                                      card.Type,
-                                      card.Color,
-                                      card.Rarity,
-                                      card.Card_Num,
-                                      card.Strength || null,
-                                      card.Willpower || null,
-                                      card.Artist || null,
-                                      card.Flavor_Text || null,
-                                      card.collected ? 1 : 0,
-                                      card.prices?.usd || null,
-                                      card.prices?.usd_foil || null,
+                                      correctedUniqueId, // Use corrected ID
+                                      cardFromFile.Name,
+                                      this.formatUniqueId(cardFromFile.Set_ID), // Also format Set_ID if it follows similar pattern
+                                      cardFromFile.Set_Name,
+                                      cardFromFile.Type,
+                                      cardFromFile.Color,
+                                      cardFromFile.Rarity,
+                                      cardFromFile.Card_Num,
+                                      cardFromFile.Strength || null,
+                                      cardFromFile.Willpower || null,
+                                      cardFromFile.Artist || null,
+                                      cardFromFile.Flavor_Text || null,
+                                      cardFromFile.collected ? 1 : 0,
+                                      cardFromFile.prices?.usd || null,
+                                      cardFromFile.prices?.usd_foil || null,
                                       new Date().toISOString()
                                     ],
                                     (_, insertCardResult) => {
-                                      console.log(`[ExportService] Added new card to database: ${card.Name}`);
+                                      console.log(`[ExportService] Added new card to database: ${cardFromFile.Name} (${correctedUniqueId})`);
                                     },
                                     (_, error) => {
                                       console.error('[ExportService] Error adding card to database:', error);
@@ -477,7 +484,7 @@ class ExportService {
                                 // Now handle the collection card relationship
                                 tx.executeSql(
                                   'SELECT card_id FROM lorcana_collection_cards WHERE card_id = ? AND collection_id = ?',
-                                  [card.Unique_ID, collection.id],
+                                  [correctedUniqueId, collection.id], // Use corrected ID
                                   (_, cardResult: ResultSet) => {
                                     if (cardResult.rows.length === 0) {
                                       // Add the card if it doesn't exist in the collection
@@ -487,11 +494,11 @@ class ExportService {
                                         VALUES (?, ?, ?)`,
                                         [
                                           collection.id,
-                                          card.Unique_ID,
+                                          correctedUniqueId, // Use corrected ID
                                           new Date().toISOString()
                                         ],
                                         (_, insertCardResult) => {
-                                          console.log(`[ExportService] Added card: ${card.Name} to collection: ${collection.name}`);
+                                          console.log(`[ExportService] Added card: ${cardFromFile.Name} (${correctedUniqueId}) to collection: ${collection.name}`);
                                         },
                                         (_, error) => {
                                           console.error('[ExportService] Error adding card:', error);
@@ -506,11 +513,11 @@ class ExportService {
                                         WHERE card_id = ? AND collection_id = ?`,
                                         [
                                           new Date().toISOString(),
-                                          card.Unique_ID,
+                                          correctedUniqueId, // Use corrected ID
                                           collection.id
                                         ],
                                         (_, updateCardResult) => {
-                                          console.log(`[ExportService] Updated card: ${card.Name} in collection: ${collection.name}`);
+                                          console.log(`[ExportService] Updated card: ${cardFromFile.Name} (${correctedUniqueId}) in collection: ${collection.name}`);
                                         },
                                         (_, error) => {
                                           console.error('[ExportService] Error updating card:', error);
@@ -580,6 +587,27 @@ class ExportService {
       console.error('[ExportService] Error importing collections:', error);
       Alert.alert('Import Error', 'Failed to import collections. Please check that the file is valid.');
     }
+  }
+
+  // Utility function to correct Unique_ID format
+  private formatUniqueId(id: string | undefined): string {
+    if (!id || typeof id !== 'string') {
+      // If id is undefined or not a string, return it as is or handle error
+      // For safety, returning a placeholder or throwing an error might be better
+      // but for now, we'll return it to avoid breaking if data is truly malformed.
+      return id || ''; 
+    }
+    const parts = id.split('-');
+    if (parts.length === 2) {
+      const setId = parts[0];
+      const cardNumStr = parts[1];
+      const cardNum = parseInt(cardNumStr, 10);
+      // Only pad if cardNumStr is a number and its length is less than 3, and setId is not empty
+      if (setId && !isNaN(cardNum) && cardNumStr.length > 0 && cardNumStr.length < 3) {
+        return `${setId}-${String(cardNum).padStart(3, '0')}`;
+      }
+    }
+    return id; // Return original if format is unexpected, already padded, or not numeric card part
   }
 }
 

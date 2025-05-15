@@ -69,6 +69,7 @@ export interface Collection {
     updatedAt: string;
     totalValue: number;
     cardCount: number;
+    totalCollected?: number;
 }
 
 export interface Card {
@@ -772,14 +773,10 @@ export default class DatabaseService {
     }
     //mtg.db get collections
     async getCollections(): Promise<Collection[]> {
-        try {
-            ToastAndroid.show('Getting collections from database...', ToastAndroid.SHORT);
-            
+        try {            
             if (!this.db) {
-                ToastAndroid.show('Database not initialized, initializing now...', ToastAndroid.SHORT);
                 await DatabaseInitializer.initializeAllDatabases();
                 if (!this.db) {
-                    ToastAndroid.show('Failed to initialize database!', ToastAndroid.LONG);
                     throw new Error('Database initialization failed');
                 }
             }
@@ -789,7 +786,6 @@ export default class DatabaseService {
             );
 
             if (!results || !results[0] || !results[0].rows) {
-                ToastAndroid.show('No results from database query', ToastAndroid.LONG);
                 return [];
             }
 
@@ -806,8 +802,7 @@ export default class DatabaseService {
                     cardCount: parseInt(row.card_count || '0', 10)
                 });
             }
-
-            ToastAndroid.show(`Retrieved ${collections.length} collections`, ToastAndroid.SHORT);
+            
             return collections;
         } catch (error) {
             ToastAndroid.show(`Error in getCollections: ${error}`, ToastAndroid.LONG);
@@ -1223,25 +1218,24 @@ export default class DatabaseService {
             console.log(`[DatabaseService] Processing ${validEntries.length} valid card entries in batches of ${BATCH_SIZE}...`);
             
             // Prepare arrays to collect batches that need history updates
-            const historyBatches: [string, any][][] = [];
+            // const historyBatches: [string, any][][] = []; 
             
-            // Process all current prices in batches
-            console.time('[DatabaseService] Current prices update time');
+            // Process all current prices and their history in batches
+            console.time('[DatabaseService] Price and History update time');
             for (let i = 0; i < validEntries.length; i += BATCH_SIZE) {
                 const batch = validEntries.slice(i, i + BATCH_SIZE);
-                console.log(`[DatabaseService] Processing ${batch.length} cards (batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(validEntries.length/BATCH_SIZE)})`);
+                console.log(`[DatabaseService] Processing batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(validEntries.length/BATCH_SIZE)} (${batch.length} cards) for prices and history...`);
                 
-                // Process current batch
+                // Process current prices for the batch
                 await this.updateCurrentPrices(batch, now);
                 
-                // Collect batches for history update - only keep one in every 5 batches
-                if (i % 2500 === 0) {
-                    historyBatches.push(batch);
-                }
+                // Immediately process history for the same batch
+                await this.updatePricesWithHistory(batch, now, now); 
             }
-            console.timeEnd('[DatabaseService] Current prices update time');
+            console.timeEnd('[DatabaseService] Price and History update time');
             
-            // Process history updates separately after all current prices are updated
+            // The separate historyBatches logic is no longer needed and should be removed.
+            /*
             if (historyBatches.length > 0) {
                 console.time('[DatabaseService] History update time');
                 console.log(`[DatabaseService] Updating price history for ${historyBatches.length} batches...`);
@@ -1251,6 +1245,7 @@ export default class DatabaseService {
                 }
                 console.timeEnd('[DatabaseService] History update time');
             }
+            */
             
             // Update app settings with last price update time
             await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {

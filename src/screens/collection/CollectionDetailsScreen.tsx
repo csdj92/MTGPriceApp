@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert, Platform, ToastAndroid} from 'react-native';
+import { View, StyleSheet, Text, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { databaseService } from '../../services/DatabaseService';
 import { getLorcanaCollectionCards, getLorcanaSetCollections, getLorcanaSetMissingCards, removeLorcanaCardFromCollection, } from '../../services/LorcanaService';
 import { exportService, collectionEventEmitter } from '../../services/ExportService';
-import CardList from '../../components/CardList';
-import LorcanaCardList from '../../components/LorcanaCardList';
 import LorcanaGridView from '../../components/lorcana/LorcanaGridView';
 import MTGGridView from '../../components/MTGGridView';
 import type { ExtendedCard } from '../../types/card';
@@ -14,7 +12,11 @@ import type { LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../../ty
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Collection } from '../../types/collection';
 import DatabaseInitializer from '../../services/DatabaseInitializer';
-const Icon = MaterialCommunityIcons as any; // Temporary type assertion
+
+// Define a screen-specific type that includes isExpanded
+type DisplayLorcanaCard = LorcanaCardWithPrice & { isExpanded?: boolean };
+
+const Icon = MaterialCommunityIcons;
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CollectionDetails'>;
 
@@ -24,30 +26,25 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     const [lorcanaCards, setLorcanaCards] = useState<PartialLorcanaCardWithPrice[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [collection, setCollection] = useState<Collection | null>(null);
-    const [areAllExpanded, setAreAllExpanded] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
     // Define loadCollection as a useCallback to properly handle dependencies
     const loadCollection = useCallback(async () => {
         setIsLoading(true);
         try {
-            ToastAndroid.show('Starting to load collection...', ToastAndroid.SHORT);
-
             // Check if databaseService is properly initialized
             if (!databaseService) {
-                ToastAndroid.show('Database service is not initialized!', ToastAndroid.LONG);
+                console.error('Database service is not initialized!');
                 throw new Error('Database service is not initialized');
             }
 
             // Ensure database is initialized
             try {
                 await DatabaseInitializer.initializeAllDatabases();
-                ToastAndroid.show('Database initialized successfully', ToastAndroid.SHORT);
             } catch (initError) {
-                ToastAndroid.show(`Database initialization failed: ${initError}`, ToastAndroid.LONG);
+                console.error(`Database initialization failed: ${initError}`);
                 throw initError;
             }
 
@@ -56,19 +53,17 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
             try {
                 collections = await databaseService.getCollections();
                 if (!collections || !Array.isArray(collections)) {
-                    ToastAndroid.show('Got invalid collections data', ToastAndroid.LONG);
+                    console.error('Got invalid collections data');
                     throw new Error('Invalid collections data received');
                 }
-                ToastAndroid.show(`Found ${collections.length} collections`, ToastAndroid.SHORT);
             } catch (error) {
-                ToastAndroid.show(`Failed to get collections: ${error}`, ToastAndroid.LONG);
+                console.error(`Failed to get collections: ${error}`);
                 throw error;
             }
 
             const mtgCollection = collections.find(c => c.id === collectionId);
 
             if (mtgCollection) {
-                ToastAndroid.show(`Found collection: ${mtgCollection.name}`, ToastAndroid.SHORT);
                 setCollection({
                     id: mtgCollection.id,
                     name: mtgCollection.name,
@@ -85,26 +80,21 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                 const setCodeMatch = mtgCollection.description?.match(/\(([^)]+)\)$/);
                 if (setCodeMatch && setCodeMatch[1]) {
                     const setCode = setCodeMatch[1];
-                    ToastAndroid.show(`Loading set cards for ${setCode}...`, ToastAndroid.SHORT);
                     try {
                         const allSetCards = await databaseService.getSetMissingCards(setCode)
                             .catch(error => {
-                                ToastAndroid.show(`Error getting set cards: ${error}`, ToastAndroid.LONG);
                                 console.error(`[CollectionDetailsScreen] Error getting set cards for ${setCode}:`, error);
                                 return [];
                             });
-                        ToastAndroid.show(`Loaded ${allSetCards.length} set cards`, ToastAndroid.SHORT);
                         setMtgCards(allSetCards);
                         setHasMore(false); // Disable pagination since we have all cards
                     } catch (error) {
-                        ToastAndroid.show(`Error processing set cards: ${error}`, ToastAndroid.LONG);
                         console.error(`[CollectionDetailsScreen] Error processing set cards for ${setCode}:`, error);
                         setMtgCards([]);
                         setHasMore(false);
                     }
                 }
             } else {
-                ToastAndroid.show('MTG collection not found, checking Lorcana...', ToastAndroid.SHORT);
                 // If not found in MTG collections, check Lorcana collections
                 try {
                     const lorcanaCollections = await getLorcanaSetCollections()
@@ -132,13 +122,13 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         if (setIdMatch && setIdMatch[1]) {
                             const setId = setIdMatch[1];
                             try {
-                                const allSetCards = await getLorcanaSetMissingCards(setId)
+                                const allSetCards = await getLorcanaSetMissingCards(setId, collectionId)
                                     .catch(error => {
                                         console.error(`[CollectionDetailsScreen] Error getting Lorcana set cards for ${setId}:`, error);
                                         return [];
                                     });
-                                setLorcanaCards(allSetCards.filter((card): card is LorcanaCardWithPrice => 
-                                    card !== null && card !== undefined && typeof card.Unique_ID === 'string'
+                                setLorcanaCards(allSetCards.filter(card => 
+                                    card !== null && card !== undefined // Keep as PartialLorcanaCardWithPrice[]
                                 ));
                             } catch (error) {
                                 console.error(`[CollectionDetailsScreen] Error processing Lorcana set cards for ${setId}:`, error);
@@ -262,7 +252,7 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                     }
                     
                     const validCards = newCards.filter(card => 
-                        Boolean(card?.Unique_ID || card?.id)
+                        Boolean(card?.Unique_ID || card?.id) // Keep as PartialLorcanaCardWithPrice[]
                     ) as PartialLorcanaCardWithPrice[];
                     
                     setLorcanaCards(prevCards => {
@@ -378,15 +368,6 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     }, [collectionId, collection, databaseService]);
 
-    const toggleAllCards = () => {
-        setAreAllExpanded(!areAllExpanded);
-        if (collection?.type === 'MTG') {
-            setMtgCards(prevCards => prevCards.map(card => ({ ...card, isExpanded: !areAllExpanded })));
-        } else {
-            setLorcanaCards(prevCards => prevCards.map(card => ({ ...card, isExpanded: !areAllExpanded })));
-        }
-    };
-
     const handleEndReached = () => {
         if (!isLoading && !isLoadingMore && hasMore && collection) {
             loadMoreCards(currentPage + 1, collection.type);
@@ -485,95 +466,35 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     }, [mtgCards]);
 
+    // Prepare stats for LorcanaGridView
+    const lorcanaCardCount = collection?.type === 'Lorcana' ? lorcanaCards.filter(card => card.collected).length : 0;
+    const lorcanaTotalValue = collection?.type === 'Lorcana' ? 
+        lorcanaCards.reduce((sum, card) => 
+            sum + (card.collected && card.prices?.usd ? Number(card.prices.usd) : 0), 0).toFixed(2)
+        : "0.00";
+
     return (
         <View style={[styles.container]}>
-            <View style={styles.header}>
-                <View style={styles.headerContent}>
-                    <Text style={styles.statsText}>
-                    {cards.length} cards · ${collection?.type === 'Lorcana' ? 
-                            lorcanaCards.reduce((sum, card) => 
-                                sum + (card.collected && card.prices?.usd ? Number(card.prices.usd) : 0), 0).toFixed(2) 
-                            :Number(collection?.totalValue || 0).toFixed(2)}
-                    </Text>
-                    <View style={styles.headerButtons}>
-                        {collection?.type === 'Lorcana' && (
-                            <TouchableOpacity 
-                                onPress={handleExportCollection} 
-                                style={styles.exportButton}
-                            >
-                                <Icon
-                                    name="export"
-                                    size={24}
-                                    color="#2196F3"
-                                />
-                                <Text style={styles.buttonText}>Export</Text>
-                            </TouchableOpacity>
-                        )}
-                        <TouchableOpacity 
-                            onPress={() => setViewMode(prev => prev === 'list' ? 'grid' : 'list')} 
-                            style={styles.viewButton}
-                        >
-                            <Icon
-                                name={viewMode === 'list' ? 'view-grid' : 'view-list'}
-                                size={24}
-                                color="#2196F3"
-                            />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={toggleAllCards} style={styles.toggleButton}>
-                            <Text style={styles.toggleText}>
-                                {areAllExpanded ? 'Collapse All' : 'Expand All'}
-                            </Text>
-                            <Icon
-                                name={areAllExpanded ? 'chevron-up' : 'chevron-down'}
-                                size={24}
-                                color="#2196F3"
-                            />
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </View>
             {collection?.type === 'Lorcana' ? (
-                viewMode === 'list' ? (
-                    <LorcanaCardList
-                        cards={lorcanaCards.filter(card => card.collected)}
-                        isLoading={isLoading}
-                        onCardPress={handleLorcanaCardPress}
-                        onDeleteCard={handleRemoveLorcanaCardFromCollection}
-                    />
-                ) : (
-                    <LorcanaGridView
-                        cards={lorcanaCards as any}
-                        isLoading={isLoading}
-                        onCardPress={handleLorcanaCardPress}
-                        onDeleteCard={handleRemoveLorcanaCardFromCollection}
-                        onCardsUpdate={setLorcanaCards}
-                    />
-                )
+                <LorcanaGridView
+                    cards={lorcanaCards.filter(card => card && typeof card.Unique_ID === 'string') as LorcanaCardWithPrice[]}
+                    isLoading={isLoading}
+                    onCardPress={handleLorcanaCardPress}
+                    onDeleteCard={handleRemoveLorcanaCardFromCollection}
+                    onCardsUpdate={setLorcanaCards}
+                    onExportCollection={handleExportCollection}
+                    cardCount={lorcanaCardCount}
+                    totalValue={lorcanaTotalValue}
+                />
             ) : (
-                viewMode === 'list' ? (
-                    <CardList
-                        cards={mtgCards.filter(card => card.collected)}
-                        isLoading={isLoading}
-                        onCardPress={handleCardPress}
-                        onDeleteCard={handleDeleteCard}
-                        onEndReached={handleEndReached}
-                        onEndReachedThreshold={0.5}
-                        ListFooterComponent={
-                            isLoadingMore ? (
-                                <ActivityIndicator size="small" color="#2196F3" style={styles.loadingMore} />
-                            ) : null
-                        }
-                    />
-                ) : (
-                    <MTGGridView
-                        cards={mtgCards}
-                        isLoading={isLoading}
-                        onCardPress={handleCardPress}
-                        onDeleteCard={handleDeleteCard}
-                        onCardsUpdate={setMtgCards}
-                        collectionId={collectionId}
-                    />
-                )
+                <MTGGridView
+                    cards={mtgCards}
+                    isLoading={isLoading}
+                    onCardPress={handleCardPress}
+                    onDeleteCard={handleDeleteCard}
+                    onCardsUpdate={setMtgCards}
+                    collectionId={collectionId}
+                />
             )}
         </View>
     );
@@ -583,22 +504,6 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#f5f5f5',
-    },
-    header: {
-        padding: 16,
-        backgroundColor: 'white',
-        borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
-    },
-    headerContent: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    headerButtons: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
     },
     statsText: {
         fontSize: 16,
@@ -612,13 +517,6 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         borderWidth: 1,
         borderColor: '#e0e0e0',
-    },
-    viewButton: {
-        padding: 8,
-        borderRadius: 4,
-        borderWidth: 1,
-        borderColor: '#e0e0e0',
-        backgroundColor: '#f5f5f5',
     },
     toggleText: {
         marginRight: 8,

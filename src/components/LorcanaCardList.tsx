@@ -35,83 +35,20 @@ interface LorcanaCardListProps {
     onDeleteCard?: (card: LorcanaCardType) => void;
 }
 
-const PriceDisplay = ({ card }: { card: LorcanaCardType }) => {
-    const [prices, setPrices] = useState<{ 
-        usd: string | null; 
-        usd_foil: string | null;
-    }>({ 
-        usd: card.price_usd || null,
-        usd_foil: card.price_usd_foil || null
-    });
-    const [isLoadingPrices, setIsLoadingPrices] = useState(false);
-
-    useEffect(() => {
-        const fetchPrices = async () => {
-            if (!card.price_usd && !card.price_usd_foil) {
-                setIsLoadingPrices(true);
-                try {
-                    // Debug card data integrity
-                    debugCardData(card, 'PriceDisplay fetchPrices');
-                    
-                    const priceData = await getLorcanaCardPrice({
-                        Name: card.Name || '',
-                        Set_Num: card.Set_Num,
-                        Card_Num: card.Card_Num,
-                        Rarity: card.Rarity,
-                        Unique_ID: card.Unique_ID || ''
-                    });
-                    setPrices({
-                        usd: priceData.usd,
-                        usd_foil: priceData.usd_foil
-                    });
-                } catch (error) {
-                    console.error('[PriceDisplay] Error fetching price data:', error);
-                } finally {
-                    setIsLoadingPrices(false);
-                }
-            }
-        };
-        
-        fetchPrices();
-    }, [card]);
-
-    if (isLoadingPrices) {
-        return (
-            <View style={styles.priceContainer}>
-                <ActivityIndicator size="small" color="#666" />
-            </View>
-        );
-    }
-
-    return (
-        <View style={styles.priceContainer}>
-            {prices.usd && (
-                <Text style={styles.price}>USD: ${Number(prices.usd).toFixed(2)}</Text>
-            )}
-            {prices.usd_foil && (
-                <Text style={styles.price}>Foil: ${Number(prices.usd_foil).toFixed(2)}</Text>
-            )}
-            {(!prices.usd && !prices.usd_foil) && (
-                <Text style={[styles.price, { color: '#666' }]}>No price data available</Text>
-            )}
-        </View>
-    );
-};
+// PriceDisplay component can be removed or simplified as LorcanaCardItem will handle price display
+// For now, let's assume LorcanaCardItem handles it directly.
 
 // Memoize the LorcanaCardItem component to prevent unnecessary re-renders
-const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete }: { 
+const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete, priceData, isPriceLoading }: { 
     card: LorcanaCardType; 
     onPress?: () => void;
     onAddToCollection?: (card: LorcanaCardType) => void;
     onDelete?: (card: LorcanaCardType) => void;
+    priceData?: { usd: string | null; usd_foil: string | null; tcgplayer_id?: number };
+    isPriceLoading?: boolean;
 }) => {
     const [isExpanded, setIsExpanded] = useState(true);
-    const [prices, setPrices] = useState<{ 
-        usd: string | null; 
-        usd_foil: string | null;
-        tcgplayer_id?: number;
-    }>({ usd: null, usd_foil: null });
-    const [isLoadingPrices, setIsLoadingPrices] = useState(false);
+    // Removed price state and loading state from here
     const [imageError, setImageError] = useState(false);
     const [imageLoaded, setImageLoaded] = useState(false);
 
@@ -120,11 +57,9 @@ const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete
     const cardUniqueId = card.Unique_ID;
     const cardSet = card.Set_Name || 'Unknown Set';
     
-    // Check if image was already loaded
     const imageUrl = card.Image || '';
     const isImageAlreadyLoaded = loadedImages.has(imageUrl);
 
-    // Only log image loading the first time
     const logImageLoading = (url: string) => {
         if (!loadedImages.has(url) && url) {
             loadedImages.add(url);
@@ -132,64 +67,12 @@ const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete
     };
 
     const openTCGPlayer = () => {
-        if (prices.tcgplayer_id) {
-            Linking.openURL(`https://www.tcgplayer.com/product/${prices.tcgplayer_id}`);
+        if (priceData?.tcgplayer_id) {
+            Linking.openURL(`https://www.tcgplayer.com/product/${priceData.tcgplayer_id}`);
         }
     };
 
-    useEffect(() => {
-        const fetchPrices = async () => {
-            if (card.price_usd || card.price_usd_foil) {
-                setPrices({
-                    usd: card.price_usd ?? null,
-                    usd_foil: card.price_usd_foil ?? null
-                });
-                return;
-            }
-            
-            // Guard clause: Skip price fetching for cards that are clearly MTG cards or invalid Lorcana cards
-            const isMTGCard = 'name' in card && !('Name' in card);
-            const isMissingEssentials = !cardName || (
-                !cardUniqueId && 
-                (!card.Card_Num || !card.Set_Num || !card.Rarity)
-            );
-            
-            if (isMTGCard || isMissingEssentials) {
-                console.log(`[LorcanaCardList] Skipping price fetch for ${isMTGCard ? 'MTG' : 'incomplete'} card:`, 
-                    cardName || (card as any).name || 'Unknown');
-                setPrices({
-                    usd: null,
-                    usd_foil: null,
-                    tcgplayer_id: undefined
-                });
-                return;
-            }
-            
-            setIsLoadingPrices(true);
-            try {
-                // Debug card data integrity
-                debugCardData(card, 'LorcanaCardItem fetchPrices');
-                
-                const priceData = await getLorcanaCardPrice({
-                    Name: cardName,
-                    Set_Num: typeof cardSet === 'number' ? cardSet : undefined,
-                    Card_Num: card.Card_Num,
-                    Rarity: card.Rarity,
-                    Unique_ID: cardUniqueId
-                });
-                setPrices({
-                    ...priceData,
-                    tcgplayer_id: priceData.tcgplayer_id
-                });
-            } catch (error) {
-                console.error('Error fetching price for card:', error);
-            } finally {
-                setIsLoadingPrices(false);
-            }
-        };
-
-        fetchPrices();
-    }, [cardName, cardSet, card.Card_Num, card.Rarity, cardUniqueId]);
+    // Removed useEffect for fetching prices
 
     return (
         <TouchableOpacity
@@ -242,17 +125,17 @@ const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete
                 </View>
 
                 <View style={styles.priceContainer}>
-                    {isLoadingPrices ? (
+                    {isPriceLoading ? (
                         <ActivityIndicator size="small" color="#666" />
                     ) : (
                         <>
-                            {prices.usd && (
-                                <Text style={styles.price}>USD: ${Number(prices.usd).toFixed(2)}</Text>
+                            {priceData?.usd && (
+                                <Text style={styles.price}>USD: ${Number(priceData.usd).toFixed(2)}</Text>
                             )}
-                            {prices.usd_foil && (
-                                <Text style={styles.price}>Foil: ${Number(prices.usd_foil).toFixed(2)}</Text>
+                            {priceData?.usd_foil && (
+                                <Text style={styles.price}>Foil: ${Number(priceData.usd_foil).toFixed(2)}</Text>
                             )}
-                            {(!prices.usd && !prices.usd_foil) && (
+                            {(!priceData?.usd && !priceData?.usd_foil) && (
                                 <Text style={[styles.price, { color: '#666' }]}>No price data available</Text>
                             )}
                         </>
@@ -314,7 +197,7 @@ const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete
                     {card.Flavor_Text && (
                         <Text style={styles.flavorText}>{card.Flavor_Text}</Text>
                     )}
-                    {prices.tcgplayer_id && (
+                    {priceData?.tcgplayer_id && (
                         <View style={styles.purchaseSection}>
                             <Text style={styles.sectionHeader}>Purchase</Text>
                             <TouchableOpacity
@@ -339,39 +222,142 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
     onAddToCollection,
     onDeleteCard,
 }) => {
+    const [cardPrices, setCardPrices] = useState<Map<string, { usd: string | null; usd_foil: string | null; tcgplayer_id?: number }>>(new Map());
+    const [loadingPrices, setLoadingPrices] = useState<Set<string>>(new Set());
+
     // Memoize the card data to prevent re-renders when the reference hasn't changed
     const memoizedCards = useMemo(() => cards, [
-        // Only update when the array length changes or IDs change
         cards.length,
-        // Use a stable string representation of card IDs for comparison
-        cards.map(card => card.Unique_ID).join(',')
+        cards.map(card => card.Unique_ID || `${card.Name}-${card.Set_Num}-${card.Card_Num}`).join(',')
     ]);
 
-    if (isLoading) {
+    useEffect(() => {
+        const fetchAllPrices = async () => {
+            const newPrices = new Map(cardPrices);
+            const updatedLoadingPrices = new Set(loadingPrices);
+            let pricesChanged = false;
+
+            for (const card of memoizedCards) {
+                const cardId = card.Unique_ID || `${card.Name}-${card.Set_Num}-${card.Card_Num}`;
+                if (!cardId || newPrices.has(cardId) || updatedLoadingPrices.has(cardId)) {
+                    continue;
+                }
+
+                // Skip if card already has prices from props
+                if (card.price_usd || card.price_usd_foil) {
+                    const tcgId = ('prices' in card && card.prices && typeof card.prices.tcgplayer_id === 'number') 
+                                  ? card.prices.tcgplayer_id 
+                                  : undefined;
+                    newPrices.set(cardId, {
+                        usd: card.price_usd ?? null,
+                        usd_foil: card.price_usd_foil ?? null,
+                        tcgplayer_id: tcgId
+                    });
+                    pricesChanged = true;
+                    continue;
+                }
+                
+                const isMTGCard = 'name' in card && !('Name' in card);
+                const isMissingEssentials = !card.Name || (
+                    !card.Unique_ID && 
+                    (!card.Card_Num || !card.Set_Num || !card.Rarity)
+                );
+
+                if (isMTGCard || isMissingEssentials) {
+                    if (__DEV__) {
+                        console.log(`[LorcanaCardListEffect] Skipping price fetch for ${isMTGCard ? 'MTG' : 'incomplete'} card:`, 
+                            card.Name || (card as any).name || 'Unknown');
+                    }
+                    newPrices.set(cardId, { usd: null, usd_foil: null, tcgplayer_id: undefined });
+                    pricesChanged = true;
+                    continue;
+                }
+
+                updatedLoadingPrices.add(cardId);
+                setLoadingPrices(new Set(updatedLoadingPrices)); // Immediate feedback for loading state
+
+                try {
+                    if (__DEV__) {
+                         debugCardData(card, 'LorcanaCardListEffect fetchAllPrices');
+                    }
+                    const priceData = await getLorcanaCardPrice({
+                        Name: card.Name || '',
+                        Set_Num: card.Set_Num,
+                        Card_Num: card.Card_Num,
+                        Rarity: card.Rarity,
+                        Unique_ID: card.Unique_ID || ''
+                    });
+                    newPrices.set(cardId, {
+                        usd: priceData.usd,
+                        usd_foil: priceData.usd_foil,
+                        tcgplayer_id: priceData.tcgplayer_id
+                    });
+                    pricesChanged = true;
+                } catch (error) {
+                    console.error(`[LorcanaCardListEffect] Error fetching price for ${card.Name}:`, error);
+                    newPrices.set(cardId, { usd: null, usd_foil: null, tcgplayer_id: undefined }); // Set error state or default
+                    pricesChanged = true;
+                } finally {
+                    updatedLoadingPrices.delete(cardId);
+                }
+            }
+
+            if (pricesChanged) {
+                setCardPrices(newPrices);
+            }
+            setLoadingPrices(updatedLoadingPrices);
+        };
+
+        if (memoizedCards.length > 0) {
+            fetchAllPrices();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [memoizedCards]); // cardPrices and loadingPrices are managed internally by this effect
+
+
+    if (isLoading && memoizedCards.length === 0) { // Show main loader only if cards are also loading
         return <ActivityIndicator style={styles.loader} size="large" color="#2196F3" />;
     }
+    
+    // console.log('[LorcanaCardList] Rendering with cards:', memoizedCards.length, 'prices:', cardPrices.size, 'loading:', loadingPrices.size);
+
 
     return (
         <FlatList
             data={memoizedCards}
-            renderItem={({ item }) => (
-                <LorcanaCardItem
-                    card={item}
-                    onPress={() => onCardPress?.(item)}
-                    onAddToCollection={onAddToCollection}
-                    onDelete={onDeleteCard}
-                />
-            )}
+            renderItem={({ item }) => {
+                const cardId = item.Unique_ID || `${item.Name}-${item.Set_Num}-${item.Card_Num}`;
+                const priceDataItem = cardPrices.get(cardId);
+                const isPriceItemLoading = loadingPrices.has(cardId);
+                // console.log(`[LorcanaCardList RenderItem] Card: ${item.Name}, Price Data:`, priceDataItem, `Loading: ${isPriceItemLoading}`);
+
+                return (
+                    <LorcanaCardItem
+                        card={item}
+                        onPress={() => onCardPress?.(item)}
+                        onAddToCollection={onAddToCollection}
+                        onDelete={onDeleteCard}
+                        priceData={priceDataItem}
+                        isPriceLoading={isPriceItemLoading}
+                    />
+                );
+            }}
             keyExtractor={(item) => {
-                // Create a stable, unique key for each card
                 return item.Unique_ID?.toString() || 
-                       `${item.Name}-${item.Card_Num}-${item.Set_Num}`;
+                       `${item.Name}-${item.Card_Num}-${item.Set_Num}-${Math.random()}`; // Fallback for more uniqueness
             }}
             initialNumToRender={5}
             maxToRenderPerBatch={5}
-            windowSize={5}
+            windowSize={10} // Increased windowSize
             removeClippedSubviews={true}
             contentContainerStyle={styles.listContainer}
+            ListEmptyComponent={ // Added ListEmptyComponent
+                !isLoading ? (
+                    <View style={styles.emptyListContainer}>
+                        <Text style={styles.emptyListText}>No Lorcana cards found.</Text>
+                    </View>
+                ) : null // Don't show empty text if main isLoading is true
+            }
         />
     );
 };
@@ -519,6 +505,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         padding: 12,
+        backgroundColor: '#e0e0e0', // Added background for placeholder
     },
     placeholderText: {
         color: '#666',
@@ -526,14 +513,26 @@ const styles = StyleSheet.create({
         marginTop: 8,
     },
     retryButton: {
-        padding: 8,
+        paddingHorizontal: 12, // Made retry button larger
+        paddingVertical: 8,
         backgroundColor: '#2196F3',
         borderRadius: 4,
+        marginTop: 8, // Added margin
     },
     retryText: {
         color: '#fff',
         fontSize: 14,
         fontWeight: 'bold',
+    },
+    emptyListContainer: { // Styles for empty list
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    emptyListText: { // Styles for empty list text
+        fontSize: 16,
+        color: '#666',
     },
 });
 

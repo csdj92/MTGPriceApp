@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, ScrollView, Dimensions, ViewStyle, TextStyle } from 'react-native';
-// Using mock LineChart until we can install the package
-// import { LineChart } from 'react-native-chart-kit';
+import { LineChart } from 'react-native-gifted-charts';
 import { 
     getLorcanaPriceHistory, 
     getLorcanaPriceHistoryStats, 
@@ -10,22 +9,16 @@ import {
 } from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
-
-// Mock LineChart component until we can install the package
-const LineChart = ({ data, width, height, chartConfig, bezier, style, fromZero, yAxisLabel, formatYLabel }: any) => (
-    <View style={[{ width, height, backgroundColor: '#eee', borderRadius: 8 }, style]}>
-        <Text style={{ textAlign: 'center', paddingTop: 100 }}>
-            Chart will appear after installing react-native-chart-kit
-        </Text>
-    </View>
-);
+import { formatCurrency } from '../../utils/formatters';
 
 interface LorcanaPriceDetailsProps {
     cardId: string;
     cardName: string;
+    currentPrice: string | null;
+    currentFoilPrice: string | null;
 }
 
-export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId, cardName }) => {
+export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId, cardName, currentPrice, currentFoilPrice }) => {
     const { theme, isDark } = useTheme();
     const styles = useStyles();
     const [loading, setLoading] = useState(true);
@@ -58,6 +51,49 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId
         }
     };
 
+    const formatChartData = (data: LorcanaPriceHistoryEntry[]) => {
+        const normalPrices = data
+            .filter(entry => entry.usd !== null)
+            .map(entry => ({
+                value: parseFloat(entry.usd || '0'),
+                date: new Date(entry.recorded_at),
+                label: formatCurrency(entry.usd || '0')
+            }))
+            .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+        const foilPrices = data
+            .filter(entry => entry.usd_foil !== null)
+            .map(entry => ({
+                value: parseFloat(entry.usd_foil || '0'),
+                date: new Date(entry.recorded_at),
+                label: formatCurrency(entry.usd_foil || '0')
+            }))
+            .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+        return {
+            normalData: normalPrices.map((item, index) => ({
+                value: item.value,
+                dataPointText: index === normalPrices.length - 1 ? item.label : '',
+                label: item.date.toLocaleDateString(),
+                dataPointRadius: 5,
+                showDataPoint: index === normalPrices.length - 1
+            })),
+            foilData: foilPrices.map((item, index) => ({
+                value: item.value,
+                dataPointText: index === foilPrices.length - 1 ? item.label : '',
+                label: item.date.toLocaleDateString(),
+                dataPointRadius: 5,
+                showDataPoint: index === foilPrices.length - 1
+            }))
+        };
+    };
+
+    const chartData = formatChartData(priceHistory);
+    const maxValue = Math.max(
+        ...chartData.normalData.map(d => d.value),
+        ...chartData.foilData.map(d => d.value)
+    );
+
     const formatPrice = (price: string | number | null): string => {
         if (price === null || price === undefined) return 'N/A';
         const numPrice = typeof price === 'string' ? parseFloat(price) : price;
@@ -75,91 +111,6 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId
 
     const formatPercentage = (value: number): string => {
         return value ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%` : '0%';
-    };
-
-    const renderPriceChart = () => {
-        if (priceHistory.length < 2) {
-            return (
-                <View style={styles.chartPlaceholder}>
-                    <Text style={styles.placeholderText}>Not enough price data available</Text>
-                    <Text style={styles.placeholderSubText}>Price history will appear as more data is collected</Text>
-                </View>
-            );
-        }
-
-        // Sort history by date, oldest first
-        const sortedHistory = [...priceHistory].sort((a, b) => 
-            new Date(a.recorded_at).getTime() - new Date(b.recorded_at).getTime()
-        );
-
-        // Prepare data for chart
-        const normalPrices = sortedHistory.map(entry => 
-            entry.usd ? parseFloat(entry.usd) : 0
-        );
-        
-        const foilPrices = sortedHistory.map(entry => 
-            entry.usd_foil ? parseFloat(entry.usd_foil) : 0
-        );
-        
-        const labels = sortedHistory.map(entry => 
-            new Date(entry.recorded_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-        );
-
-        // Only show a reasonable number of labels to prevent overlap
-        const skipLabels = Math.max(1, Math.floor(labels.length / 6));
-        const filteredLabels = labels.filter((_, i) => i % skipLabels === 0);
-
-        const chartWidth = Dimensions.get('window').width - 40;
-
-        const chartData = {
-            labels: filteredLabels,
-            datasets: [
-                {
-                    data: normalPrices,
-                    color: (opacity = 1) => `rgba(54, 162, 235, ${opacity})`,
-                    strokeWidth: 2
-                },
-                {
-                    data: foilPrices,
-                    color: (opacity = 1) => `rgba(153, 102, 255, ${opacity})`,
-                    strokeWidth: 2
-                }
-            ],
-            legend: ['Normal', 'Foil']
-        };
-
-        const chartConfig = {
-            backgroundGradientFrom: theme.surface,
-            backgroundGradientTo: theme.surface,
-            decimalPlaces: 2,
-            color: (opacity = 1) => `rgba(${isDark ? '255, 255, 255' : '0, 0, 0'}, ${opacity})`,
-            labelColor: (opacity = 1) => `rgba(${isDark ? '255, 255, 255' : '0, 0, 0'}, ${opacity})`,
-            style: {
-                borderRadius: 16
-            },
-            propsForDots: {
-                r: '4',
-                strokeWidth: '1',
-                stroke: theme.surface
-            }
-        };
-
-        return (
-            <View style={styles.chartContainer}>
-                <Text style={styles.chartTitle}>Price History</Text>
-                <LineChart
-                    data={chartData}
-                    width={chartWidth}
-                    height={220}
-                    chartConfig={chartConfig}
-                    bezier
-                    style={styles.chart}
-                    fromZero
-                    yAxisLabel="$"
-                    formatYLabel={(value: string) => `$${parseFloat(value).toFixed(1)}`}
-                />
-            </View>
-        );
     };
 
     if (loading) {
@@ -183,7 +134,57 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId
         <ScrollView style={styles.container}>
             <Text style={styles.cardName}>{cardName}</Text>
             
-            {renderPriceChart()}
+            <View style={styles.chartContainer}>
+                <Text style={styles.chartTitle}>Price History</Text>
+                <LineChart
+                    areaChart
+                    data={chartData.normalData}
+                    data2={chartData.foilData}
+                    height={200}
+                    width={Dimensions.get('window').width - 40}
+                    noOfSections={5}
+                    maxValue={maxValue * 1.1}
+                    yAxisLabelSuffix="$"
+                    yAxisTextStyle={{ color: isDark ? '#fff' : '#000' }}
+                    xAxisLabelTextStyle={{ color: isDark ? '#fff' : '#000' }}
+                    color="#2196F3"
+                    color2="#9C27B0"
+                    textColor={isDark ? '#fff' : '#000'}
+                    dataPointsColor="#2196F3"
+                    dataPointsColor2="#9C27B0"
+                    startFillColor="rgba(33, 150, 243, 0.3)"
+                    startFillColor2="rgba(156, 39, 176, 0.3)"
+                    curved
+                    spacing={40}
+                    initialSpacing={20}
+                    endSpacing={20}
+                    backgroundColor={isDark ? '#1a1a1a' : '#fff'}
+                    rulesColor={isDark ? '#333' : '#e0e0e0'}
+                    rulesType="solid"
+                    showVerticalLines
+                    verticalLinesColor={isDark ? '#333' : '#e0e0e0'}
+                />
+            </View>
+            
+            <View style={styles.legend}>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendColor, { backgroundColor: '#2196F3' }]} />
+                    <Text style={[styles.legendText, isDark && styles.darkText]}>Normal</Text>
+                </View>
+                <View style={styles.legendItem}>
+                    <View style={[styles.legendColor, { backgroundColor: '#9C27B0' }]} />
+                    <Text style={[styles.legendText, isDark && styles.darkText]}>Foil</Text>
+                </View>
+            </View>
+            
+            <View style={styles.currentPrices}>
+                <Text style={[styles.priceLabel, isDark && styles.darkText]}>
+                    Current Price: {formatCurrency(currentPrice || '0')}
+                </Text>
+                <Text style={[styles.priceLabel, isDark && styles.darkText]}>
+                    Current Foil: {formatCurrency(currentFoilPrice || '0')}
+                </Text>
+            </View>
             
             <View style={styles.statsContainer}>
                 <Text style={styles.sectionTitle}>Price Statistics</Text>
@@ -364,28 +365,32 @@ const useStyles = () => useThemedStyles((theme) => ({
         color: theme.text,
         textAlign: 'center',
     } as TextStyle,
-    chart: {
-        marginVertical: 8,
-        borderRadius: 12,
-    } as ViewStyle,
-    chartPlaceholder: {
-        height: 220,
+    legend: {
+        flexDirection: 'row',
         justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: theme.surface,
-        borderRadius: 12,
-        padding: 16,
+        marginTop: 10,
+        gap: 20,
     } as ViewStyle,
-    placeholderText: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: theme.textSecondary,
-    } as TextStyle,
-    placeholderSubText: {
+    legendItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    } as ViewStyle,
+    legendColor: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        marginRight: 5,
+    } as ViewStyle,
+    legendText: {
         fontSize: 14,
-        color: theme.textTertiary,
-        marginTop: 8,
-        textAlign: 'center',
+    } as TextStyle,
+    currentPrices: {
+        marginTop: 15,
+        alignItems: 'center',
+    } as ViewStyle,
+    priceLabel: {
+        fontSize: 16,
+        marginVertical: 2,
     } as TextStyle,
     statsContainer: {
         backgroundColor: theme.surface,
@@ -467,5 +472,8 @@ const useStyles = () => useThemedStyles((theme) => ({
     historyPrice: {
         fontSize: 14,
         color: theme.textSecondary,
+    } as TextStyle,
+    darkText: {
+        color: '#fff',
     } as TextStyle,
 })); 

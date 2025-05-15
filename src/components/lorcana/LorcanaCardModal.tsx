@@ -236,6 +236,8 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                                     <LorcanaPriceDetails 
                                         cardId={card.Unique_ID}
                                         cardName={card.Name}
+                                        currentPrice={card.price_usd || null}
+                                        currentFoilPrice={card.price_usd_foil || null}
                                     />
                                 </View>
                             )}

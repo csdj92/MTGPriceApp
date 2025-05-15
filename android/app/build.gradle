@@ -48,13 +48,12 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
-
     packagingOptions {
-        pickFirst 'lib/arm64-v8a/libfbjni.so'
-        pickFirst 'lib/x86/libfbjni.so'
-        pickFirst 'lib/armeabi-v7a/libfbjni.so'
-        pickFirst 'lib/x86_64/libfbjni.so'
+        jniLibs {
+            pickFirsts += ['lib/arm64-v8a/libfbjni.so', 'lib/x86/libfbjni.so', 'lib/armeabi-v7a/libfbjni.so', 'lib/x86_64/libfbjni.so']
+        }
     }
+
 
     lint {
         checkDependencies true
@@ -91,7 +90,7 @@ dependencies {
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
-        implementation "org.webkit:android-jsc:+"
+        implementation "io.github.react-native-community:jsc-android:2026004.+"
     }
 
     implementation(project(':react-native-vector-icons'))

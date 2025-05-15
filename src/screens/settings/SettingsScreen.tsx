@@ -13,7 +13,7 @@ import {
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
 import { databaseService } from '../../services/DatabaseService';
-import { fixCardNames, getNewSetCards, safeRefreshLorcanaCards,fixCardSetIdentifiers,deleteAllSet7Cards, updateAllLorcanaPrices} from '../../services/LorcanaService';
+import { fixCardNames, getNewSetCards, safeRefreshLorcanaCards,fixCardSetIdentifiers,deleteAllSet7Cards, updateAllLorcanaPrices,reloadLorcanaCards} from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import { downloadAndImportPriceData } from '../../utils/priceData';
 
@@ -113,8 +113,8 @@ const SettingsScreen = () => {
 
     const resyncLorcana = async () => {
         // await getNewSetCards();
-        await deleteAllSet7Cards();
-        // await fixCardSetIdentifiers('7');
+        // await deleteAllSet7Cards();
+        await fixCardSetIdentifiers('7');
         
     };
 

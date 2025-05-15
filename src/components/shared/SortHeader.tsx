@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { SortOption, SortDirection } from '../../hooks/useLorcanaFilters';
 import { useTheme } from '../../context/ThemeContext';
+import useThemedStyles from '../../hooks/useThemedStyles';
+import type { Theme } from '../../context/ThemeContext';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -15,145 +17,164 @@ interface SortHeaderProps {
     sortDirection: SortDirection;
     onSortChange: (option: SortOption) => void;
     onFilterPress: () => void;
+    onExportPress?: () => void;
+    showExportButton?: boolean;
+    cardCount?: number;
+    totalValue?: string;
+    showStats?: boolean;
 }
+
+const sortOptionsConfig: { label: string; value: SortOption }[] = [
+    { label: 'Name', value: 'name' },
+    { label: 'Price', value: 'price' },
+    { label: 'Number', value: 'number' },
+];
 
 const SortHeader: React.FC<SortHeaderProps> = ({
     sortBy,
     sortDirection,
     onSortChange,
-    onFilterPress
-    }) => {
+    onFilterPress,
+    onExportPress,
+    showExportButton,
+    cardCount,
+    totalValue,
+    showStats
+}) => {
+    const styles = useStyles();
     const { theme } = useTheme();
 
+    const directionIcon = sortDirection === 'asc' ? 'arrow-up' : 'arrow-down';
+
     return (
-        <View style={[styles.header, { backgroundColor: theme.surface }]}>
-            <View style={styles.filterButtonContainer}>
+        <View style={styles.header}>
+            <View style={styles.leftControls}>
+                {showStats && (
+                    <View style={styles.statsContainer}>
+                        <Text style={styles.statsText}>{cardCount} cards</Text>
+                        <Text style={[styles.statsText, styles.statsSeparator]}>·</Text>
+                        <Text style={styles.statsText}>${totalValue}</Text>
+                    </View>
+                )}
                 <TouchableOpacity
-                    style={[styles.filterButton, { backgroundColor: theme.surface }]}
+                    style={styles.controlButton}
                     onPress={onFilterPress}
                 >
-                    <Icon name="filter-variant" size={24} color={theme.primary} />
-                    <Text style={[styles.buttonText, { color: theme.primary }]}>Filter</Text>
+                    <Icon name="filter-variant" size={20} color={theme.primary} />
+                    <Text style={styles.buttonText}>Filter</Text>
                 </TouchableOpacity>
+                {showExportButton && onExportPress && (
+                    <TouchableOpacity
+                        style={styles.controlButton}
+                        onPress={onExportPress}
+                    >
+                        <Icon name="export-variant" size={20} color={theme.primary} />
+                        <Text style={styles.buttonText}>Export</Text>
+                    </TouchableOpacity>
+                )}
             </View>
-            <View style={styles.sortContainer}>
-                <View style={styles.sortButtonContainer}>
+
+            <View style={styles.sortControlsContainer}>
+                {sortOptionsConfig.map(option => (
                     <TouchableOpacity
-                        style={[styles.sortButton, sortBy === 'name' && styles.sortButtonActive]}
-                        onPress={() => onSortChange('name')}
+                        key={option.value}
+                        style={[
+                            styles.sortControlButton,
+                            sortBy === option.value && styles.sortControlButtonActive,
+                        ]}
+                        onPress={() => onSortChange(option.value)}
                     >
-                        <Icon
-                            name="order-alphabetical-ascending"
-                            size={24}
-                            color={sortBy === 'name' ? theme.primary : theme.text}
-                        />
-                        <Text style={[styles.sortButtonText, sortBy === 'name' && styles.sortButtonTextActive]}>
-                            Name
+                        <Text
+                            style={[
+                                styles.sortControlText,
+                                sortBy === option.value && styles.sortControlTextActive,
+                            ]}
+                        >
+                            {option.label}
                         </Text>
+                        {sortBy === option.value && (
+                            <Icon name={directionIcon} size={16} color={sortBy === option.value ? theme.card : theme.primary} />
+                        )}
                     </TouchableOpacity>
-                </View>
-                <View style={styles.sortButtonContainer}>
-                    <TouchableOpacity
-                        style={[styles.sortButton, sortBy === 'price' && styles.sortButtonActive]}
-                        onPress={() => onSortChange('price')}
-                    >
-                        <Icon
-                            name="currency-usd"
-                            size={24}
-                            color={sortBy === 'price' ? theme.primary : theme.text}
-                        />
-                        <Text style={[styles.sortButtonText, sortBy === 'price' && styles.sortButtonTextActive]}>
-                            Price
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-                <View style={styles.sortButtonContainer}>
-                    <TouchableOpacity
-                        style={[styles.sortButton, sortBy === 'number' && styles.sortButtonActive]}
-                        onPress={() => onSortChange('number')}
-                    >
-                        <Icon
-                            name="order-numeric-ascending"
-                            size={24}
-                            color={sortBy === 'number' ? theme.primary : theme.text}
-                        />
-                        <Text style={[styles.sortButtonText, sortBy === 'number' && styles.sortButtonTextActive]}>
-                            Number
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-                <View style={styles.sortButtonContainer}>
-                    <TouchableOpacity
-                        style={styles.sortButton}
-                        onPress={() => onSortChange(sortBy)}
-                    >
-                        <Icon
-                            name={sortDirection === 'asc' ? 'sort-ascending' : 'sort-descending'}
-                            size={24}
-                            color={theme.primary}
-                        />
-                        <Text style={[styles.sortButtonText, { color: theme.primary }]}>
-                            {sortDirection === 'asc' ? 'Asc' : 'Desc'}
-                        </Text>
-                    </TouchableOpacity>
-                </View>
+                ))}
             </View>
         </View>
     );
 };
 
-const styles = StyleSheet.create({ 
+const useStyles = () => useThemedStyles((theme: Theme) => ({
     header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: 8,
-        backgroundColor: 'white',
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+        justifyContent: 'space-between' as 'space-between',
+        paddingHorizontal: 8,
+        paddingVertical: 6,
         borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
+        borderBottomColor: theme.border,
+        backgroundColor: theme.surface,
     },
-    filterButtonContainer: {
-        alignItems: 'center',
-    },
-    filterButton: {
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: 8,
-        borderRadius: 4,
+    leftControls: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
         gap: 2,
+    },
+    statsContainer: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+    },
+    statsText: {
+        fontSize: 11,
+        marginHorizontal: 1,
+        color: theme.textSecondary,
+    },
+    statsSeparator: {
+        marginLeft: 3,
+        marginRight: 3,
+        color: theme.textSecondary,
+    },
+    controlButton: {
+        flexDirection: 'column' as 'column',
+        alignItems: 'center' as 'center',
+        paddingVertical: 2,
+        paddingHorizontal: 10,
+        borderRadius: 4,
+        gap: 0,
+        backgroundColor: theme.surface,
     },
     buttonText: {
-        fontSize: 10,
-        color: '#2196F3',   
-        marginTop: 2,
+        fontSize: 8,
+        marginTop: 0,
+        color: theme.primary,
     },
-    sortContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
+    sortControlsContainer: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+        gap: 4,
+        paddingLeft: 14,
     },
-    sortButtonContainer: {
-        alignItems: 'center',
-    },
-    sortButton: {
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: 8,
+    sortControlButton: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+        paddingVertical: 6,
+        paddingHorizontal: 8,
         borderRadius: 4,
-        gap: 2,
+        backgroundColor: theme.surface,
+        borderWidth: 1,
+        borderColor: theme.border,
     },
-    sortButtonActive: {
-        backgroundColor: '#e3f2fd',
+    sortControlButtonActive: {
+        backgroundColor: theme.primary,
+        borderColor: theme.primary,
     },
-    sortButtonText: {
-        fontSize: 10,
-        color: '#666',
-        marginTop: 2,
+    sortControlText: {
+        fontSize: 12,
+        color: theme.text,
+        marginRight: 4,
     },
-    sortButtonTextActive: {
-        color: '#2196F3',
-        fontWeight: '500',
+    sortControlTextActive: {
+        color: theme.card,
+        fontWeight: 'bold' as 'bold',
     },
-});
+}));
 
 export default SortHeader; 

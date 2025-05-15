@@ -29,6 +29,8 @@ export const lightTheme = {
   error: '#F44336',
   warning: '#FF9800',
   info: '#2196F3',
+  muted: '#b0bec5',
+  input: '#eceff1',
 };
 
 export const darkTheme = {
@@ -57,6 +59,8 @@ export const darkTheme = {
   error: '#F44336',
   warning: '#FF9800',
   info: '#2196F3',
+  muted: '#455a64',
+  input: '#263238',
 };
 
 export type Theme = typeof lightTheme;

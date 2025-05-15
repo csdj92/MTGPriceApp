@@ -7,9 +7,16 @@ import {
     ActivityIndicator,
     TouchableOpacity,
     Alert,
+    Platform,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-import DocumentPicker from 'react-native-document-picker';
+import {
+    pick as DocumentPickerPick,
+    types as DocumentPickerTypes,
+    errorCodes as DocumentPickerErrorCodes,
+    isErrorWithCode as isDocumentPickerErrorWithCode,
+    DocumentPickerResponse
+} from '@react-native-documents/picker';
 // Fix Icon type similar to LorcanaGridView
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -25,7 +32,8 @@ import {
     getLorcanaCollectionCards,
     deleteLorcanaCardFromCollection,
     deleteLorcanaCollection,
-    safeRefreshLorcanaCards
+    safeRefreshLorcanaCards,
+    updateLorcanaCollectionPrices
 } from '../../services/LorcanaService';
 import { exportService, collectionEventEmitter } from '../../services/ExportService';
 import type { Collection } from '../../services/DatabaseService';
@@ -34,6 +42,7 @@ import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
 import type { Theme } from '../../context/ThemeContext';
+import RNFS from 'react-native-fs';
 
 type SetCompletionScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'SetCompletion'>;
@@ -46,19 +55,33 @@ interface SetCollection extends Collection {
 }
 
 // Memoize the SetItem component
-const SetItem = memo(({ item, onDelete, onPress }: { 
+const SetItem = memo(({ item, onPress, onLongPress, onRefreshPrices, isRefreshing, isSelected, isSelectionModeActive }: { 
     item: SetCollection & { type: string },
-    onDelete: (id: string, name: string) => void,
-    onPress: (item: SetCollection & { type: string }) => void
+    onPress: (item: SetCollection & { type: string }) => void,
+    onLongPress: (item: SetCollection & { type: string }) => void,
+    onRefreshPrices: (id: string, type: string) => void,
+    isRefreshing: boolean,
+    isSelected: boolean,
+    isSelectionModeActive: boolean
 }) => {
     const { theme } = useTheme();
     const styles = useThemedStyles(() => createStyles(theme));
     
     return (
         <TouchableOpacity 
-            style={styles.setItem}
+            style={[styles.setItem, isSelected && isSelectionModeActive && styles.selectedSetItem]}
             onPress={() => onPress(item)}
+            onLongPress={() => onLongPress(item)}
         >
+            <View style={styles.selectionIndicatorContainer}>
+                {isSelectionModeActive && (
+                    <Icon 
+                        name={isSelected ? "checkbox-marked-circle" : "checkbox-blank-circle-outline"} 
+                        size={24} 
+                        color={isSelected ? theme.primary : theme.icon} 
+                    />
+                )}
+            </View>
             <View style={styles.setIcon}>
                 <Icon name={item.type === 'MTG' ? 'cards' : 'cards-playing-outline'} size={24} color={theme.icon} />
             </View>
@@ -84,12 +107,18 @@ const SetItem = memo(({ item, onDelete, onPress }: {
                 </View>
             </View>
             <View style={styles.actionButtons}>
-                <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={() => onDelete(item.id, item.name)}
-                >
-                    <Icon name="delete" size={24} color="#ff5252" />
-                </TouchableOpacity>
+                {item.type === 'Lorcana' && (
+                    isRefreshing ? (
+                        <ActivityIndicator size="small" color={theme.primary} style={styles.refreshButton} />
+                    ) : (
+                        <TouchableOpacity
+                            style={styles.refreshButton}
+                            onPress={() => onRefreshPrices(item.id, item.type)}
+                        >
+                            <Icon name="refresh" size={24} color={theme.primary} />
+                        </TouchableOpacity>
+                    )
+                )}
                 <Icon name="chevron-right" size={24} color={theme.iconSecondary} />
             </View>
         </TouchableOpacity>
@@ -103,6 +132,9 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     const [lorcanaCollections, setLorcanaCollections] = useState<SetCollection[]>([]);
     const [loadingMtg, setLoadingMtg] = useState(true);
     const [loadingLorcana, setLoadingLorcana] = useState(true);
+    const [refreshingCollectionId, setRefreshingCollectionId] = useState<string | null>(null);
+    const [selectedCollectionIds, setSelectedCollectionIds] = useState<Set<string>>(new Set());
+    const [isSelectionModeActive, setIsSelectionModeActive] = useState(false);
     const { theme } = useTheme();
     const styles = useThemedStyles(() => createStyles(theme));
 
@@ -113,99 +145,41 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         setLoadingMtg(true);
         setLoadingLorcana(true);
 
-        // Load MTG collections using the cache service
-        try {
-            const collections = await collectionCacheService.getSetCollections(forceRefresh);
-            setMtgCollections(collections);
-        } catch (error) {
-            console.error('[SetCompletionScreen] Error loading MTG collections:', error);
-            setMtgCollections([]);
-        } finally {
-            setLoadingMtg(false);
-        }
+        const loadMtg = async () => {
+            try {
+                const collections = await collectionCacheService.getSetCollections(forceRefresh);
+                setMtgCollections(collections);
+            } catch (error) {
+                console.error('[SetCompletionScreen] Error loading MTG collections:', error);
+                setMtgCollections([]);
+            } finally {
+                setLoadingMtg(false);
+            }
+        };
 
-        // Load Lorcana collections with force refresh option
-        try {
-            await ensureLorcanaInitialized();
-            const lorcanaCollections = await getLorcanaSetCollections(forceRefresh);
-            const mappedCollections = lorcanaCollections?.map(c => ({
-                ...c,
-                cardCount: c.collectedCards
-            })) || [];
-            setLorcanaCollections(mappedCollections);
-        } catch (error) {
-            console.error('[SetCompletionScreen] Error loading Lorcana collections:', error);
-            setLorcanaCollections([]);
-        } finally {
-            setLoadingLorcana(false);
-        }
+        const loadLorcana = async () => {
+            try {
+                await ensureLorcanaInitialized();
+                const lorcanaData = await getLorcanaSetCollections(forceRefresh);
+                const mappedCollections = lorcanaData?.map(c => ({
+                    ...c,
+                    cardCount: c.collectedCards
+                })) || [];
+                setLorcanaCollections(mappedCollections);
+            } catch (error) {
+                console.error('[SetCompletionScreen] Error loading Lorcana collections:', error);
+                setLorcanaCollections([]);
+            } finally {
+                setLoadingLorcana(false);
+            }
+        };
 
-        // Set a timeout to clear loading state if it gets stuck
-        setTimeout(() => {
-            setIsLoading(false);
-            setLoadingMtg(false);
-            setLoadingLorcana(false);
-        }, 2000);
+        // Run both loading functions concurrently
+        await Promise.all([loadMtg(), loadLorcana()]);
+        setIsLoading(false); // Ensure main loading is set to false after both complete
     }, []);
 
-    const handleDeleteCollection = useCallback(async (collectionId: string, collectionName: string, type: string) => {
-        Alert.alert(
-            'Delete Collection',
-            `Are you sure you want to delete "${collectionName}"? This action cannot be undone.`,
-            [
-                {
-                    text: 'Cancel',
-                    style: 'cancel'
-                },
-                {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            if (type === 'MTG') {
-                                await databaseService.deleteCollection(collectionId);
-                            } else {
-                                await deleteLorcanaCollection(collectionId);
-                            }
-                            loadCollections();
-                        } catch (error) {
-                            console.error('Error deleting collection:', error);
-                            Alert.alert('Error', 'Failed to delete collection');
-                        }
-                    }
-                }
-            ]
-        );
-    }, [loadCollections]);
-
-    const keyExtractor = useCallback((item: SetCollection & { type: string }) => item.id, []);
-
-    const getItemLayout = useCallback((_: any, index: number) => ({
-        length: 92,
-        offset: 92 * index,
-        index,
-    }), []);
-
-    const handleSetPress = useCallback((item: SetCollection & { type: string }) => {
-        // Extract set code from description which is in format "Collection for [setName] ([setCode])"
-        const setCodeMatch = item.description?.match(/\(([^)]+)\)$/);
-        const setCode = setCodeMatch ? setCodeMatch[1] : '';
-        
-        navigation.navigate('CollectionDetails', {
-            collectionId: item.id,
-            title: item.name
-        });
-    }, [navigation]);
-
-    const renderSetItem = useCallback(({ item }: { item: SetCollection & { type: string } }) => (
-        <SetItem 
-            item={item} 
-            onDelete={(id, name) => handleDeleteCollection(id, name, item.type)}
-            onPress={handleSetPress}
-        />
-    ), [handleDeleteCollection, handleSetPress]);
-
-    // Memoized values
+    // Memoized values - moved up
     const allCollections = useMemo(() => {
         console.log('[SetCompletionScreen] Updating collections:', { 
             mtg: mtgCollections.length, 
@@ -217,6 +191,145 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
         ].sort((a, b) => a.name.localeCompare(b.name));
         return combined;
     }, [mtgCollections, lorcanaCollections]);
+
+    const handleRefreshPrices = useCallback(async (collectionId: string, type: string) => {
+        if (type === 'Lorcana') {
+            setRefreshingCollectionId(collectionId);
+            try {
+                console.log(`[SetCompletionScreen] Refreshing prices for Lorcana collection: ${collectionId}`);
+                const result = await updateLorcanaCollectionPrices(collectionId, true);
+                console.log(`[SetCompletionScreen] Price refresh result for ${collectionId}: Updated ${result.updated}, Skipped ${result.skipped}`);
+                // Reload all collections to reflect updated totalValue and other stats
+                // We might want to optimize this later to only reload the specific collection
+                // or update it in place if possible.
+                await loadCollections(true); 
+            } catch (error) {
+                console.error(`[SetCompletionScreen] Error refreshing prices for collection ${collectionId}:`, error);
+                Alert.alert('Error', 'Failed to refresh prices for the collection.');
+            } finally {
+                setRefreshingCollectionId(null);
+            }
+        } else {
+            // Placeholder for MTG price refresh if needed in the future
+            console.log(`[SetCompletionScreen] Price refresh requested for MTG collection: ${collectionId} (not yet implemented)`);
+        }
+    }, [loadCollections]);
+
+    const handleDeleteSelectedCollections = useCallback(async () => {
+        if (selectedCollectionIds.size === 0) {
+            Alert.alert("No Collections Selected", "Please select collections to delete.");
+            return;
+        }
+
+        const selectedNames = allCollections
+            .filter(col => selectedCollectionIds.has(col.id))
+            .map(col => col.name)
+            .join(', ');
+
+        Alert.alert(
+            'Delete Selected Collections',
+            `Are you sure you want to delete ${selectedCollectionIds.size} collection(s): ${selectedNames}? This action cannot be undone.`,
+            [
+                {
+                    text: 'Cancel',
+                    style: 'cancel'
+                },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setIsLoading(true);
+                        try {
+                            const deletePromises = [];
+                            for (const id of selectedCollectionIds) {
+                                const collectionToDelete = allCollections.find(c => c.id === id);
+                                if (collectionToDelete) {
+                                    if (collectionToDelete.type === 'MTG') {
+                                        deletePromises.push(databaseService.deleteCollection(id));
+                                    } else { // Lorcana
+                                        deletePromises.push(deleteLorcanaCollection(id));
+                                    }
+                                }
+                            }
+                            await Promise.all(deletePromises);
+                            Alert.alert('Success', `${selectedCollectionIds.size} collection(s) deleted successfully.`);
+                            setSelectedCollectionIds(new Set()); // Clear selection
+                            setIsSelectionModeActive(false); // Exit selection mode
+                            await loadCollections(true); // Refresh the list
+                        } catch (error) {
+                            console.error('Error deleting selected collections:', error);
+                            Alert.alert('Error', 'Failed to delete selected collections.');
+                        } finally {
+                            setIsLoading(false);
+                        }
+                    }
+                }
+            ]
+        );
+    }, [selectedCollectionIds, allCollections, loadCollections]);
+
+    const keyExtractor = useCallback((item: SetCollection & { type: string }) => item.id, []);
+
+    const getItemLayout = useCallback((_: any, index: number) => ({
+        length: 92,
+        offset: 92 * index,
+        index,
+    }), []);
+
+    const handleSetPressNavigation = useCallback((item: SetCollection & { type: string }) => {
+        navigation.navigate('CollectionDetails', {
+            collectionId: item.id,
+            title: item.name,
+        });
+    }, [navigation]);
+
+    const handleToggleSelectionLogic = useCallback((collectionId: string) => {
+        setSelectedCollectionIds(prevSelectedIds => {
+            const newSelectedIds = new Set(prevSelectedIds);
+            if (newSelectedIds.has(collectionId)) {
+                newSelectedIds.delete(collectionId);
+            } else {
+                newSelectedIds.add(collectionId);
+            }
+
+            // If no items are selected anymore, deactivate selection mode
+            if (newSelectedIds.size === 0) {
+                setIsSelectionModeActive(false);
+            } else if (!isSelectionModeActive && newSelectedIds.size > 0) {
+                // If selection mode wasn't active but now we have a selection, activate it.
+                // This covers the initial long press.
+                setIsSelectionModeActive(true);
+            }
+            return newSelectedIds;
+        });
+    }, [isSelectionModeActive]);
+
+    const handleItemInteraction = useCallback((item: SetCollection & { type: string }, isLongPress: boolean) => {
+        if (isLongPress) {
+            if (!isSelectionModeActive) {
+                setIsSelectionModeActive(true); // Activate selection mode on first long press
+            }
+            handleToggleSelectionLogic(item.id);
+        } else { // Is a regular tap
+            if (isSelectionModeActive) {
+                handleToggleSelectionLogic(item.id); // Tap toggles selection if mode is active
+            } else {
+                handleSetPressNavigation(item); // Navigate if mode is not active
+            }
+        }
+    }, [isSelectionModeActive, handleToggleSelectionLogic, handleSetPressNavigation]);
+
+    const renderSetItem = useCallback(({ item }: { item: SetCollection & { type: string } }) => (
+        <SetItem 
+            item={item} 
+            onPress={(item) => handleItemInteraction(item, false)}
+            onLongPress={(item) => handleItemInteraction(item, true)}
+            onRefreshPrices={handleRefreshPrices}
+            isRefreshing={refreshingCollectionId === item.id}
+            isSelected={selectedCollectionIds.has(item.id)}
+            isSelectionModeActive={isSelectionModeActive}
+        />
+    ), [handleItemInteraction, handleRefreshPrices, refreshingCollectionId, selectedCollectionIds, isSelectionModeActive]);
 
     const EmptyComponent = useMemo(() => (
         <View style={styles.emptyContainer}>
@@ -250,13 +363,15 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
 
     // Add listener for collection import/update events
     useEffect(() => {
-        const handleCollectionsUpdated = (data: { type: string }) => {
+        const handleCollectionsUpdated = (data?: { type?: string }) => {
             console.log('[SetCompletionScreen] Collections updated event received:', data);
-            // Force a reload of the collections data
-            setMtgCollections([]);
-            setLorcanaCollections([]);
+            // For now, a general update still means reloading all.
+            // Future enhancement: If `data.type` is 'MTG' or 'Lorcana', selectively reload.
+            
+            // Set loading states before starting the reload
             setIsLoading(true);
-            loadCollections(true);
+            // No need to clear collections here, loadCollections will overwrite
+            loadCollections(true); // Force refresh on update
         };
 
         // Add event listener and store the subscription
@@ -271,106 +386,148 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
     useEffect(() => {
         console.log('[SetCompletionScreen] Loading states:', { loadingMtg, loadingLorcana });
         if (!loadingMtg && !loadingLorcana) {
-            console.log('[SetCompletionScreen] All collections loaded, clearing loading state');
+            console.log('[SetCompletionScreen] All collections loaded, clearing main loading state');
             setIsLoading(false);
         }
     }, [loadingMtg, loadingLorcana]);
 
     const handleImportCollection = async () => {
+        console.log('[SetCompletionScreen] Attempting to import collection...');
+        setIsLoading(true); // Show loading indicator
+
         try {
-            // Show loading indicator
-            setIsLoading(true);
-            
             // Pick a single file
-            const result = await DocumentPicker.pick({
-                type: [DocumentPicker.types.allFiles],
-                copyTo: 'cachesDirectory', // This ensures we get a file path we can work with
+            // The API returns an array even for single pick unless allowMultiSelection is explicitly false.
+            // However, the response type DocumentPickerResponse suggests it might return a single object
+            // when allowMultiSelection is not true. The documentation implies pick() returns PickResponse<O>
+            // which resolves to DocumentPickerResponse for single file.
+            const results: DocumentPickerResponse[] = await DocumentPickerPick({
+                type: [DocumentPickerTypes.allFiles], // Use named import for types
+                // copyTo is not a standard option for pick() in this library,
+                // file copying should be handled by keepLocalCopy or manually after picking.
+                // For now, removing copyTo. If persistence is needed, keepLocalCopy should be used.
+                allowMultiSelection: false, // Explicitly pick one file
+                mode: 'import', // Or 'open' depending on desired behavior
             });
-            
-            if (result && result[0]) {
-                console.log('[SetCompletionScreen] File picked:', result[0]);
-                
-                // Get the file path - use fileCopyUri which is more reliable across platforms
-                const filePath = result[0].fileCopyUri;
-                
-                if (!filePath) {
-                    throw new Error('Failed to get file path from document picker');
+
+            // Since allowMultiSelection is false, we expect one result or an empty array if cancelled before selection.
+            // However, the API might still return an array with one item.
+            const result = results && results.length > 0 ? results[0] : null;
+
+            if (result && result.uri) {
+                console.log(
+                    '[SetCompletionScreen] Picked document result:',
+                    result.uri,
+                    result.type, // mime type
+                    result.name,
+                    result.size
+                );
+
+                let filePath = result.uri;
+                // For Android, if the URI is a content URI, resolve it to a file path
+                // This manual RNFS copy might be replaceable with library's keepLocalCopy if suitable
+                if (Platform.OS === 'android' && filePath.startsWith('content://') && result.name) {
+                    const destPath = `${RNFS.CachesDirectoryPath}/${result.name}`;
+                    await RNFS.copyFile(filePath, destPath); // Ensure RNFS is imported and configured
+                    filePath = destPath;
                 }
                 
                 console.log('[SetCompletionScreen] File path for import:', filePath);
                 
-                // Show importing message
-                setIsLoading(true);
-                
-                // Import the collection
-                // Note: We don't need to call loadCollections explicitly here anymore
-                // because we'll receive the collectionsUpdated event from ExportService
                 await exportService.importLorcanaCollections(filePath);
-                
-                // The collection update event will trigger the reload
-                // But we'll still clear the loading state in case anything goes wrong
-                setTimeout(() => {
-                    setIsLoading(false);
-                }, 500);
+                // Event handler will manage isLoading, or set it false in finally if not handled by event
+            } else {
+                // This case might occur if the user cancels in a way that doesn't throw an error
+                // but returns an empty/nullish result.
+                console.log('[SetCompletionScreen] No document selected or result is invalid.');
+                setIsLoading(false);
             }
         } catch (error) {
-            // Handle user cancellation
-            if (DocumentPicker.isCancel(error)) {
-                console.log('User cancelled the picker');
+            // Use the library's error checking mechanism
+            if (isDocumentPickerErrorWithCode(error) && error.code === DocumentPickerErrorCodes.OPERATION_CANCELED) {
+                console.log('[SetCompletionScreen] User cancelled the document picker.');
             } else {
-                console.error('Error picking document:', error);
+                console.error('[SetCompletionScreen] Error picking document:', error);
                 Alert.alert('Import Error', 'Failed to import collections. Please try again.');
             }
-        } finally {
-            // Ensure loading state is cleared
-            setIsLoading(false);
+            setIsLoading(false); // Ensure loading is stopped on error
         }
+        // It's good practice to ensure setIsLoading(false) is called in a finally block
+        // if not all paths (including event handlers) guarantee it.
+        // For now, it's at the end of catch and in the 'no result' path.
     };
 
-    // if (isLoading) {
-    //     return (
-    //         <View style={styles.loadingContainer}>
-    //             <ActivityIndicator size="large" color={theme.primary} />
-    //             <Text style={styles.loadingText}>Loading collections...</Text>
-    //         </View>
-    //     );
-    // }
+    const hasSelectedItems = selectedCollectionIds.size > 0;
+
+    const handleCancelSelectionMode = () => {
+        setSelectedCollectionIds(new Set());
+        setIsSelectionModeActive(false);
+    };
 
     return (
         <View style={styles.container}>
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Set Completion</Text>
                 <View style={styles.headerButtons}>
-                    <TouchableOpacity
-                        style={styles.headerButton}
-                        onPress={handleImportCollection}
-                    >
-                        <Icon name="file-import" size={24} color={theme.primary} />
-                        <Text style={styles.buttonText}>Import</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={styles.headerButton}
-                        onPress={async () => {
-                            try {
-                                setIsLoading(true);
-                                const result = await safeRefreshLorcanaCards(); // Use safe refresh instead
-                                await loadCollections(true); // Use forceRefresh = true
-                                Alert.alert(
-                                    'Success',
-                                    `Collection data refreshed successfully!\nUpdated: ${result.updated} cards\nAdded: ${result.added} new cards`,
-                                    [{ text: 'OK' }]
-                                );
-                            } catch (error) {
-                                console.error('Error refreshing Lorcana data:', error);
-                                Alert.alert('Error', 'Failed to refresh Lorcana database');
-                            } finally {
-                                setIsLoading(false);
-                            }
-                        }}
-                    >
-                        <Icon name="refresh" size={24} color={theme.primary} />
-                        <Text style={styles.buttonText}>Refresh</Text>
-                    </TouchableOpacity>
+                    {isSelectionModeActive ? (
+                        <>
+                            {hasSelectedItems && (
+                                <TouchableOpacity
+                                    style={[styles.headerButton, styles.deleteSelectedButton]}
+                                    onPress={handleDeleteSelectedCollections} 
+                                >
+                                    <Icon name="delete-sweep" size={24} color={'#FFFFFF'} />
+                                    <Text style={[styles.buttonText, styles.deleteSelectedButtonText]}>Delete</Text>
+                                </TouchableOpacity>
+                            )}
+                            <TouchableOpacity
+                                style={styles.headerButton}
+                                onPress={handleCancelSelectionMode}
+                            >
+                                <Icon name="close-circle-outline" size={24} color={theme.primary} />
+                                <Text style={styles.buttonText}>Cancel</Text>
+                            </TouchableOpacity>
+                        </>
+                    ) : (
+                        <>
+                            <TouchableOpacity
+                                style={styles.headerButton}
+                                onPress={handleImportCollection}
+                            >
+                                <Icon name="file-import" size={24} color={theme.primary} />
+                                <Text style={styles.buttonText}>Import</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.headerButton}
+                                onPress={async () => {
+                                    try {
+                                        setIsLoading(true);
+                                        // Keep setLoadingMtg and setLoadingLorcana true until their respective operations finish
+                                        setLoadingMtg(true); 
+                                        setLoadingLorcana(true);
+                                        const result = await safeRefreshLorcanaCards(); // Use safe refresh instead
+                                        // loadCollections will handle setting individual loading flags to false
+                                        await loadCollections(true); 
+                                        Alert.alert(
+                                            'Success',
+                                            `Collection data refreshed successfully!
+                                             Updated: ${result.updated} cards
+                                             Added: ${result.added} new cards`,
+                                            [{ text: 'OK' }]
+                                        );
+                                    } catch (error) {
+                                        console.error('Error refreshing Lorcana data:', error);
+                                        Alert.alert('Error', 'Failed to refresh Lorcana database');
+                                    } finally {
+                                        setIsLoading(false);
+                                    }
+                                }}
+                            >
+                                <Icon name="refresh" size={24} color={theme.primary} />
+                                <Text style={styles.buttonText}>Refresh</Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
                 </View>
             </View>
 
@@ -426,6 +583,15 @@ const createStyles = (theme: Theme) => StyleSheet.create({
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
+    },
+    selectedSetItem: {
+        backgroundColor: theme.surface,
+        borderColor: theme.primary,
+        borderWidth: 1,
+    },
+    selectionIndicatorContainer: {
+        width: 0,
+        
     },
     setIcon: {
         width: 48,
@@ -511,6 +677,13 @@ const createStyles = (theme: Theme) => StyleSheet.create({
     deleteButton: {
         padding: 8,
     },
+    deleteSelectedButton: {
+        backgroundColor: theme.error,
+        borderColor: theme.error,
+    },
+    deleteSelectedButtonText: {
+        color: '#FFFFFF',
+    },
     headerButtons: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -530,6 +703,10 @@ const createStyles = (theme: Theme) => StyleSheet.create({
         marginLeft: 4,
         fontSize: 14,
         fontWeight: '500',
+    },
+    refreshButton: {
+        padding: 8,
+        marginRight: 4,
     },
 });
 

@@ -23,6 +23,8 @@ import { useTheme } from '../context/ThemeContext';
 import { CardDetailModal } from './CardDetail';
 import useThemedStyles from '../hooks/useThemedStyles';
 import type { Theme } from '../context/ThemeContext';
+import SortHeader from './shared/SortHeader';
+import MTGFilters from './MTGFilters';
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<any>;
 interface MTGGridViewProps {
     cards: ExtendedCard[];
@@ -185,10 +187,65 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
     // Filter options
     const colorOptions = ['White', 'Blue', 'Black', 'Red', 'Green', 'Colorless', 'Multicolor'];
 
+    // Callbacks for filters and sorting
+    const updateFilters = useCallback((newFilters: Filters) => {
+        setFilters(newFilters);
+    }, []);
+
+    const resetFilters = useCallback(() => {
+        setFilters(DEFAULT_FILTERS);
+    }, []);
+
+    const toggleSort = useCallback((newSortBy: SortOption) => {
+        setSortState(prev => ({
+            sortBy: newSortBy,
+            direction: prev.sortBy === newSortBy && prev.direction === 'asc' ? 'desc' : 'asc'
+        }));
+    }, []);
+
     // Memoized filtered cards
     const filteredCards = useMemo(() => {
-        return props.cards.filter(cardFilter(filters)).sort(cardSorter(sortState));
-    }, [props.cards, filters, sortState]);
+        // Apply filtering
+        let cardsToFilter = props.cards;
+        if (filters.search) {
+            cardsToFilter = cardsToFilter.filter(card => 
+                card.name.toLowerCase().includes(filters.search.toLowerCase())
+            );
+        }
+        if (filters.rarities.length > 0) {
+            cardsToFilter = cardsToFilter.filter(card => 
+                filters.rarities.includes((card.rarity || '').toLowerCase())
+            );
+        }
+        if (filters.colors.length > 0) {
+            cardsToFilter = cardsToFilter.filter(card => {
+                const cardColors = card.colors?.map(c => c.toLowerCase()) || [];
+                if (filters.colors.includes('Colorless') && cardColors.length === 0) return true;
+                if (filters.colors.includes('Multicolor') && cardColors.length > 1) return true;
+                return cardColors.some(cc => filters.colors.map(fc => fc.toLowerCase()).includes(cc));
+            });
+        }
+        if (filters.collectionStatus !== 'all') {
+            cardsToFilter = cardsToFilter.filter(card => 
+                filters.collectionStatus === 'collected' ? (card.quantity ?? 0) > 0 : (card.quantity ?? 0) === 0
+            );
+        }
+        if (filters.priceRange.min !== null) {
+            cardsToFilter = cardsToFilter.filter(card => {
+                const price = getBestPrice(card.prices, modalState.showFoil);
+                return price >= (filters.priceRange.min ?? 0);
+            });
+        }
+        if (filters.priceRange.max !== null) {
+            cardsToFilter = cardsToFilter.filter(card => {
+                const price = getBestPrice(card.prices, modalState.showFoil);
+                return price <= (filters.priceRange.max ?? Infinity);
+            });
+        }
+
+        // Apply sorting
+        return cardsToFilter.sort(cardSorter(sortState));
+    }, [props.cards, filters, sortState, modalState.showFoil]);
 
     // Handler memoization
     const handleCardPress = useCallback((card: ExtendedCard) => {
@@ -334,112 +391,45 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
 
     return (
         <View style={styles.container}>
-            <View style={styles.header}>
-                <View style={styles.filterButtonContainer}>
-                    <TouchableOpacity
-                        style={styles.filterButton}
-                        onPress={() => setShowFilters(!showFilters)}
-                        accessibilityRole="button"
-                        accessibilityLabel={showFilters ? "Hide filters" : "Show filters"}
-                        accessibilityState={{ expanded: showFilters }}
-                    >
-                        <Icon name="filter-variant" size={24} color="#2196F3" />
-                        <Text style={styles.buttonText}>
-                            Filter
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-                <View style={styles.sortContainer}>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={[styles.sortButton, sortState.sortBy === 'name' && styles.sortButtonActive]}
-                            onPress={() => setSortState(prev => ({ ...prev, sortBy: 'name' }))}
-                        >
-                            <Icon
-                                name="order-alphabetical-ascending"
-                                size={24}
-                                color={sortState.sortBy === 'name' ? '#2196F3' : '#666'}
-                            />
-                            <Text style={[styles.sortButtonText, sortState.sortBy === 'name' && styles.sortButtonTextActive]}>
-                                Name
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={[styles.sortButton, sortState.sortBy === 'price' && styles.sortButtonActive]}
-                            onPress={() => setSortState(prev => ({ ...prev, sortBy: 'price' }))}
-                        >
-                            <Icon
-                                name="currency-usd"
-                                size={24}
-                                color={sortState.sortBy === 'price' ? '#2196F3' : '#666'}
-                            />
-                            <Text style={[styles.sortButtonText, sortState.sortBy === 'price' && styles.sortButtonTextActive]}>
-                                Price
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={[styles.sortButton, sortState.sortBy === 'number' && styles.sortButtonActive]}
-                            onPress={() => setSortState(prev => ({ ...prev, sortBy: 'number' }))}
-                        >
-                            <Icon
-                                name="order-numeric-ascending"
-                                size={24}
-                                color={sortState.sortBy === 'number' ? '#2196F3' : '#666'}
-                            >
-                            </Icon>
-                            <Text style={[styles.sortButtonText, sortState.sortBy === 'number' && styles.sortButtonTextActive]}>
-                                Number
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                    <View style={styles.sortButtonContainer}>
-                        <TouchableOpacity
-                            style={styles.sortButton}
-                            onPress={() => setSortState(prev => ({ ...prev, direction: prev.direction === 'asc' ? 'desc' : 'asc' }))}
-                        >
-                            <Icon
-                                name={sortState.direction === 'asc' ? 'sort-ascending' : 'sort-descending'}
-                                size={24}
-                                color="#2196F3"
-                            />
-                            <Text style={styles.sortButtonText}>
-                                {sortState.direction === 'asc' ? 'Asc' : 'Desc'}
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
+            <View style={styles.headerControlsContainer}>
+                <SortHeader 
+                    sortBy={sortState.sortBy}
+                    sortDirection={sortState.direction}
+                    onSortChange={toggleSort}
+                    onFilterPress={() => setShowFilters(!showFilters)}
+                />
             </View>
+            
+            {showFilters && (
+                <MTGFilters
+                    filters={filters}
+                    onFiltersChange={updateFilters}
+                    onReset={resetFilters}
+                    visible={showFilters}
+                />
+            )}
 
-            <FilterPanel
-                visible={showFilters}
-                filters={filters}
-                onFilterChange={setFilters}
-            />
-
-            <FlatList
-                data={filteredCards}
-                renderItem={renderItem}
-                keyExtractor={keyExtractor}
-                numColumns={NUM_COLUMNS}
-                initialNumToRender={10}
-                maxToRenderPerBatch={10}
-                windowSize={5}
-                removeClippedSubviews
-                updateCellsBatchingPeriod={100}
-                contentContainerStyle={styles.grid}
-                onEndReachedThreshold={0.5}
-                ListEmptyComponent={props.isLoading ? (
-                    <FlatList
-                        data={Array(10).fill(0)}
-                        renderItem={() => <SkeletonCard />}
-                        numColumns={NUM_COLUMNS}
-                    />
-                ) : <EmptyState />}
-            />
+            {props.isLoading ? (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color={theme.primary} />
+                </View>
+            ) : filteredCards.length === 0 ? (
+                <EmptyState />
+            ) : (
+                <FlatList
+                    data={filteredCards}
+                    renderItem={renderItem}
+                    keyExtractor={keyExtractor}
+                    numColumns={NUM_COLUMNS}
+                    initialNumToRender={10}
+                    maxToRenderPerBatch={10}
+                    windowSize={5}
+                    removeClippedSubviews
+                    updateCellsBatchingPeriod={100}
+                    contentContainerStyle={styles.grid}
+                    onEndReachedThreshold={0.5}
+                />
+            )}
 
             <CardDetailModal
                 state={{
@@ -500,8 +490,6 @@ const EmptyState = memo(() => {
         </View>
     );
 });
-
-
 
 // CardItem component with proper styles access
 const CardItem = memo(({ item, cardWidth, onPress, onLongPress }: CardItemProps) => {
@@ -582,150 +570,6 @@ const CardInfo = memo(({ item, hasCollectionStatus }: { item: ExtendedCard; hasC
                     </Text>
                 )}
             </View>
-        </View>
-    );
-});
-
-// FilterPanel component with proper styles access
-const FilterPanel = memo(({ visible, filters, onFilterChange }: { 
-    visible: boolean; 
-    filters: Filters; 
-    onFilterChange: React.Dispatch<React.SetStateAction<Filters>> 
-}) => {
-    const [searchQuery, setSearchQuery] = useState(filters.search);
-    const [showAdvanced, setShowAdvanced] = useState(false);
-    const styles = useStyles();
-    
-    const debouncedSearch = useDebouncedCallback((text: string) => {
-        onFilterChange(prev => ({ ...prev, search: text }));
-    }, 300);
-
-    const handleRarityChange = (rarity: string) => {
-        const newRarities = filters.rarities.includes(rarity)
-            ? filters.rarities.filter(r => r !== rarity)
-            : [...filters.rarities, rarity];
-        onFilterChange(prev => ({ ...prev, rarities: newRarities }));
-    };
-
-    const handlePriceRangeChange = (type: 'min' | 'max', value: string) => {
-        const numValue = value ? parseFloat(value) : null;
-        onFilterChange(prev => ({
-            ...prev,
-            priceRange: {
-                ...prev.priceRange,
-                [type]: numValue
-            }
-        }));
-    };
-
-    if (!visible) return null;
-
-    return (
-        <View style={styles.filtersPanel}>
-            <TextInput
-                style={styles.searchInput}
-                placeholder="Search cards..."
-                value={searchQuery}
-                onChangeText={(text) => {
-                    setSearchQuery(text);
-                    debouncedSearch(text);
-                }}
-                autoCorrect={false}
-                autoCapitalize="none"
-            />
-
-            <TouchableOpacity
-                style={styles.advancedFilterButton}
-                onPress={() => setShowAdvanced(!showAdvanced)}
-            >
-                <Text style={styles.advancedFilterText}>
-                    {showAdvanced ? 'Hide Advanced Filters' : 'Show Advanced Filters'}
-                </Text>
-            </TouchableOpacity>
-
-            {showAdvanced && (
-                <View style={styles.advancedFilters}>
-                    <View style={styles.filterSection}>
-                        <Text style={styles.filterTitle}>Rarity</Text>
-                        <View style={styles.filterOptions}>
-                            {rarityOptions.map(rarity => (
-                                <TouchableOpacity
-                                    key={rarity}
-                                    style={[
-                                        styles.filterChip,
-                                        filters.rarities.includes(rarity) && styles.filterChipSelected
-                                    ]}
-                                    onPress={() => handleRarityChange(rarity)}
-                                >
-                                    <Text style={[
-                                        styles.filterChipText,
-                                        filters.rarities.includes(rarity) && styles.filterChipTextSelected
-                                    ]}>
-                                        {rarity}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-
-                    <View style={styles.filterSection}>
-                        <Text style={styles.filterTitle}>Price Range</Text>
-                        <View style={styles.priceRangeContainer}>
-                            <TextInput
-                                style={styles.priceInput}
-                                placeholder="Min"
-                                keyboardType="numeric"
-                                value={filters.priceRange.min?.toString() || ''}
-                                onChangeText={(text) => handlePriceRangeChange('min', text)}
-                            />
-                            <Text style={styles.priceRangeSeparator}>-</Text>
-                            <TextInput
-                                style={styles.priceInput}
-                                placeholder="Max"
-                                keyboardType="numeric"
-                                value={filters.priceRange.max?.toString() || ''}
-                                onChangeText={(text) => handlePriceRangeChange('max', text)}
-                            />
-                        </View>
-                    </View>
-
-                    <View style={styles.filterSection}>
-                        <Text style={styles.filterTitle}>Collection Status</Text>
-                        <View style={styles.filterOptions}>
-                            {['all', 'collected', 'missing'].map(status => (
-                                <TouchableOpacity
-                                    key={status}
-                                    style={[
-                                        styles.filterChip,
-                                        filters.collectionStatus === status && styles.filterChipSelected
-                                    ]}
-                                    onPress={() => onFilterChange(prev => ({
-                                        ...prev,
-                                        collectionStatus: status as 'all' | 'collected' | 'missing'
-                                    }))}
-                                >
-                                    <Text style={[
-                                        styles.filterChipText,
-                                        filters.collectionStatus === status && styles.filterChipTextSelected
-                                    ]}>
-                                        {status}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-                </View>
-            )}
-
-            <TouchableOpacity
-                style={styles.resetButton}
-                onPress={() => {
-                    setSearchQuery('');
-                    onFilterChange(DEFAULT_FILTERS);
-                }}
-            >
-                <Text style={styles.resetButtonText}>Reset Filters</Text>
-            </TouchableOpacity>
         </View>
     );
 });
@@ -811,124 +655,25 @@ const getFormattedPrice = (price: number) =>
         minimumFractionDigits: 2 
     }).format(price);
 
-
-    // Style hook definition
+// Style hook definition
 const useStyles = () => useThemedStyles((theme: Theme) => ({
     container: {
         flex: 1,
         backgroundColor: theme.background,
     },
-    header: {
-        flexDirection: 'row' as const,
-        justifyContent: 'space-between' as const,
-        alignItems: 'center' as const,
-        padding: 8,
-        backgroundColor: theme.surface,
+    headerControlsContainer: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 5,
         borderBottomWidth: 1,
         borderBottomColor: theme.border,
+        backgroundColor: theme.surface, 
     },
-    filterButtonContainer: {
-        alignItems: 'center' as const,
-    },
-    filterButton: {
-        flexDirection: 'column' as const,
-        alignItems: 'center' as const,
-        padding: 8,
-        borderRadius: 4,
-        gap: 2,
-    },
-    buttonText: {
-        fontSize: 10,
-        color: theme.primary,
-        marginTop: 2,
-    },
-    sortContainer: {
-        flexDirection: 'row' as const,
-        alignItems: 'center' as const,
-        gap: 8,
-    },
-    sortButtonContainer: {
-        alignItems: 'center' as const,
-    },
-    sortButton: {
-        flexDirection: 'column' as const,
-        alignItems: 'center' as const,
-        padding: 8,
-        borderRadius: 4,
-        gap: 2,
-    },
-    sortButtonActive: {
-        backgroundColor: theme.primary + '20', // 20% opacity primary color
-    },
-    sortButtonText: {
-        fontSize: 10,
-        color: theme.textSecondary,
-        marginTop: 2,
-    },
-    sortButtonTextActive: {
-        color: theme.primary,
-        fontWeight: '500' as const,
-    },
-    filtersPanel: {
-        backgroundColor: theme.surface,
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.border,
-    },
-    filtersPanelHidden: {
-        display: 'none',
-    },
-    searchInput: {
-        height: 40,
-        borderWidth: 1,
-        borderColor: theme.border,
-        borderRadius: 4,
-        paddingHorizontal: 8,
-        marginBottom: 16,
-        color: theme.text,
-        backgroundColor: theme.background,
-    },
-    filterSection: {
-        marginBottom: 16,
-    },
-    filterTitle: {
-        fontSize: 16,
-        fontWeight: '500' as const,
-        marginBottom: 8,
-    },
-    filterOptions: {
-        flexDirection: 'row' as const,
-        flexWrap: 'wrap' as const,
-        gap: 8,
-    },
-    filterChip: {
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: theme.border,
-        backgroundColor: theme.surface,
-    },
-    filterChipSelected: {
-        backgroundColor: theme.primary,
-        borderColor: theme.primary,
-    },
-    filterChipText: {
-        color: theme.textSecondary,
-    },
-    filterChipTextSelected: {
-        color: 'white',
-    },
-    resetButton: {
-        alignSelf: 'center' as const,
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 4,
-        backgroundColor: theme.error,
-    },
-    resetButtonText: {
-        color: 'white',
-        fontWeight: '500' as const,
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center' as 'center',
+        alignItems: 'center' as 'center',
     },
     grid: {
         padding: 4,
