@@ -24,7 +24,7 @@ export class AllPrintingsJsonDatabase {
             timestamp: number;
         };
     } = {};
-    private static readonly DB_PATH = '/data/data/com.mtgpriceapp/files/mtgjson.db';
+    private static readonly DB_PATH = '/data/data/com.mtgpriceapp/files/AllPrintings.sqlite';
 
     private constructor() {
         this.db = null;
@@ -38,36 +38,95 @@ export class AllPrintingsJsonDatabase {
     }
 
     /**
+     * Verifies if the critical 'cards' table exists in the currently open database.
+     * Throws an error if the table is not found.
+     */
+    private async verifyCardsTableExists(): Promise<void> {
+        if (!this.db) {
+            throw new Error("[AllPrintingsJsonDatabase] Database not open for verification.");
+        }
+        try {
+            const [result] = await this.db.executeSql("SELECT name FROM sqlite_master WHERE type='table' AND name='cards'");
+            if (result.rows.length === 0) {
+                throw new Error("[AllPrintingsJsonDatabase] Critical table 'cards' missing from the database.");
+            }
+            console.log('[AllPrintingsJsonDatabase] Verified "cards" table exists.');
+        } catch (error) {
+            console.error('[AllPrintingsJsonDatabase] Error verifying "cards" table:', error);
+            // Attempt to close the problematic DB connection
+            if (this.db) {
+                try { await this.db.close(); } catch (e) { console.warn('[AllPrintingsJsonDatabase] Error closing DB during verification failure:', e); }
+            }
+            this.db = null; // Nullify DB object
+            this.initialized = false; // Reset initialization state
+            throw error; // Re-throw to be handled by the calling function
+        }
+    }
+
+    /**
      * Initialize the database connection
      * This should be called before any database operations
      */
     public async initialize(): Promise<void> {
         if (this.initialized && this.db) {
+            console.log('[AllPrintingsJsonDatabase] Already initialized.');
             return;
         }
 
         try {
-            console.log('[AllPrintingsJsonDatabase] Initializing database connection');
-            
-            // Check if database exists
-            const exists = await this.databaseExists();
-            if (!exists) {
-                console.log('[AllPrintingsJsonDatabase] Database does not exist, downloading...');
-                await this.downloadMTGJsonDatabase();
+            console.log('[AllPrintingsJsonDatabase] Attempting to initialize database connection...');
+            let needsDownload = false;
+            const dbExists = await this.databaseExists();
+
+            if (dbExists) {
+                console.log('[AllPrintingsJsonDatabase] Database file found. Attempting to open and verify...');
+                try {
+                    this.db = await SQLite.openDatabase({
+                        name: AllPrintingsJsonDatabase.DB_PATH,
+                        location: 'default', // Assuming this is correct for an absolute path in 'name'
+                    });
+                    await this.verifyCardsTableExists(); // Throws on failure
+                    this.initialized = true;
+                    console.log('[AllPrintingsJsonDatabase] Existing database opened and verified successfully.');
+                } catch (verificationError) {
+                    console.warn('[AllPrintingsJsonDatabase] Existing database failed verification or open:', verificationError);
+                    if (this.db) {
+                        try { await this.db.close(); } catch (e) { /* ignore closing error */ }
+                        this.db = null;
+                    }
+                    this.initialized = false;
+                    needsDownload = true; 
+                    console.log('[AllPrintingsJsonDatabase] Deleting problematic existing database file...');
+                    try {
+                        await RNFS.unlink(AllPrintingsJsonDatabase.DB_PATH);
+                    } catch (unlinkError) {
+                        console.error('[AllPrintingsJsonDatabase] Failed to delete problematic database file:', unlinkError);
+                    }
+                }
+            } else {
+                console.log('[AllPrintingsJsonDatabase] Database file not found.');
+                needsDownload = true;
             }
-            
-            // Open database directly with correct configuration
-            this.db = await SQLite.openDatabase({
-                name: AllPrintingsJsonDatabase.DB_PATH,
-                location: 'default',
-                createFromLocation: 2
-            });
-            
-            this.initialized = true;
-            console.log('[AllPrintingsJsonDatabase] Database connection initialized successfully');
+
+            if (needsDownload) {
+                console.log('[AllPrintingsJsonDatabase] Proceeding with database download.');
+                await this.downloadMTGJsonDatabase(); // This method now also verifies and sets this.initialized
+            }
+
+            if (!this.initialized || !this.db) {
+                // This path suggests that even after attempting existing or download, we failed.
+                throw new Error('[AllPrintingsJsonDatabase] Failed to initialize database after all attempts (DB not set or not initialized).');
+            }
+            console.log('[AllPrintingsJsonDatabase] Database initialization process complete.');
+
         } catch (error) {
-            console.error('[AllPrintingsJsonDatabase] Error initializing database connection:', error);
-            throw error;
+            console.error('[AllPrintingsJsonDatabase] Critical error during database initialization routine:', error);
+            this.initialized = false; 
+            if (this.db) {
+                try { await this.db.close(); } catch(e) { /* ignore */ }
+            }
+            this.db = null;
+            throw error; 
         }
     }
 
@@ -194,13 +253,16 @@ export class AllPrintingsJsonDatabase {
                                     location: 'default',
                                 });
 
+                                // Verify the newly downloaded database
+                                await this.verifyCardsTableExists();
+                                
                                 if (this.dataMerger) {
                                     // Migrate price data from old database to new using the correct path
                                     await this.dataMerger.mergePriceDataToNewDb(mtgJsonPath);
                                 }
                                 
                                 this.initialized = true;
-                                console.log('[AllPrintingsJsonDatabase] Database opened and initialized successfully');
+                                console.log('[AllPrintingsJsonDatabase] Database opened and initialized successfully after download');
                                 resolve(true);
                             } catch (error) {
                                 console.error('[AllPrintingsJsonDatabase] Error opening or migrating database:', error);
@@ -543,7 +605,8 @@ export class AllPrintingsJsonDatabase {
             return cards;
         } catch (error) {
             console.error('[AllPrintingsJsonDatabase] Error getting most expensive cards:', {
-                message: error instanceof Error ? error.message : 'Unknown error',
+                errorObject: error,
+                message: error instanceof Error ? error.message : String(error),
                 stack: error instanceof Error ? error.stack : undefined,
                 pageSize,
                 offset,
@@ -674,7 +737,8 @@ export class AllPrintingsJsonDatabase {
                                 cardsphere_normal_price REAL DEFAULT 0,
                                 cardsphere_foil_price REAL DEFAULT 0,
                                 cardhoarder_normal_price REAL DEFAULT 0,
-                                cardhoarder_foil_price REAL DEFAULT 0
+                                cardhoarder_foil_price REAL DEFAULT 0,
+                                recorded_at INTEGER NOT NULL
                             );
                         `);
 
@@ -763,7 +827,8 @@ export class AllPrintingsJsonDatabase {
                                 cardsphere_normal_price REAL DEFAULT 0,
                                 cardsphere_foil_price REAL DEFAULT 0,
                                 cardhoarder_normal_price REAL DEFAULT 0,
-                                cardhoarder_foil_price REAL DEFAULT 0
+                                cardhoarder_foil_price REAL DEFAULT 0,
+                                recorded_at INTEGER NOT NULL
                             );
                         `);
 

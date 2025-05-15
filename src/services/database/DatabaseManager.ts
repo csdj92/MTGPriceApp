@@ -1,12 +1,13 @@
 import RNFS from 'react-native-fs';
 import SQLite from 'react-native-sqlite-storage';
+import { AllPrintingsJsonDatabase } from './AllPrintingsJsonDatabase'; // Import the singleton
 
 // Enable SQLite debugging in development
 SQLite.DEBUG(true);
 SQLite.enablePromise(true);
 
 // Global MTGJson database reference for safety
-let mtgJsonDb: SQLite.SQLiteDatabase | null = null;
+// let mtgJsonDb: SQLite.SQLiteDatabase | null = null;
 
 export class DatabaseManager {
     private appDb: SQLite.SQLiteDatabase | null = null;
@@ -72,75 +73,52 @@ export class DatabaseManager {
     getMTGJsonDatabase(): SQLite.SQLiteDatabase | null {
         if (!this.initialized) {
             console.warn('[DatabaseManager] Database not initialized. Call initialize() first.');
+            return null; // Added explicit return null
         }
-        return mtgJsonDb;
+        // return mtgJsonDb; // REMOVE THIS
+        return AllPrintingsJsonDatabase.getInstance().getDatabase(); // Use singleton
     }
 
     /**
      * Ensure the MTGJson database exists or create it
      */
     async ensureMTGJsonDatabaseExists(): Promise<void> {
-        const mtgJsonPath = '/data/data/com.mtgpriceapp/files/mtgjson.db';
+        // const mtgJsonPath = '/data/data/com.mtgpriceapp/files/mtgjson.db'; // Handled by AllPrintingsJsonDatabase
         try {
-            // Check if the file exists
-            const exists = await RNFS.exists(mtgJsonPath);
-            console.log('[DatabaseManager] MTGJson database exists:', exists);
+            console.log('[DatabaseManager] Ensuring MTGJson database is initialized via AllPrintingsJsonDatabase singleton...');
+            await AllPrintingsJsonDatabase.getInstance().initialize();
+            console.log('[DatabaseManager] MTGJson database initialization handled by AllPrintingsJsonDatabase.');
 
-            if (!exists) {
-                console.log('[DatabaseManager] MTGJson database does not exist, downloading...');
-                const success = await this.downloadMTGJsonDatabase();
-                if (!success) {
-                    throw new Error('Failed to download MTGJson database');
-                }
-            }
+            // Old logic to be removed:
+            // // Check if the file exists
+            // const exists = await RNFS.exists(mtgJsonPath);
+            // console.log('[DatabaseManager] MTGJson database exists:', exists);
 
-            // If we already have a connection, return
-            if (mtgJsonDb) {
-                return;
-            }
+            // if (!exists) {
+            //     console.log('[DatabaseManager] MTGJson database does not exist, downloading...');
+            //     const success = await this.downloadMTGJsonDatabase(); // This method will be removed
+            //     if (!success) {
+            //         throw new Error('Failed to download MTGJson database');
+            //     }
+            // }
 
-            // Open the database
-            console.log('[DatabaseManager] Opening MTGJson database...');
-            mtgJsonDb = await SQLite.openDatabase({
-                name: mtgJsonPath,
-                createFromLocation: mtgJsonPath,
-                location: 'default'
-            });
+            // // If we already have a connection, return
+            // if (mtgJsonDb) { // This variable will be removed
+            //     return;
+            // }
 
-            console.log('[DatabaseManager] MTGJson database opened successfully');
+            // // Open the database
+            // console.log('[DatabaseManager] Opening MTGJson database...');
+            // mtgJsonDb = await SQLite.openDatabase({ // This variable will be removed
+            //     name: mtgJsonPath,
+            //     createFromLocation: mtgJsonPath, // This is problematic, AllPrintings handles it better
+            //     location: 'default'
+            // });
+
+            // console.log('[DatabaseManager] MTGJson database opened successfully');
         } catch (error) {
-            console.error('[DatabaseManager] Error ensuring MTGJson database exists:', error);
+            console.error('[DatabaseManager] Error ensuring MTGJson database exists (via AllPrintingsJsonDatabase):', error);
             throw error;
-        }
-    }
-
-    /**
-     * Download the MTGJson database
-     */
-    async downloadMTGJsonDatabase(): Promise<boolean> {
-        const mtgJsonUrl = 'https://mtgjson.com/api/v5/AllPrintings.sqlite';
-        const mtgJsonPath = `${RNFS.DocumentDirectoryPath}/AllPrintings.sqlite`;
-
-        try {
-            console.log('[DatabaseManager] Downloading MTGJson database...');
-            const result = await RNFS.downloadFile({
-                fromUrl: mtgJsonUrl,
-                toFile: mtgJsonPath,
-                background: true,
-                discretionary: true,
-                progressDivider: 10
-            }).promise;
-
-            if (result.statusCode === 200) {
-                console.log('[DatabaseManager] MTGJson database downloaded successfully');
-                return true;
-            } else {
-                console.error('[DatabaseManager] Failed to download MTGJson database. Status code:', result.statusCode);
-                return false;
-            }
-        } catch (error) {
-            console.error('[DatabaseManager] Error downloading MTGJson database:', error);
-            return false;
         }
     }
 
@@ -193,13 +171,18 @@ export class DatabaseManager {
                 this.appDb = null;
             }
             
-            if (mtgJsonDb) {
-                await mtgJsonDb.close();
-                mtgJsonDb = null;
-            }
+            // No longer managing mtgJsonDb directly here
+            // if (mtgJsonDb) { 
+            //     await mtgJsonDb.close();
+            //     mtgJsonDb = null;
+            // }
             
+            // AllPrintingsJsonDatabase manages its own lifecycle, including closing if necessary,
+            // but typically a singleton's DB connection would persist for app lifetime or be explicitly closed by a global shutdown.
+            // For now, we won't explicitly close it here to avoid unintended side effects if other parts still expect it open.
+
             this.initialized = false;
-            console.log('[DatabaseManager] Databases closed successfully');
+            console.log('[DatabaseManager] AppDatabase closed. MTGJsonDatabase managed by its singleton.');
         } catch (error) {
             console.error('[DatabaseManager] Error closing databases:', error);
             throw error;
