@@ -1,11 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, ScrollView, Dimensions, ViewStyle, TextStyle } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { 
     getLorcanaPriceHistory, 
     getLorcanaPriceHistoryStats, 
     LorcanaPriceHistoryEntry, 
-    LorcanaPriceHistoryStats 
+    LorcanaPriceHistoryStats, 
+    getLorcanaCardApiTimestamp,
+    setLorcanaCardApiTimestamp
 } from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
@@ -18,7 +20,175 @@ interface LorcanaPriceDetailsProps {
     currentFoilPrice: string | null;
 }
 
-export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId, cardName, currentPrice, currentFoilPrice }) => {
+interface PriceStatisticsProps {
+    latestNormalPrice: string | null;
+    latestFoilPrice: string | null;
+    priceStats: LorcanaPriceHistoryStats | null;
+    formatPrice: (price: string | number | null) => string;
+    formatPercentage: (value: number) => string;
+    styles: ReturnType<typeof useStyles>;
+}
+
+const PriceStatistics: React.FC<PriceStatisticsProps> = React.memo(({
+    latestNormalPrice,
+    latestFoilPrice,
+    priceStats,
+    formatPrice,
+    formatPercentage,
+    styles,
+}) => {
+    if (!priceStats) {
+        return null;
+    }
+
+    return (
+        <View style={styles.statsContainer}>
+            <Text style={styles.sectionTitle}>Price Statistics</Text>
+            
+            <View style={styles.divider} />
+            
+            <View style={styles.statRow}>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Latest Recorded Normal</Text>
+                    <Text style={styles.statValue}>
+                        {formatPrice(latestNormalPrice)}
+                    </Text>
+                </View>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Latest Recorded Foil</Text>
+                    <Text style={styles.statValue}>
+                        {formatPrice(latestFoilPrice)}
+                    </Text>
+                </View>
+            </View>
+            
+            <View style={styles.divider} />
+            
+            <View style={styles.statRow}>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>7-Day Change</Text>
+                    <Text style={[
+                        styles.statValue, 
+                        priceStats.priceChange7d > 0 ? styles.positive : 
+                        priceStats.priceChange7d < 0 ? styles.negative : null
+                    ]}>
+                        {formatPercentage(priceStats.priceChange7d)}
+                    </Text>
+                </View>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>7-Day Foil Change</Text>
+                    <Text style={[
+                        styles.statValue, 
+                        priceStats.foilPriceChange7d > 0 ? styles.positive : 
+                        priceStats.foilPriceChange7d < 0 ? styles.negative : null
+                    ]}>
+                        {formatPercentage(priceStats.foilPriceChange7d)}
+                    </Text>
+                </View>
+            </View>
+            
+            <View style={styles.statRow}>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>30-Day Change</Text>
+                    <Text style={[
+                        styles.statValue, 
+                        priceStats.priceChange30d > 0 ? styles.positive : 
+                        priceStats.priceChange30d < 0 ? styles.negative : null
+                    ]}>
+                        {formatPercentage(priceStats.priceChange30d)}
+                    </Text>
+                </View>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>30-Day Foil Change</Text>
+                    <Text style={[
+                        styles.statValue, 
+                        priceStats.foilPriceChange30d > 0 ? styles.positive : 
+                        priceStats.foilPriceChange30d < 0 ? styles.negative : null
+                    ]}>
+                        {formatPercentage(priceStats.foilPriceChange30d)}
+                    </Text>
+                </View>
+            </View>
+            
+            <View style={styles.divider} />
+            
+            <View style={styles.statRow}>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Min Price</Text>
+                    <Text style={styles.statValue}>{formatPrice(priceStats.minPrice)}</Text>
+                </View>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Min Foil Price</Text>
+                    <Text style={styles.statValue}>{formatPrice(priceStats.minFoilPrice)}</Text>
+                </View>
+            </View>
+            
+            <View style={styles.statRow}>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Max Price</Text>
+                    <Text style={styles.statValue}>{formatPrice(priceStats.maxPrice)}</Text>
+                </View>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Max Foil Price</Text>
+                    <Text style={styles.statValue}>{formatPrice(priceStats.maxFoilPrice)}</Text>
+                </View>
+            </View>
+            
+            <View style={styles.statRow}>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Avg Price</Text>
+                    <Text style={styles.statValue}>{formatPrice(priceStats.avgPrice)}</Text>
+                </View>
+                <View style={styles.statColumn}>
+                    <Text style={styles.statLabel}>Avg Foil Price</Text>
+                    <Text style={styles.statValue}>{formatPrice(priceStats.avgFoilPrice)}</Text>
+                </View>
+            </View>
+        </View>
+    );
+});
+
+interface PriceHistoryTableProps {
+    priceHistory: LorcanaPriceHistoryEntry[];
+    formatDate: (dateString: string) => string;
+    formatPrice: (price: string | number | null) => string;
+    styles: ReturnType<typeof useStyles>;
+}
+
+const PriceHistoryTable: React.FC<PriceHistoryTableProps> = React.memo(({
+    priceHistory,
+    formatDate,
+    formatPrice,
+    styles,
+}) => {
+    if (priceHistory.length === 0) {
+        return (
+            <View style={styles.historyContainer}>
+                <Text style={styles.sectionTitle}>Price History</Text>
+                <Text style={styles.noDataText}>No price history available</Text>
+            </View>
+        );
+    }
+
+    return (
+        <View style={styles.historyContainer}>
+            <Text style={styles.sectionTitle}>Price History</Text>
+            {priceHistory.map((entry, index) => (
+                <View key={index} style={styles.historyItem}>
+                    <Text style={styles.historyDate}>{formatDate(entry.recorded_at)}</Text>
+                    <View style={styles.historyPrices}>
+                        <Text style={styles.historyPrice}>Normal: {formatPrice(entry.usd)}</Text>
+                        <Text style={styles.historyPrice}>Foil: {formatPrice(entry.usd_foil)}</Text>
+                    </View>
+                </View>
+            ))}
+        </View>
+    );
+});
+
+const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+
+export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = React.memo(({ cardId, cardName, currentPrice, currentFoilPrice }) => {
     const { theme, isDark } = useTheme();
     const styles = useStyles();
     const [loading, setLoading] = useState(true);
@@ -27,31 +197,50 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId
     const [priceStats, setPriceStats] = useState<LorcanaPriceHistoryStats | null>(null);
 
     useEffect(() => {
-        loadPriceData();
-    }, [cardId]);
+        const performLoad = async () => {
+            if (!cardId) {
+                setLoading(false);
+                setError(null);
+                setPriceHistory([]);
+                setPriceStats(null);
+                return;
+            }
 
-    const loadPriceData = async () => {
-        try {
             setLoading(true);
             setError(null);
 
-            // Load price history and stats in parallel
-            const [history, stats] = await Promise.all([
-                getLorcanaPriceHistory(cardId),
-                getLorcanaPriceHistoryStats(cardId)
-            ]);
+            try {
+                const lastFetchedTimestamp = await getLorcanaCardApiTimestamp(cardId);
+                const now = Date.now();
 
-            setPriceHistory(history);
-            setPriceStats(stats);
-        } catch (err) {
-            console.error('Error loading Lorcana price data:', err);
-            setError('Failed to load price data. Please try again later.');
-        } finally {
-            setLoading(false);
-        }
-    };
+                if (lastFetchedTimestamp && (now - lastFetchedTimestamp < CACHE_DURATION_MS)) {
+                    if (priceHistory.length > 0 || priceStats) {
+                        setLoading(false);
+                        return;
+                    }
+                }
 
-    const formatChartData = (data: LorcanaPriceHistoryEntry[]) => {
+                const [history, stats] = await Promise.all([
+                    getLorcanaPriceHistory(cardId),
+                    getLorcanaPriceHistoryStats(cardId)
+                ]);
+
+                setPriceHistory(history);
+                setPriceStats(stats);
+                await setLorcanaCardApiTimestamp(cardId, Date.now());
+
+            } catch (err) {
+                console.error('Error loading Lorcana price data:', err);
+                setError('Failed to load price data. Please try again later.');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        performLoad();
+    }, [cardId]);
+
+    const formatChartData = useCallback((data: LorcanaPriceHistoryEntry[]) => {
         const normalPrices = data
             .filter(entry => entry.usd !== null)
             .map(entry => ({
@@ -86,32 +275,33 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId
                 showDataPoint: index === foilPrices.length - 1
             }))
         };
-    };
+    }, []);
 
-    const chartData = formatChartData(priceHistory);
-    const maxValue = Math.max(
+    const chartData = useMemo(() => formatChartData(priceHistory), [priceHistory, formatChartData]);
+    const maxValue = useMemo(() => Math.max(
+        0, // Ensure maxValue is at least 0, especially if data arrays are empty
         ...chartData.normalData.map(d => d.value),
         ...chartData.foilData.map(d => d.value)
-    );
+    ), [chartData]);
 
-    const formatPrice = (price: string | number | null): string => {
+    const formatPrice = useCallback((price: string | number | null): string => {
         if (price === null || price === undefined) return 'N/A';
         const numPrice = typeof price === 'string' ? parseFloat(price) : price;
         return numPrice ? `$${numPrice.toFixed(2)}` : 'N/A';
-    };
+    }, []);
 
-    const formatDate = (dateString: string): string => {
+    const formatDate = useCallback((dateString: string): string => {
         const date = new Date(dateString);
         return date.toLocaleDateString('en-US', { 
             year: 'numeric', 
             month: 'short', 
             day: 'numeric' 
         });
-    };
+    }, []);
 
-    const formatPercentage = (value: number): string => {
+    const formatPercentage = useCallback((value: number): string => {
         return value ? `${value > 0 ? '+' : ''}${value.toFixed(2)}%` : '0%';
-    };
+    }, []);
 
     if (loading) {
         return (
@@ -186,131 +376,19 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = ({ cardId
                 </Text>
             </View>
             
-            <View style={styles.statsContainer}>
-                <Text style={styles.sectionTitle}>Price Statistics</Text>
-                
-                <View style={styles.statRow}>
-                    <View style={styles.statColumn}>
-                        <Text style={styles.statLabel}>Normal Price</Text>
-                        <Text style={styles.statValue}>
-                            {priceHistory.length > 0 ? formatPrice(priceHistory[0].usd) : 'N/A'}
-                        </Text>
-                    </View>
-                    <View style={styles.statColumn}>
-                        <Text style={styles.statLabel}>Foil Price</Text>
-                        <Text style={styles.statValue}>
-                            {priceHistory.length > 0 ? formatPrice(priceHistory[0].usd_foil) : 'N/A'}
-                        </Text>
-                    </View>
-                </View>
-                
-                {priceStats && (
-                    <>
-                        <View style={styles.divider} />
-                        
-                        <View style={styles.statRow}>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>7-Day Change</Text>
-                                <Text style={[
-                                    styles.statValue, 
-                                    priceStats.priceChange7d > 0 ? styles.positive : 
-                                    priceStats.priceChange7d < 0 ? styles.negative : null
-                                ]}>
-                                    {formatPercentage(priceStats.priceChange7d)}
-                                </Text>
-                            </View>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>7-Day Foil Change</Text>
-                                <Text style={[
-                                    styles.statValue, 
-                                    priceStats.foilPriceChange7d > 0 ? styles.positive : 
-                                    priceStats.foilPriceChange7d < 0 ? styles.negative : null
-                                ]}>
-                                    {formatPercentage(priceStats.foilPriceChange7d)}
-                                </Text>
-                            </View>
-                        </View>
-                        
-                        <View style={styles.statRow}>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>30-Day Change</Text>
-                                <Text style={[
-                                    styles.statValue, 
-                                    priceStats.priceChange30d > 0 ? styles.positive : 
-                                    priceStats.priceChange30d < 0 ? styles.negative : null
-                                ]}>
-                                    {formatPercentage(priceStats.priceChange30d)}
-                                </Text>
-                            </View>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>30-Day Foil Change</Text>
-                                <Text style={[
-                                    styles.statValue, 
-                                    priceStats.foilPriceChange30d > 0 ? styles.positive : 
-                                    priceStats.foilPriceChange30d < 0 ? styles.negative : null
-                                ]}>
-                                    {formatPercentage(priceStats.foilPriceChange30d)}
-                                </Text>
-                            </View>
-                        </View>
-                        
-                        <View style={styles.divider} />
-                        
-                        <View style={styles.statRow}>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>Min Price</Text>
-                                <Text style={styles.statValue}>{formatPrice(priceStats.minPrice)}</Text>
-                            </View>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>Min Foil Price</Text>
-                                <Text style={styles.statValue}>{formatPrice(priceStats.minFoilPrice)}</Text>
-                            </View>
-                        </View>
-                        
-                        <View style={styles.statRow}>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>Max Price</Text>
-                                <Text style={styles.statValue}>{formatPrice(priceStats.maxPrice)}</Text>
-                            </View>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>Max Foil Price</Text>
-                                <Text style={styles.statValue}>{formatPrice(priceStats.maxFoilPrice)}</Text>
-                            </View>
-                        </View>
-                        
-                        <View style={styles.statRow}>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>Avg Price</Text>
-                                <Text style={styles.statValue}>{formatPrice(priceStats.avgPrice)}</Text>
-                            </View>
-                            <View style={styles.statColumn}>
-                                <Text style={styles.statLabel}>Avg Foil Price</Text>
-                                <Text style={styles.statValue}>{formatPrice(priceStats.avgFoilPrice)}</Text>
-                            </View>
-                        </View>
-                    </>
-                )}
-            </View>
+            <PriceStatistics 
+                latestNormalPrice={priceHistory.length > 0 ? priceHistory[0].usd : null}
+                latestFoilPrice={priceHistory.length > 0 ? priceHistory[0].usd_foil : null}
+                priceStats={priceStats} 
+                formatPrice={formatPrice} 
+                formatPercentage={formatPercentage} 
+                styles={styles} 
+            />
             
-            <View style={styles.historyContainer}>
-                <Text style={styles.sectionTitle}>Price History</Text>
-                {priceHistory.length === 0 ? (
-                    <Text style={styles.noDataText}>No price history available</Text>
-                ) : (
-                    priceHistory.map((entry, index) => (
-                        <View key={index} style={styles.historyItem}>
-                            <Text style={styles.historyDate}>{formatDate(entry.recorded_at)}</Text>
-                            <View style={styles.historyPrices}>
-                                <Text style={styles.historyPrice}>Normal: {formatPrice(entry.usd)}</Text>
-                                <Text style={styles.historyPrice}>Foil: {formatPrice(entry.usd_foil)}</Text>
-                            </View>
-                        </View>
-                    ))
-                )}
-            </View>
+            <PriceHistoryTable priceHistory={priceHistory} formatDate={formatDate} formatPrice={formatPrice} styles={styles} />
         </ScrollView>
     );
-};
+});
 
 const useStyles = () => useThemedStyles((theme) => ({
     container: {

@@ -14,7 +14,6 @@ import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
 import CardDetailsScreen from '../screens/CardDetailsScreen';
 import LorcanaCardDetailsScreen from '../screens/LorcanaCardDetailsScreen';
 import CameraTest from '../components/test';
-import ManualCaptureScreen from '../screens/ManualCaptureScreen';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 import DeckBuilder from '../components/DeckBuilder';
@@ -46,7 +45,6 @@ export type MainTabParamList = {
     Watchlist: undefined;
     Settings: undefined;
     PriceLookup: undefined;
-    ManualCapture: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -59,7 +57,6 @@ const getTabIconName = (routeName: string): string => {
         Watchlist: 'star',
         Settings: 'cog',
         PriceLookup: 'cash-multiple',
-        ManualCapture: 'robot'
     };
     return icons[routeName] || 'help';
 };
@@ -93,7 +90,6 @@ const MainTabs = () => {
             <Tab.Screen name="Watchlist" component={WatchlistScreen} />
             <Tab.Screen name="Settings" component={SettingsScreen} />
             <Tab.Screen name="PriceLookup" component={PriceLookupScreen} />
-            <Tab.Screen name="ManualCapture" component={ManualCaptureScreen} />
         </Tab.Navigator>
     );
 };

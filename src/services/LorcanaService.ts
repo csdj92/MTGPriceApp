@@ -151,6 +151,7 @@ export const initializeLorcanaDatabase = async () => {
         await populateLorcanaCardPricesTable();
         await createLorcanaPriceHistoryTable();
         await createLorcanaAppSettingsTable();
+        await createLorcanaCardApiTimestampsTable();
         
         // Check if we need to update prices (run once per day)
         try {
@@ -2910,6 +2911,58 @@ const createLorcanaAppSettingsTable = async () => {
         }
     } catch (error) {
         console.error('[LorcanaService] Error creating lorcana_app_settings table:', error);
+    }
+};
+
+const createLorcanaCardApiTimestampsTable = async () => {
+    try {
+        const db = await getDB();
+        await db.executeSql(
+            `CREATE TABLE IF NOT EXISTS lorcana_card_api_timestamps (
+                card_id TEXT PRIMARY KEY NOT NULL,
+                last_fetched_timestamp INTEGER NOT NULL
+            )`
+        );
+        console.log('[LorcanaService] Ensured lorcana_card_api_timestamps table exists.');
+    } catch (error) {
+        handleError('Error creating lorcana_card_api_timestamps table', error);
+    }
+};
+
+export const getLorcanaCardApiTimestamp = async (cardId: string): Promise<number | null> => {
+    if (!cardId) {
+        console.warn('[LorcanaService] getLorcanaCardApiTimestamp called with null or empty cardId');
+        return null;
+    }
+    try {
+        const db = await getDB();
+        const [result] = await db.executeSql(
+            `SELECT last_fetched_timestamp FROM lorcana_card_api_timestamps WHERE card_id = ?`,
+            [cardId]
+        );
+        if (result.rows.length > 0) {
+            return result.rows.item(0).last_fetched_timestamp;
+        }
+        return null;
+    } catch (error) {
+        handleError(`Error getting API timestamp for card ${cardId}`, error);
+        return null; // Return null on error to allow fetching
+    }
+};
+
+export const setLorcanaCardApiTimestamp = async (cardId: string, timestamp: number): Promise<void> => {
+    if (!cardId) {
+        console.warn('[LorcanaService] setLorcanaCardApiTimestamp called with null or empty cardId');
+        return;
+    }
+    try {
+        const db = await getDB();
+        await db.executeSql(
+            `INSERT OR REPLACE INTO lorcana_card_api_timestamps (card_id, last_fetched_timestamp) VALUES (?, ?)`,
+            [cardId, timestamp]
+        );
+    } catch (error) {
+        handleError(`Error setting API timestamp for card ${cardId}`, error);
     }
 };
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal } from 'react-native';
 import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -51,7 +51,221 @@ interface LorcanaCardModalProps {
     onRemoveFromCollection?: () => void;
 }
 
-const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
+interface CardHeaderDisplayProps {
+    card: LorcanaCardWithPrice;
+    theme: ReturnType<typeof useTheme>['theme'];
+    handleImageLoad: () => void;
+    handleImageError: () => void;
+}
+
+const CardHeaderDisplay: React.FC<CardHeaderDisplayProps> = React.memo(({
+    card,
+    theme,
+    handleImageLoad,
+    handleImageError,
+}) => {
+    return (
+        <View style={styles.cardHeader}>
+            <View style={styles.cardImageContainer}>
+                <FastImage
+                    source={getImageSource(card.Image) || { uri: card.Image }}
+                    style={[styles.cardImage, { backgroundColor: theme.card || theme.surface }]}
+                    resizeMode={FastImage.resizeMode.contain}
+                    onLoad={handleImageLoad}
+                    onError={handleImageError}
+                />
+            </View>
+            
+            <View style={styles.cardBasicInfo}>
+                <Text style={[styles.cardName, { color: theme.text }]}>{card.Name}</Text>
+                
+                <View style={styles.badgeContainer}>
+                    <View style={[styles.badge, { backgroundColor: getColorForBadge(card.Color) }]}>
+                        <Text style={styles.badgeText}>{card.Color}</Text>
+                    </View>
+                    <View style={[styles.badge, { backgroundColor: getRarityColor(card.Rarity) }]}>
+                        <Text style={styles.badgeText}>{card.Rarity}</Text>
+                    </View>
+                </View>
+                
+                <View style={styles.cardStats}>
+                    {card.Cost !== undefined && (
+                        <View style={styles.statItem}>
+                            <Icon name="circle-multiple" size={18} color={theme.icon || theme.text} />
+                            <Text style={[styles.statText, { color: theme.text }]}>Cost: {card.Cost}</Text>
+                        </View>
+                    )}
+                    {card.Strength !== undefined && (
+                        <View style={styles.statItem}>
+                            <Icon name="sword" size={18} color={theme.icon || theme.text} />
+                            <Text style={[styles.statText, { color: theme.text }]}>Strength: {card.Strength}</Text>
+                        </View>
+                    )}
+                    {card.Willpower !== undefined && (
+                        <View style={styles.statItem}>
+                            <Icon name="shield" size={18} color={theme.icon || theme.text} />
+                            <Text style={[styles.statText, { color: theme.text }]}>Willpower: {card.Willpower}</Text>
+                        </View>
+                    )}
+                    {card.Lore !== undefined && (
+                        <View style={styles.statItem}>
+                            <Icon name="book-open-variant" size={18} color={theme.icon || theme.text} />
+                            <Text style={[styles.statText, { color: theme.text }]}>Lore: {card.Lore}</Text>
+                        </View>
+                    )}
+                </View>
+            </View>
+        </View>
+    );
+});
+
+interface CardPropertiesDisplayProps {
+    card: LorcanaCardWithPrice;
+    theme: ReturnType<typeof useTheme>['theme'];
+}
+
+const CardPropertiesDisplay: React.FC<CardPropertiesDisplayProps> = React.memo(({
+    card,
+    theme,
+}) => {
+    return (
+        <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Card Details</Text>
+            
+            <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: theme.text }]}>Type:</Text>
+                <Text style={[styles.detailValue, { color: theme.text }]}>{card.Type || 'N/A'}</Text>
+            </View>
+            
+            {card.Classifications && (
+                <View style={styles.detailRow}>
+                    <Text style={[styles.detailLabel, { color: theme.text }]}>Classifications:</Text>
+                    <Text style={[styles.detailValue, { color: theme.text }]}>{card.Classifications}</Text>
+                </View>
+            )}
+            
+            <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: theme.text }]}>Franchise:</Text>
+                <Text style={[styles.detailValue, { color: theme.text }]}>{card.Franchise || 'N/A'}</Text>
+            </View>
+            
+            <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: theme.text }]}>Set:</Text>
+                <Text style={[styles.detailValue, { color: theme.text }]}>
+                    {card.Set_Name} ({card.Set_ID} {card.Set_Num ? `/ ${card.Set_Num}` : ''})
+                </Text>
+            </View>
+            
+            <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: theme.text }]}>Card Number:</Text>
+                <Text style={[styles.detailValue, { color: theme.text }]}>
+                    {card.Card_Num} 
+                </Text>
+            </View>
+        </View>
+    );
+});
+
+interface CardTextDisplayProps {
+    text: string | null | undefined;
+    title: string;
+    style: any; // Consider more specific style prop type if possible
+    theme: ReturnType<typeof useTheme>['theme'];
+    isFlavor?: boolean;
+}
+
+const CardTextDisplay: React.FC<CardTextDisplayProps> = React.memo(({
+    text,
+    title,
+    style,
+    theme,
+    isFlavor = false,
+}) => {
+    if (!text) return null;
+
+    return (
+        <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>{title}</Text>
+            <Text style={[style, { color: isFlavor ? (theme.textSecondary || theme.text) : theme.text }]}>
+                {isFlavor ? `"${text}"` : text}
+            </Text>
+        </View>
+    );
+});
+
+interface CurrentPriceDisplayProps {
+    card: LorcanaCardWithPrice;
+    theme: ReturnType<typeof useTheme>['theme'];
+}
+
+const CurrentPriceDisplay: React.FC<CurrentPriceDisplayProps> = React.memo(({
+    card,
+    theme,
+}) => {
+    return (
+        <View style={styles.priceContainer}>
+            <View style={styles.priceRow}>
+                <Text style={[styles.priceLabel, { color: theme.text }]}>Regular:</Text>
+                <Text style={[styles.priceValue, { color: theme.success || theme.primary }]}>
+                    ${card.price_usd ? parseFloat(card.price_usd).toFixed(2) : '0.00'}
+                </Text>
+            </View>
+            
+            <View style={styles.priceRow}>
+                <Text style={[styles.priceLabel, { color: theme.text }]}>Foil:</Text>
+                <Text style={[styles.priceValue, { color: theme.success || theme.primary }]}>
+                    ${card.price_usd_foil ? parseFloat(card.price_usd_foil).toFixed(2) : '0.00'}
+                </Text>
+            </View>
+            
+            {card.last_updated && (
+                <Text style={[styles.priceUpdated, { color: theme.textSecondary || theme.text }]}>
+                    Updated: {new Date(card.last_updated).toLocaleDateString()}
+                </Text>
+            )}
+        </View>
+    );
+});
+
+interface CollectionActionButtonsProps {
+    card: LorcanaCardWithPrice;
+    theme: ReturnType<typeof useTheme>['theme'];
+    onAddToCollection?: () => void;
+    onRemoveFromCollection?: () => void;
+}
+
+const CollectionActionButtons: React.FC<CollectionActionButtonsProps> = React.memo(({
+    card,
+    theme,
+    onAddToCollection,
+    onRemoveFromCollection,
+}) => {
+    return (
+        <View style={styles.buttonContainer}>
+            {!card.collected && onAddToCollection && (
+                <TouchableOpacity
+                    style={[styles.addButton, { backgroundColor: theme.success || '#28a745' }]}
+                    onPress={onAddToCollection}
+                >
+                    <Icon name="plus-circle" size={18} color="#ffffff" />
+                    <Text style={[styles.buttonText, { color: '#ffffff' }]}>Add to Collection</Text>
+                </TouchableOpacity>
+            )}
+
+            {card.collected && onRemoveFromCollection && (
+                <TouchableOpacity
+                    style={[styles.removeButton, { backgroundColor: theme.error || '#dc3545' }]}
+                    onPress={onRemoveFromCollection}
+                >
+                    <Icon name="minus-circle" size={18} color="#ffffff" />
+                    <Text style={[styles.buttonText, { color: '#ffffff' }]}>Remove from Collection</Text>
+                </TouchableOpacity>
+            )}
+        </View>
+    );
+});
+
+const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
     card,
     visible,
     onClose,
@@ -61,6 +275,18 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
 }) => {
     const { theme } = useTheme();
     if (!card) return null;
+
+    const handleImageLoad = useCallback(() => {
+        handleImageLoadSuccess(card.Image, { 
+            name: card.Name, 
+            id: card.Unique_ID,
+            context: 'modal'
+        });
+    }, [card.Image, card.Name, card.Unique_ID]);
+
+    const handleImageError = useCallback(() => {
+        handleImageLoadError(card.Image, card.Name);
+    }, [card.Image, card.Name]);
 
     return (
         <Modal
@@ -80,155 +306,38 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                     
                     <ScrollView style={styles.modalScrollView}>
                         {/* Card Header with Image and Basic Info */}
-                        <View style={styles.cardHeader}>
-                            <View style={styles.cardImageContainer}>
-                                <FastImage
-                                    source={getImageSource(card.Image) || { uri: card.Image }}
-                                    style={[styles.cardImage, { backgroundColor: theme.card || theme.surface }]}
-                                    resizeMode={FastImage.resizeMode.contain}
-                                    onLoad={() => {
-                                        handleImageLoadSuccess(card.Image, { 
-                                            name: card.Name, 
-                                            id: card.Unique_ID,
-                                            context: 'modal'
-                                        });
-                                    }}
-                                    onError={() => {
-                                        handleImageLoadError(card.Image, card.Name);
-                                    }}
-                                />
-                            </View>
-                            
-                            <View style={styles.cardBasicInfo}>
-                                <Text style={[styles.cardName, { color: theme.text }]}>{card.Name}</Text>
-                                
-                                <View style={styles.badgeContainer}>
-                                    <View style={[styles.badge, { backgroundColor: getColorForBadge(card.Color) }]}>
-                                        <Text style={styles.badgeText}>{card.Color}</Text>
-                                    </View>
-                                    <View style={[styles.badge, { backgroundColor: getRarityColor(card.Rarity) }]}>
-                                        <Text style={styles.badgeText}>{card.Rarity}</Text>
-                                    </View>
-                                </View>
-                                
-                                <View style={styles.cardStats}>
-                                    {card.Cost !== undefined && (
-                                        <View style={styles.statItem}>
-                                            <Icon name="circle-multiple" size={18} color={theme.icon || theme.text} />
-                                            <Text style={[styles.statText, { color: theme.text }]}>Cost: {card.Cost}</Text>
-                                        </View>
-                                    )}
-                                    {card.Strength !== undefined && (
-                                        <View style={styles.statItem}>
-                                            <Icon name="sword" size={18} color={theme.icon || theme.text} />
-                                            <Text style={[styles.statText, { color: theme.text }]}>Strength: {card.Strength}</Text>
-                                        </View>
-                                    )}
-                                    {card.Willpower !== undefined && (
-                                        <View style={styles.statItem}>
-                                            <Icon name="shield" size={18} color={theme.icon || theme.text} />
-                                            <Text style={[styles.statText, { color: theme.text }]}>Willpower: {card.Willpower}</Text>
-                                        </View>
-                                    )}
-                                    {card.Lore !== undefined && (
-                                        <View style={styles.statItem}>
-                                            <Icon name="book-open-variant" size={18} color={theme.icon || theme.text} />
-                                            <Text style={[styles.statText, { color: theme.text }]}>Lore: {card.Lore}</Text>
-                                        </View>
-                                    )}
-                                    {/* {card.Inkable !== undefined && (
-                                        <View style={styles.statItem}>
-                                            <Icon name="water" size={18} color={theme.icon || theme.text} />
-                                            <Text style={[styles.statText, { color: theme.text }]}>
-                                                Inkable: {card.Inkable} {card.Inkable === 1 ? 'Yes' : 'No'}
-                                            </Text>
-                                        </View>
-                                    )} */}
-                                </View>
-                            </View>
-                        </View>
+                        <CardHeaderDisplay 
+                            card={card} 
+                            theme={theme} 
+                            handleImageLoad={handleImageLoad} 
+                            handleImageError={handleImageError} 
+                        />
                         
                         {/* Card Details Section */}
-                        <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
-                            <Text style={[styles.sectionTitle, { color: theme.text }]}>Card Details</Text>
-                            
-                            <View style={styles.detailRow}>
-                                <Text style={[styles.detailLabel, { color: theme.text }]}>Type:</Text>
-                                <Text style={[styles.detailValue, { color: theme.text }]}>{card.Type || 'N/A'}</Text>
-                            </View>
-                            
-                            {card.Classifications && (
-                                <View style={styles.detailRow}>
-                                    <Text style={[styles.detailLabel, { color: theme.text }]}>Classifications:</Text>
-                                    <Text style={[styles.detailValue, { color: theme.text }]}>{card.Classifications}</Text>
-                                </View>
-                            )}
-                            
-                            <View style={styles.detailRow}>
-                                <Text style={[styles.detailLabel, { color: theme.text }]}>Franchise:</Text>
-                                <Text style={[styles.detailValue, { color: theme.text }]}>{card.Franchise || 'N/A'}</Text>
-                            </View>
-                            
-                            <View style={styles.detailRow}>
-                                <Text style={[styles.detailLabel, { color: theme.text }]}>Set:</Text>
-                                <Text style={[styles.detailValue, { color: theme.text }]}>
-                                    {card.Set_Name} ({card.Set_ID} {card.Set_Num ? `/ ${card.Set_Num}` : ''})
-                                </Text>
-                            </View>
-                            
-                            <View style={styles.detailRow}>
-                                <Text style={[styles.detailLabel, { color: theme.text }]}>Card Number:</Text>
-                                <Text style={[styles.detailValue, { color: theme.text }]}>
-                                    {card.Card_Num} 
-                                </Text>
-                            </View>
-                            
-                           
-                        </View>
+                        <CardPropertiesDisplay card={card} theme={theme} />
                         
                         {/* Card Text Section */}
-                        {card.Body_Text && (
-                            <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
-                                <Text style={[styles.sectionTitle, { color: theme.text }]}>Card Text</Text>
-                                <Text style={[styles.cardBodyText, { color: theme.text }]}>{card.Body_Text}</Text>
-                            </View>
-                        )}
+                        <CardTextDisplay 
+                            text={card.Body_Text} 
+                            title="Card Text" 
+                            style={styles.cardBodyText}
+                            theme={theme} 
+                        />
                         
                         {/* Flavor Text Section */}
-                        {card.Flavor_Text && (
-                            <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
-                                <Text style={[styles.sectionTitle, { color: theme.text }]}>Flavor Text</Text>
-                                <Text style={[styles.cardFlavorText, { color: theme.textSecondary || theme.text }]}>
-                                    "{card.Flavor_Text}"
-                                </Text>
-                            </View>
-                        )}
+                        <CardTextDisplay 
+                            text={card.Flavor_Text} 
+                            title="Flavor Text" 
+                            style={styles.cardFlavorText}
+                            theme={theme} 
+                            isFlavor 
+                        />
                         
                         {/* Price Information Section */}
                         <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
                             <Text style={[styles.sectionTitle, { color: theme.text }]}>Price Information</Text>
                             
-                            <View style={styles.priceContainer}>
-                                <View style={styles.priceRow}>
-                                    <Text style={[styles.priceLabel, { color: theme.text }]}>Regular:</Text>
-                                    <Text style={[styles.priceValue, { color: theme.success || theme.primary }]}>
-                                        ${card.price_usd ? parseFloat(card.price_usd).toFixed(2) : '0.00'}
-                                    </Text>
-                                </View>
-                                
-                                <View style={styles.priceRow}>
-                                    <Text style={[styles.priceLabel, { color: theme.text }]}>Foil:</Text>
-                                    <Text style={[styles.priceValue, { color: theme.success || theme.primary }]}>
-                                        ${card.price_usd_foil ? parseFloat(card.price_usd_foil).toFixed(2) : '0.00'}
-                                    </Text>
-                                </View>
-                                
-                                {card.last_updated && (
-                                    <Text style={[styles.priceUpdated, { color: theme.textSecondary || theme.text }]}>
-                                        Updated: {new Date(card.last_updated).toLocaleDateString()}
-                                    </Text>
-                                )}
-                            </View>
+                            <CurrentPriceDisplay card={card} theme={theme} />
 
                             {/* Price History Section */}
                             {card.Unique_ID && (
@@ -245,32 +354,17 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = ({
                     </ScrollView>
 
                     {/* Collection management buttons */}
-                    <View style={styles.buttonContainer}>
-                        {!card.collected && onAddToCollection && (
-                            <TouchableOpacity
-                                style={[styles.addButton, { backgroundColor: theme.success || '#28a745' }]}
-                                onPress={onAddToCollection}
-                            >
-                                <Icon name="plus-circle" size={18} color="#ffffff" />
-                                <Text style={[styles.buttonText, { color: '#ffffff' }]}>Add to Collection</Text>
-                            </TouchableOpacity>
-                        )}
-
-                        {card.collected && onRemoveFromCollection && (
-                            <TouchableOpacity
-                                style={[styles.removeButton, { backgroundColor: theme.error || '#dc3545' }]}
-                                onPress={onRemoveFromCollection}
-                            >
-                                <Icon name="minus-circle" size={18} color="#ffffff" />
-                                <Text style={[styles.buttonText, { color: '#ffffff' }]}>Remove from Collection</Text>
-                            </TouchableOpacity>
-                        )}
-                    </View>
+                    <CollectionActionButtons 
+                        card={card} 
+                        theme={theme} 
+                        onAddToCollection={onAddToCollection} 
+                        onRemoveFromCollection={onRemoveFromCollection} 
+                    />
                 </View>
             </View>
         </Modal>
     );
-};
+});
 
 const styles = StyleSheet.create({
     modalContainer: {
