@@ -205,37 +205,65 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
 
     // Memoized filtered cards
     const filteredCards = useMemo(() => {
-        // Apply filtering
-        let cardsToFilter = props.cards;
-        if (filters.search) {
-            cardsToFilter = cardsToFilter.filter(card => 
-                card.name.toLowerCase().includes(filters.search.toLowerCase())
+        if (!props.cards || props.cards.length === 0) {
+            return [];
+        }
+
+        const normalizedSearch = filters.search.trim().toLowerCase();
+        const normalizedRarities = filters.rarities.map(rarity => rarity.toLowerCase());
+        const normalizedColors = filters.colors.map(color => color.toLowerCase());
+        const wantsColorless = normalizedColors.includes('colorless');
+        const wantsMulticolor = normalizedColors.includes('multicolor');
+
+        let cardsToFilter = [...props.cards];
+
+        if (normalizedSearch) {
+            cardsToFilter = cardsToFilter.filter(card =>
+                card.name?.toLowerCase().includes(normalizedSearch)
             );
         }
-        if (filters.rarities.length > 0) {
-            cardsToFilter = cardsToFilter.filter(card => 
-                filters.rarities.includes((card.rarity || '').toLowerCase())
+
+        if (normalizedRarities.length > 0) {
+            cardsToFilter = cardsToFilter.filter(card =>
+                normalizedRarities.includes((card.rarity || '').toLowerCase())
             );
         }
-        if (filters.colors.length > 0) {
+
+        if (normalizedColors.length > 0) {
             cardsToFilter = cardsToFilter.filter(card => {
-                const cardColors = card.colors?.map(c => c.toLowerCase()) || [];
-                if (filters.colors.includes('Colorless') && cardColors.length === 0) return true;
-                if (filters.colors.includes('Multicolor') && cardColors.length > 1) return true;
-                return cardColors.some(cc => filters.colors.map(fc => fc.toLowerCase()).includes(cc));
+                const cardColors = (card.colors ?? []).map(color => color.toLowerCase());
+
+                if (wantsColorless && cardColors.length === 0) {
+                    return true;
+                }
+
+                if (wantsMulticolor && cardColors.length > 1) {
+                    return true;
+                }
+
+                if (cardColors.length === 0) {
+                    return false;
+                }
+
+                return cardColors.some(color => normalizedColors.includes(color));
             });
         }
+
         if (filters.collectionStatus !== 'all') {
-            cardsToFilter = cardsToFilter.filter(card => 
-                filters.collectionStatus === 'collected' ? (card.quantity ?? 0) > 0 : (card.quantity ?? 0) === 0
+            cardsToFilter = cardsToFilter.filter(card =>
+                filters.collectionStatus === 'collected'
+                    ? (card.quantity ?? 0) > 0
+                    : (card.quantity ?? 0) === 0
             );
         }
+
         if (filters.priceRange.min !== null) {
             cardsToFilter = cardsToFilter.filter(card => {
                 const price = getBestPrice(card.prices, modalState.showFoil);
                 return price >= (filters.priceRange.min ?? 0);
             });
         }
+
         if (filters.priceRange.max !== null) {
             cardsToFilter = cardsToFilter.filter(card => {
                 const price = getBestPrice(card.prices, modalState.showFoil);
@@ -243,7 +271,6 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
             });
         }
 
-        // Apply sorting
         return cardsToFilter.sort(cardSorter(sortState));
     }, [props.cards, filters, sortState, modalState.showFoil]);
 
@@ -298,25 +325,24 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
     const addToCollection = async (card: ExtendedCard) => {
         try {
             await databaseService.addCardToCollection(String(card.id), props.collectionId);
-            
-            // Create new array with updated card
-            const updatedCards = props.cards.map(c => 
-                c.id === card.id ? { ...c, quantity: 1 } : c
+
+            const currentCard = props.cards.find(c => c.id === card.id);
+            const nextQuantity = (currentCard?.quantity ?? 0) + 1;
+
+            const updatedCards = props.cards.map(c =>
+                c.id === card.id ? { ...c, quantity: nextQuantity } : c
             );
 
-            // Update parent component's state
-            if (props.onCardsUpdate) {
-                props.onCardsUpdate(updatedCards);
-            }
+            props.onCardsUpdate?.(updatedCards);
 
-            // Update modal state - this is crucial to immediately show the Mark as Missing button instead of the Add button
             setModalState(prev => ({
                 ...prev,
-                selectedCard: prev.selectedCard ? { ...prev.selectedCard, quantity: 1 } : null
+                selectedCard: prev.selectedCard
+                    ? { ...prev.selectedCard, quantity: nextQuantity }
+                    : null
             }));
 
-            // Force immediate UI update by resetting filtered cards
-            setFilters(prev => ({ ...prev })); // Trigger filter recalculation
+            setFilters(prev => ({ ...prev }));
         } catch (error) {
             console.error('Error adding card to collection:', error);
             Alert.alert('Error', 'Failed to add card to collection');
@@ -326,27 +352,22 @@ const MTGGridView: React.FC<MTGGridViewProps> = ({ error, ...props }) => {
     // Handle marking a card as missing (quantity = 0)
     const markCardAsMissing = async (card: ExtendedCard) => {
         try {
-            // Call the parent's onDeleteCard handler (which uses markCardAsMissing in DatabaseService)
-            props.onDeleteCard(card);
-            
-            // Update local state to mark the card as missing (quantity = 0)
-            const updatedCards = props.cards.map(c => 
+            await Promise.resolve(props.onDeleteCard(card));
+
+            const updatedCards = props.cards.map(c =>
                 c.id === card.id ? { ...c, quantity: 0 } : c
             );
-            
-            // Update parent component's state
-            if (props.onCardsUpdate) {
-                props.onCardsUpdate(updatedCards);
-            }
-            
-            // Update modal state - this is crucial to immediately show the Add button instead of the Mark as Missing button
+
+            props.onCardsUpdate?.(updatedCards);
+
             setModalState(prev => ({
                 ...prev,
-                selectedCard: prev.selectedCard ? { ...prev.selectedCard, quantity: 0 } : null
+                selectedCard: prev.selectedCard
+                    ? { ...prev.selectedCard, quantity: 0 }
+                    : null
             }));
-            
-            // Force immediate UI update by resetting filtered cards
-            setFilters(prev => ({ ...prev })); // Trigger filter recalculation
+
+            setFilters(prev => ({ ...prev }));
         } catch (error) {
             console.error('Error marking card as missing:', error);
             Alert.alert('Error', 'Failed to mark card as missing');
@@ -548,8 +569,8 @@ const CardItem = memo(({ item, cardWidth, onPress, onLongPress }: CardItemProps)
 
 // CardInfo component with proper styles access
 const CardInfo = memo(({ item, hasCollectionStatus }: { item: ExtendedCard; hasCollectionStatus: boolean }) => {
-    const normalPrice = useMemo(() => getBestPrice(item.prices, false).toFixed(2), [item.prices]);
-    const foilPrice = useMemo(() => getBestPrice(item.prices, true).toFixed(2), [item.prices]);
+    const normalPrice = useMemo(() => getBestPrice(item.prices, false), [item.prices]);
+    const foilPrice = useMemo(() => getBestPrice(item.prices, true), [item.prices]);
     const styles = useStyles();
 
     return (
@@ -561,12 +582,12 @@ const CardInfo = memo(({ item, hasCollectionStatus }: { item: ExtendedCard; hasC
             <View style={styles.priceContainer}>
                 {item.hasNonFoil && (
                     <Text style={[styles.cardPrice, !hasCollectionStatus && styles.cardPriceUncollected]}>
-                        {getFormattedPrice(parseFloat(normalPrice))}
+                        {getFormattedPrice(normalPrice)}
                     </Text>
                 )}
                 {item.hasFoil && (
                     <Text style={[styles.foilPrice, !hasCollectionStatus && styles.cardPriceUncollected]}>
-                        {getFormattedPrice(parseFloat(foilPrice))} ✨
+                        {getFormattedPrice(foilPrice)}
                     </Text>
                 )}
             </View>
@@ -615,9 +636,16 @@ const cardSorter = ({ sortBy, direction }: SortState) => (a: ExtendedCard, b: Ex
             return direction === 'asc' ? priceA - priceB : priceB - priceA;
         }
         default: {
-            const numA = parseInt(a.collectorNumber, 10);
-            const numB = parseInt(b.collectorNumber, 10);
-            return direction === 'asc' ? numA - numB : numB - numA;
+            const parsedA = Number.parseInt(a.collectorNumber ?? '', 10);
+            const parsedB = Number.parseInt(b.collectorNumber ?? '', 10);
+
+            if (Number.isNaN(parsedA) || Number.isNaN(parsedB)) {
+                return direction === 'asc'
+                    ? (a.collectorNumber ?? '').localeCompare(b.collectorNumber ?? '')
+                    : (b.collectorNumber ?? '').localeCompare(a.collectorNumber ?? '');
+            }
+
+            return direction === 'asc' ? parsedA - parsedB : parsedB - parsedA;
         }
     }
 };
@@ -653,7 +681,7 @@ const getFormattedPrice = (price: number) =>
         style: 'currency', 
         currency: 'USD', 
         minimumFractionDigits: 2 
-    }).format(price);
+    }).format(Number.isFinite(price) ? price : 0);
 
 // Style hook definition
 const useStyles = () => useThemedStyles((theme: Theme) => ({
@@ -1085,3 +1113,4 @@ const useStyles = () => useThemedStyles((theme: Theme) => ({
 }));
 
 export default MTGGridView;
+

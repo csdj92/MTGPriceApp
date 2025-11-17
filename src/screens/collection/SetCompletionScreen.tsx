@@ -33,7 +33,8 @@ import {
     deleteLorcanaCardFromCollection,
     deleteLorcanaCollection,
     safeRefreshLorcanaCards,
-    updateLorcanaCollectionPrices
+    updateLorcanaCollectionPrices,
+    isLorcanaInitialized
 } from '../../services/LorcanaService';
 import { exportService, collectionEventEmitter } from '../../services/ExportService';
 import type { Collection } from '../../services/DatabaseService';
@@ -140,7 +141,9 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
 
     // Memoized callbacks
     const loadCollections = useCallback(async (forceRefresh = false) => {
-        console.log('[SetCompletionScreen] Starting to load collections, forceRefresh:', forceRefresh);
+        const timestamp = new Date().toISOString();
+        console.log(`[SetCompletionScreen] Starting to load collections at ${timestamp}, forceRefresh:`, forceRefresh);
+        console.log('[SetCompletionScreen] Current Lorcana initialization status:', isLorcanaInitialized());
         setIsLoading(true);
         setLoadingMtg(true);
         setLoadingLorcana(true);
@@ -159,17 +162,54 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
 
         const loadLorcana = async () => {
             try {
+                console.log('[SetCompletionScreen] Starting Lorcana collection loading...');
+                console.log('[SetCompletionScreen] isLorcanaInitialized before ensure:', isLorcanaInitialized());
+                const startTime = Date.now();
                 await ensureLorcanaInitialized();
-                const lorcanaData = await getLorcanaSetCollections(forceRefresh);
-                const mappedCollections = lorcanaData?.map(c => ({
-                    ...c,
-                    cardCount: c.collectedCards
-                })) || [];
-                setLorcanaCollections(mappedCollections);
+                const endTime = Date.now();
+                console.log('[SetCompletionScreen] isLorcanaInitialized after ensure:', isLorcanaInitialized());
+                console.log(`[SetCompletionScreen] ensureLorcanaInitialized took ${endTime - startTime}ms`);
+                console.log('[SetCompletionScreen] Lorcana initialized, calling getLorcanaSetCollections...');
+                try {
+                    const lorcanaData = await getLorcanaSetCollections(forceRefresh);
+                    console.log('[SetCompletionScreen] ----------------Lorcana data-----------------------:', lorcanaData);
+                    const mappedCollections = lorcanaData?.map(c => ({
+                        ...c,
+                        cardCount: c.collectedCards
+                    })) || [];
+                    // Print all descriptions for debugging
+                    console.log('[SetCompletionScreen] mappedCollections descriptions:', mappedCollections.map(c => ({ name: c.name, description: c.description, set_number: (c as any).set_number })));
+                    // Sort by set_number (release order), fallback to name if missing
+                    mappedCollections.sort((a, b) => {
+                        const aSetNum = (a as any).set_number;
+                        const bSetNum = (b as any).set_number;
+                        if (aSetNum && bSetNum) {
+                            return aSetNum - bSetNum;
+                        } else if (aSetNum) {
+                            return -1;
+                        } else if (bSetNum) {
+                            return 1;
+                        } else {
+                            return a.name.localeCompare(b.name);
+                        }
+                    });
+                    console.log('[SetCompletionScreen] Setting Lorcana collections:', mappedCollections.length);
+                    setLorcanaCollections(mappedCollections);
+                } catch (lorcanaError) {
+                    console.error('[SetCompletionScreen] Error getting Lorcana collections:', lorcanaError);
+                    console.log('[SetCompletionScreen] Setting empty Lorcana collections due to error');
+                    setLorcanaCollections([]);
+                }
             } catch (error) {
                 console.error('[SetCompletionScreen] Error loading Lorcana collections:', error);
+                console.error('[SetCompletionScreen] Error details:', error);
+                if (error instanceof Error) {
+                    console.error('[SetCompletionScreen] Error message:', error.message);
+                    console.error('[SetCompletionScreen] Error stack:', error.stack);
+                }
                 setLorcanaCollections([]);
             } finally {
+                console.log('[SetCompletionScreen] Finished loading Lorcana collections');
                 setLoadingLorcana(false);
             }
         };
@@ -185,10 +225,13 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
             mtg: mtgCollections.length, 
             lorcana: lorcanaCollections.length 
         });
+        // Only sort MTG sets alphabetically; Lorcana sets are already sorted by Set_Num
+        const sortedMtg = [...mtgCollections].sort((a, b) => a.name.localeCompare(b.name));
+        // Lorcana sets are already sorted by Set_Num in loadLorcana
         const combined = [
-            ...mtgCollections.map(c => ({ ...c, type: 'MTG' })),
+            ...sortedMtg.map(c => ({ ...c, type: 'MTG' })),
             ...lorcanaCollections.map(c => ({ ...c, type: 'Lorcana' }))
-        ].sort((a, b) => a.name.localeCompare(b.name));
+        ];
         return combined;
     }, [mtgCollections, lorcanaCollections]);
 

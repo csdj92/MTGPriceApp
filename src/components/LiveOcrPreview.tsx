@@ -32,14 +32,14 @@ const styles = StyleSheet.create({
     },
     overlay: {
         position: 'absolute',
-        left: '10%',    // Corresponds to AOI_LEFT_PERCENT
-        top: '20%',     // Updated to move the overlay higher
-        width: '80%',    // Corresponds to AOI_WIDTH_PERCENT
-        height: '40%',   // Corresponds to AOI_HEIGHT_PERCENT
+        left: '5%',    // Reduced left margin for wider overlay
+        top: '10%',    // Move overlay closer to the top to maximize vertical space
+        width: '90%',  // Increase width for fuller card capture
+        height: '60%', // Increase height so entire card fits inside the overlay
         borderWidth: 2,
         borderColor: '#FFD700',  // More subtle gold color
         borderRadius: 8,         // Rounded corners
-        backgroundColor: 'rgba(255, 215, 0, 0.05)',  // More subtle gold tint
+        backgroundColor: 'rgba(255, 215, 0, 0.05)',  // Subtle gold tint
         shadowColor: '#000',
         shadowOffset: {
             width: 0,

@@ -238,6 +238,174 @@ class ExportService {
   }
 
   /**
+   * Export database data as SQL dump for debugging
+   * @param {string} dbName The database name (e.g., 'lorcana', 'mtg')
+   * @returns {Promise<string>} The path to the exported SQL file
+   */
+  async exportDatabaseAsSQL(dbName: string = 'lorcana'): Promise<string> {
+    try {
+      console.log(`[ExportService] Exporting database as SQL dump: ${dbName}`);
+
+      // Get direct database access
+      const db = await getDB();
+
+      // Get all table names
+      const [tablesResult] = await db.executeSql("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+      const tables = [];
+      for (let i = 0; i < tablesResult.rows.length; i++) {
+        tables.push(tablesResult.rows.item(i).name);
+      }
+
+      console.log(`[ExportService] Found tables: ${tables.join(', ')}`);
+
+      let sqlDump = `-- SQL Dump of ${dbName} database
+-- Generated on ${new Date().toISOString()}
+-- This file can be imported into SQLite using: sqlite3 database.db < dump.sql
+\n`;
+
+      // Export schema for each table
+      for (const tableName of tables) {
+        console.log(`[ExportService] Exporting schema for table: ${tableName}`);
+
+        // Get CREATE TABLE statement
+        const [schemaResult] = await db.executeSql(`SELECT sql FROM sqlite_master WHERE type='table' AND name='${tableName}'`);
+        if (schemaResult.rows.length > 0) {
+          const createSql = schemaResult.rows.item(0).sql;
+          if (createSql) {
+            sqlDump += `${createSql};\n\n`;
+          }
+        }
+
+        // Get all data from the table
+        console.log(`[ExportService] Exporting data for table: ${tableName}`);
+        const [dataResult] = await db.executeSql(`SELECT * FROM ${tableName}`);
+
+        if (dataResult.rows.length > 0) {
+          // Get column names for INSERT statements
+          const [pragmaResult] = await db.executeSql(`PRAGMA table_info(${tableName})`);
+          const columns = [];
+          for (let i = 0; i < pragmaResult.rows.length; i++) {
+            columns.push(pragmaResult.rows.item(i).name);
+          }
+
+          const columnList = columns.join(', ');
+          sqlDump += `-- Data for table ${tableName}\n`;
+
+          // Generate INSERT statements
+          for (let i = 0; i < dataResult.rows.length; i++) {
+            const row = dataResult.rows.item(i);
+            const values = columns.map(col => {
+              const value = row[col];
+              if (value === null) return 'NULL';
+              if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`;
+              return value;
+            });
+            sqlDump += `INSERT INTO ${tableName} (${columnList}) VALUES (${values.join(', ')});\n`;
+          }
+          sqlDump += '\n';
+        }
+      }
+
+      // Create export filename with timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const exportFileName = `${dbName}_database_dump_${timestamp}.sql`;
+
+      // Try multiple directory options for better compatibility
+      let exportDirectory;
+      let exportMethod = 'unknown';
+
+      if (Platform.OS === 'android') {
+        // Try DownloadDirectoryPath first
+        if (RNFS.DownloadDirectoryPath) {
+          exportDirectory = `${RNFS.DownloadDirectoryPath}/DatabaseExports`;
+          exportMethod = 'DownloadDirectoryPath';
+          console.log(`[ExportService] Using Android DownloadDirectoryPath: ${RNFS.DownloadDirectoryPath}`);
+        } else if (RNFS.ExternalStorageDirectoryPath) {
+          // Fallback to external storage
+          exportDirectory = `${RNFS.ExternalStorageDirectoryPath}/DatabaseExports`;
+          exportMethod = 'ExternalStorageDirectoryPath';
+          console.log(`[ExportService] Using Android ExternalStorageDirectoryPath: ${RNFS.ExternalStorageDirectoryPath}`);
+        } else {
+          // Last resort - app documents
+          exportDirectory = `${RNFS.DocumentDirectoryPath}/DatabaseExports`;
+          exportMethod = 'DocumentDirectoryPath';
+          console.log(`[ExportService] Using Android DocumentDirectoryPath: ${RNFS.DocumentDirectoryPath}`);
+        }
+      } else {
+        // iOS
+        exportDirectory = `${RNFS.DocumentDirectoryPath}/DatabaseExports`;
+        exportMethod = 'iOS DocumentDirectoryPath';
+        console.log(`[ExportService] Using iOS DocumentDirectoryPath: ${RNFS.DocumentDirectoryPath}`);
+      }
+
+      console.log(`[ExportService] Export method: ${exportMethod}`);
+      console.log(`[ExportService] Target export directory: ${exportDirectory}`);
+
+      // Ensure export directory exists
+      const dirExists = await RNFS.exists(exportDirectory);
+      console.log(`[ExportService] Export directory exists: ${dirExists}`);
+      if (!dirExists) {
+        await RNFS.mkdir(exportDirectory);
+        console.log(`[ExportService] Created export directory: ${exportDirectory}`);
+      }
+
+      const exportFilePath = `${exportDirectory}/${exportFileName}`;
+
+      console.log(`[ExportService] Writing SQL dump to: ${exportFilePath}`);
+
+      // Write the SQL dump
+      await RNFS.writeFile(exportFilePath, sqlDump, 'utf8');
+
+      console.log('[ExportService] SQL dump export completed successfully');
+
+      // Verify the file was created
+      const fileExists = await RNFS.exists(exportFilePath);
+      console.log(`[ExportService] Exported file exists: ${fileExists}`);
+
+      if (fileExists) {
+        const fileStats = await RNFS.stat(exportFilePath);
+        console.log(`[ExportService] Exported file size: ${fileStats.size} bytes`);
+
+        // List directory contents to verify
+        try {
+          const dirContents = await RNFS.readDir(exportDirectory);
+          console.log(`[ExportService] Directory contents (${exportDirectory}):`);
+          dirContents.forEach(file => {
+            console.log(`  - ${file.name} (${file.size} bytes)`);
+          });
+        } catch (listError) {
+          console.error('[ExportService] Could not list directory contents:', listError);
+        }
+      } else {
+        console.error(`[ExportService] WARNING: File was not created at ${exportFilePath}`);
+
+        // List directory contents to debug
+        try {
+          const dirContents = await RNFS.readDir(exportDirectory);
+          console.log(`[ExportService] Directory contents (${exportDirectory}):`);
+          dirContents.forEach(file => {
+            console.log(`  - ${file.name} (${file.size} bytes)`);
+          });
+        } catch (listError) {
+          console.error('[ExportService] Could not list directory contents:', listError);
+        }
+      }
+
+      // Show success message
+      Alert.alert(
+        'Database Export Successful',
+        `Database exported as SQL dump using ${exportMethod}.\n\nFile location: ${exportFilePath}\n\nThis file contains all table schemas and data that can be imported into any SQLite database.`
+      );
+
+      return exportFilePath;
+    } catch (error) {
+      console.error('[ExportService] Error exporting database as SQL:', error);
+      Alert.alert('Export Error', 'Failed to export database. Please try again.');
+      throw new Error('Failed to export database');
+    }
+  }
+
+  /**
    * Share the exported collections file
    * @param {string} filePath Path to the exported file
    */
@@ -370,6 +538,65 @@ class ExportService {
    * Import Lorcana collections from a JSON file
    * @param {string} filePath Path to the import file
    */
+  /**
+   * Validate and normalize card data from import
+   */
+  private validateAndNormalizeCard(cardFromFile: LorcanaExportCard): LorcanaExportCard | null {
+    try {
+      // Skip cards with missing essential data
+      if (!cardFromFile.Unique_ID || !cardFromFile.Name) {
+        console.warn(`[ExportService] Skipping card with missing Unique_ID or Name:`, cardFromFile);
+        return null;
+      }
+
+      // Normalize Unique_ID format
+      const correctedUniqueId = this.formatUniqueId(cardFromFile.Unique_ID);
+      if (!correctedUniqueId) {
+        console.warn(`[ExportService] Skipping card with invalid Unique_ID after formatting: ${cardFromFile.Name}`);
+        return null;
+      }
+
+      // Normalize Set_ID format - convert old numeric formats to text codes
+      let normalizedSetId = cardFromFile.Set_ID;
+      if (normalizedSetId) {
+        // Handle old numeric Set_IDs by mapping them to text codes
+        const numericToTextMapping: { [key: string]: string } = {
+          '1': 'TFC',   // The First Chapter
+          '2': 'ROF',   // Rise of the Floodborn
+          '3': 'INK',   // Into the Inklands
+          '4': 'URS',   // Ursula's Return
+          '5': 'SSK',   // Shimmering Skies
+          '6': 'AZS',   // Azurite Sea
+          '7': 'ARI',   // Archazia's Island
+          '8': 'ROJ',   // Reign of Jafar
+          '9': 'FAB',   // Fabled
+          '10': 'WHI'   // Whispers in the Well
+        };
+
+        if (numericToTextMapping[normalizedSetId]) {
+          console.log(`[ExportService] Converting old numeric Set_ID ${normalizedSetId} to ${numericToTextMapping[normalizedSetId]} for card ${cardFromFile.Name}`);
+          normalizedSetId = numericToTextMapping[normalizedSetId];
+        }
+
+        // Also normalize any set_ prefixed IDs
+        if (normalizedSetId.startsWith('set_')) {
+          console.log(`[ExportService] Removing set_ prefix from Set_ID ${normalizedSetId} for card ${cardFromFile.Name}`);
+          normalizedSetId = normalizedSetId.replace('set_', '').toUpperCase();
+        }
+      }
+
+      // Return normalized card data
+      return {
+        ...cardFromFile,
+        Unique_ID: correctedUniqueId,
+        Set_ID: normalizedSetId
+      };
+    } catch (error) {
+      console.error(`[ExportService] Error validating card ${cardFromFile.Name}:`, error);
+      return null;
+    }
+  }
+
   async importLorcanaCollections(filePath: string): Promise<void> {
     try {
       console.log(`[ExportService] Importing collections from: ${filePath}`);
@@ -433,12 +660,13 @@ class ExportService {
                           
                           // Add each card to the collection
                           collection.cards.forEach(cardFromFile => {
-                            // Correct the Unique_ID format before using it
-                            const correctedUniqueId = this.formatUniqueId(cardFromFile.Unique_ID);
-                            if (!correctedUniqueId) {
-                                console.warn(`[ExportService] Skipping card with invalid Unique_ID: ${cardFromFile.Name}`);
-                                return; // Skip this card if Unique_ID is fundamentally invalid after formatting
+                            // Validate and normalize the card data
+                            const normalizedCard = this.validateAndNormalizeCard(cardFromFile);
+                            if (!normalizedCard) {
+                              return; // Skip invalid cards
                             }
+
+                            const correctedUniqueId = normalizedCard.Unique_ID;
 
                             // First check if the card exists in lorcana_cards table
                             tx.executeSql(
@@ -449,30 +677,30 @@ class ExportService {
                                 if (cardExistsResult.rows.length === 0) {
                                   tx.executeSql(
                                     `INSERT OR IGNORE INTO lorcana_cards (
-                                      Unique_ID, Name, Set_ID, Set_Name, Type, Color, Rarity, 
-                                      Card_Num, Strength, Willpower, Artist, Flavor_Text, 
+                                      Unique_ID, Name, Set_ID, Set_Name, Type, Color, Rarity,
+                                      Card_Num, Strength, Willpower, Artist, Flavor_Text,
                                       collected, price_usd, price_usd_foil, last_updated
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                                     [
                                       correctedUniqueId, // Use corrected ID
-                                      cardFromFile.Name,
-                                      this.formatUniqueId(cardFromFile.Set_ID), // Also format Set_ID if it follows similar pattern
-                                      cardFromFile.Set_Name,
-                                      cardFromFile.Type,
-                                      cardFromFile.Color,
-                                      cardFromFile.Rarity,
-                                      cardFromFile.Card_Num,
-                                      cardFromFile.Strength || null,
-                                      cardFromFile.Willpower || null,
-                                      cardFromFile.Artist || null,
-                                      cardFromFile.Flavor_Text || null,
-                                      cardFromFile.collected ? 1 : 0,
-                                      cardFromFile.prices?.usd || null,
-                                      cardFromFile.prices?.usd_foil || null,
+                                      normalizedCard.Name,
+                                      normalizedCard.Set_ID, // Use normalized Set_ID
+                                      normalizedCard.Set_Name,
+                                      normalizedCard.Type,
+                                      normalizedCard.Color,
+                                      normalizedCard.Rarity,
+                                      normalizedCard.Card_Num,
+                                      normalizedCard.Strength || null,
+                                      normalizedCard.Willpower || null,
+                                      normalizedCard.Artist || null,
+                                      normalizedCard.Flavor_Text || null,
+                                      normalizedCard.collected ? 1 : 0,
+                                      normalizedCard.prices?.usd || null,
+                                      normalizedCard.prices?.usd_foil || null,
                                       new Date().toISOString()
                                     ],
                                     (_, insertCardResult) => {
-                                      console.log(`[ExportService] Added new card to database: ${cardFromFile.Name} (${correctedUniqueId})`);
+                                      console.log(`[ExportService] Added new card to database: ${normalizedCard.Name} (${correctedUniqueId})`);
                                     },
                                     (_, error) => {
                                       console.error('[ExportService] Error adding card to database:', error);
@@ -498,7 +726,7 @@ class ExportService {
                                           new Date().toISOString()
                                         ],
                                         (_, insertCardResult) => {
-                                          console.log(`[ExportService] Added card: ${cardFromFile.Name} (${correctedUniqueId}) to collection: ${collection.name}`);
+                                          console.log(`[ExportService] Added card: ${normalizedCard.Name} (${correctedUniqueId}) to collection: ${collection.name}`);
                                         },
                                         (_, error) => {
                                           console.error('[ExportService] Error adding card:', error);
@@ -517,7 +745,7 @@ class ExportService {
                                           collection.id
                                         ],
                                         (_, updateCardResult) => {
-                                          console.log(`[ExportService] Updated card: ${cardFromFile.Name} (${correctedUniqueId}) in collection: ${collection.name}`);
+                                          console.log(`[ExportService] Updated card: ${normalizedCard.Name} (${correctedUniqueId}) in collection: ${collection.name}`);
                                         },
                                         (_, error) => {
                                           console.error('[ExportService] Error updating card:', error);
@@ -567,6 +795,14 @@ class ExportService {
                       collectionsCount: importData.collections.length
                     });
                     
+                    // Run post-import cleanup (fire and forget - don't await in transaction callback)
+                    console.log('[ExportService] Scheduling post-import cleanup...');
+                    setTimeout(() => {
+                      this.runPostImportCleanup()
+                        .then(() => console.log('[ExportService] Post-import cleanup completed'))
+                        .catch(cleanupError => console.warn('[ExportService] Post-import cleanup failed, but import may still be successful:', cleanupError));
+                    }, 100);
+
                     Alert.alert(
                       'Import Successful',
                       `Imported ${importData.collections.length} collections successfully. Your collection screens will refresh automatically with the new data.`
@@ -590,12 +826,62 @@ class ExportService {
   }
 
   // Utility function to correct Unique_ID format
+  /**
+   * Run cleanup operations after import to handle any edge cases
+   */
+  private async runPostImportCleanup(): Promise<void> {
+    try {
+      const db = await getDB();
+
+      // Clean up any cards that might have inconsistent Set_ID formats
+      console.log('[ExportService] Cleaning up any inconsistent Set_ID formats...');
+      await new Promise<void>((resolve, reject) => {
+        db.transaction((tx) => {
+          // Fix any cards that still have numeric Set_IDs (shouldn't happen with new import, but safety check)
+          const numericToTextMapping: { [key: string]: string } = {
+            '1': 'TFC', '2': 'ROF', '3': 'INK', '4': 'URS',
+            '5': 'SSK', '6': 'AZS', '7': 'ARI', '8': 'ROJ',
+            '9': 'FAB', '10': 'WHI'
+          };
+
+          // Update any cards with numeric Set_IDs
+          Object.entries(numericToTextMapping).forEach(([numeric, text]) => {
+            tx.executeSql(
+              'UPDATE lorcana_cards SET Set_ID = ? WHERE Set_ID = ?',
+              [text, numeric],
+              () => console.log(`[ExportService] Fixed Set_ID ${numeric} → ${text}`),
+              (_, error) => console.warn(`[ExportService] Error fixing Set_ID ${numeric}:`, error)
+            );
+          });
+
+          // Clean up any set_ prefixed IDs that might have slipped through
+          tx.executeSql(
+            'UPDATE lorcana_cards SET Set_ID = UPPER(REPLACE(Set_ID, "set_", "")) WHERE Set_ID LIKE "set_%"',
+            [],
+            (_, result) => {
+              if (result.rowsAffected && result.rowsAffected > 0) {
+                console.log(`[ExportService] Cleaned up ${result.rowsAffected} set_ prefixed Set_IDs`);
+              }
+            },
+            (_, error) => console.warn('[ExportService] Error cleaning set_ prefixes:', error)
+          );
+
+          resolve();
+        });
+      });
+
+    } catch (error) {
+      console.warn('[ExportService] Post-import cleanup encountered errors:', error);
+      // Don't throw - cleanup failure shouldn't break the import
+    }
+  }
+
   private formatUniqueId(id: string | undefined): string {
     if (!id || typeof id !== 'string') {
       // If id is undefined or not a string, return it as is or handle error
       // For safety, returning a placeholder or throwing an error might be better
       // but for now, we'll return it to avoid breaking if data is truly malformed.
-      return id || ''; 
+      return id || '';
     }
     const parts = id.split('-');
     if (parts.length === 2) {

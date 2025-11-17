@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:api.lorcast.com)",
+      "WebSearch",
+      "WebFetch(domain:lorcast.com)",
+      "WebFetch(domain:api.lorcana-api.com)",
+      "WebFetch(domain:lorcana-api.com)",
+      "Bash(awk:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

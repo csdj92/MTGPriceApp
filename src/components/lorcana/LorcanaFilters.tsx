@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
+import { LORCANA_RARITY_OPTIONS } from '../../utils/formatters';
 
 
 export interface Filters {
@@ -21,7 +22,7 @@ interface LorcanaFiltersProps {
     visible: boolean;
 }
 
-const rarityOptions = ['Common', 'Uncommon', 'Rare', 'Super Rare', 'Legendary', 'Enchanted'];
+const rarityOptions = LORCANA_RARITY_OPTIONS.filter(rarity => rarity !== 'Promo');
 const colorOptions = ['Amber', 'Amethyst', 'Emerald', 'Ruby', 'Sapphire', 'Steel'];
 
 const LorcanaFilters: React.FC<LorcanaFiltersProps> = ({

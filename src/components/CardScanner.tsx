@@ -40,7 +40,7 @@ export type CardScannerProps = {
   cardVariations: ExtendedCard[];
   onVariationSelect: (card: ExtendedCard) => void;
   selectedVariation: ExtendedCard | null;
-  onConfirmVariation: () => void;
+  onConfirmVariation: (isFoil: boolean) => void;
 };
 
 const CardScanner: React.FC<CardScannerProps> = ({
@@ -64,6 +64,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
   const [cardModalVisible, setCardModalVisible] = useState(false);
   const [isRecentCardsCollapsed, setIsRecentCardsCollapsed] = useState(false);
   const [showingVariations, setShowingVariations] = useState(false);
+  const [isFoilSelected, setIsFoilSelected] = useState(false);
 
   const emitter = liveOcrEmitter;
   const eventName = 'LiveOcrResult';
@@ -258,6 +259,11 @@ const CardScanner: React.FC<CardScannerProps> = ({
                       name={card.name}
                       previewMode={true}
                     />
+                    {card.isFoil && (
+                      <View style={styles.foilBadgeSmall}>
+                        <Icon name="star" size={12} color="#FFD700" />
+                      </View>
+                    )}
                     
                     <View style={styles.cardPreviewInfo}>
                       <Text style={styles.cardPreviewName} numberOfLines={1}>
@@ -325,7 +331,22 @@ const CardScanner: React.FC<CardScannerProps> = ({
                 />
               </View>
               
-              {/* Always show the confirm button when variations are displayed */}
+              {/* Foil toggle */}
+              {selectedVariation?.hasFoil && (
+                <TouchableOpacity
+                  style={[styles.foilToggle, isFoilSelected && styles.foilToggleActive]}
+                  onPress={() => setIsFoilSelected(!isFoilSelected)}
+                >
+                  <Icon
+                    name={isFoilSelected ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                    size={20}
+                    color={isFoilSelected ? '#FFD700' : '#fff'}
+                  />
+                  <Text style={styles.foilToggleText}>Foil</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Confirm button */}
               <View style={styles.buttonContainer}>
                 <TouchableOpacity 
                   style={[
@@ -334,7 +355,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
                   ]} 
                   onPress={() => {
                     if (onConfirmVariation && selectedVariation) {
-                      onConfirmVariation();
+                      onConfirmVariation(isFoilSelected);
                     }
                   }}
                   disabled={!selectedVariation}
@@ -359,7 +380,8 @@ const CardScanner: React.FC<CardScannerProps> = ({
     selectedVariation, 
     onVariationSelect, 
     onConfirmVariation,
-    toggleRecentCardsCollapse
+    toggleRecentCardsCollapse,
+    isFoilSelected
   ]);
 
   // Helper component for card images with error handling
@@ -1168,6 +1190,35 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  foilToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    marginLeft: 16,
+    marginBottom: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  foilToggleActive: {
+    backgroundColor: 'rgba(255,215,0,0.15)',
+    borderColor: '#FFD700',
+  },
+  foilToggleText: {
+    color: '#fff',
+    marginLeft: 4,
+    fontSize: 14,
+  },
+  foilBadgeSmall: {
+    position: 'absolute',
+    top: 2,
+    left: 2,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 6,
+    padding: 1,
   },
 });
 

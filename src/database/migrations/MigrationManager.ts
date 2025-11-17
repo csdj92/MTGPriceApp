@@ -1,10 +1,13 @@
 import SQLite from 'react-native-sqlite-storage';
+import { AddSetNumberToLorcanaCollections } from './002_AddSetNumberToLorcanaCollections';
 
+// Define the migration interface
 export interface Migration {
     version: number;
     up: (db: SQLite.SQLiteDatabase) => Promise<void>;
 }
 
+// Migration manager class
 export class MigrationManager {
     private migrations: Migration[] = [];
     

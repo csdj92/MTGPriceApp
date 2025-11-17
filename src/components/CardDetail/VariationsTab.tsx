@@ -6,6 +6,7 @@ import { ExtendedCard } from '../../types/card';
 import { AllPrintingsJsonDatabase } from '../../services/database/AllPrintingsJsonDatabase';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getImageSource, handleImageLoadSuccess, handleImageLoadError } from '../../utils/imageUtils';
+import { formatLorcanaRarity, getLorcanaRarityColor } from '../../utils/formatters';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<any>;
 
@@ -243,15 +244,15 @@ const VariationsTab: React.FC<VariationsTabProps> = ({
 };
 
 // Helper function to format rarity
-const formatRarity = (rarity?: string): string => {
-    if (!rarity) return 'Unknown';
-    
-    // Capitalize first letter
-    return rarity.charAt(0).toUpperCase() + rarity.slice(1).toLowerCase();
-};
+const formatRarity = (rarity?: string): string => formatLorcanaRarity(rarity, 'Unknown');
 
 // Helper function to get color based on rarity
 const getRarityColor = (rarity?: string, defaultColor: string = '#CCCCCC'): string => {
+    const lorcanaColor = getLorcanaRarityColor(rarity, '');
+    if (lorcanaColor) {
+        return lorcanaColor;
+    }
+
     if (!rarity) return defaultColor;
     
     switch(rarity.toLowerCase()) {

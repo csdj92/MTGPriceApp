@@ -56,26 +56,26 @@ const LorcanaVersionModal: React.FC<LorcanaVersionModalProps> = ({
                                 <Text style={[styles.versionText, { color: theme.text }]}>{version.Name}</Text>
                                 {version.Image ? (
                                     <FastImage
-                                        source={getImageSource(version.Image) || { 
-                                            uri: version.Image,
-                                            priority: FastImage.priority.high,
-                                            cache: FastImage.cacheControl.immutable
-                                        }}
-                                        style={styles.versionImage}
-                                        resizeMode={FastImage.resizeMode.contain}
-                                        onError={() => {
-                                            console.log(`[LorcanaVersionModal] Version image load error for ${version.Name}: ${version.Image}`);
-                                            handleImageLoadError(version.Image, version.Name);
-                                        }}
-                                        onLoad={() => {
-                                            console.log(`[LorcanaVersionModal] Version image loaded successfully: ${version.Name}`);
-                                            handleImageLoadSuccess(version.Image, { 
-                                                name: version.Name, 
-                                                id: version.Unique_ID, 
-                                                context: 'version_modal'
-                                            });
-                                        }}
-                                    />
+                                    source={getImageSource(version.Image) || { 
+                                        uri: version.Image,
+                                        priority: FastImage.priority.high,
+                                        cache: FastImage.cacheControl.immutable
+                                    }}
+                                    style={styles.versionImage}
+                                    resizeMode={FastImage.resizeMode.contain}
+                                    onError={() => {
+                                        console.log(`[LorcanaVersionModal] Version image load error for ${version.Name}: ${version.Image}`);
+                                        handleImageLoadError(version.Image, version.Name);
+                                    }}
+                                    onLoad={() => {
+                                        console.log(`[LorcanaVersionModal] Version image loaded successfully: ${version.Name}`);
+                                        handleImageLoadSuccess(version.Image, { 
+                                            name: version.Name, 
+                                            id: version.Unique_ID, 
+                                            context: 'version_modal'
+                                        });
+                                    }}
+                                />
                                 ) : (
                                     <View style={[styles.versionImage, { backgroundColor: theme.card || theme.surface, justifyContent: 'center', alignItems: 'center' }]}>
                                         <Icon name="image-off" size={24} color={theme.textSecondary} />

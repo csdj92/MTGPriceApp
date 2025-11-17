@@ -1,3 +1,5 @@
+import { LorcanaCard as LorcanaDbCard } from './lorcana';
+
 export interface Card {
     uuid?: string;
     name: string;
@@ -81,6 +83,12 @@ export interface ExtendedCard {
     cmc: number;
     flavorText?: string;
     frameEffects: string[];
+    /**
+     * Indicates that this specific scanned/collected copy is the foil printing.
+     * A card can support foils in general (hasFoil = true) but individual copies
+     * in the user's collection should specify whether *that* copy is foil.
+     */
+    isFoil?: boolean;
     isOriginalScan?: boolean;
     // Double-sided card properties
     isDoubleSided?: boolean;
@@ -109,11 +117,17 @@ export type ScannedCard = Omit<ExtendedCard, 'type'> & {
   bypassVariantSelection?: boolean; // Flag to bypass variant selection when true
   originalText?: string; // The original OCR text used to identify the card
   source?: string; // The source of the scan (e.g., 'camera', 'manual')
+  /** Whether this individual scan represents a foil version */
+  isFoil?: boolean;
+  cardId?: string;
+  normalCount?: number;
+  foilCount?: number;
+  card?: LorcanaCard | ExtendedCard;
 };
 
 export interface OcrResult {
     text: string;
-    mainName: string;
+    mainName?: string | null;
     subtype: string | null;
     isLorcana: boolean;
     setCode?: string | null;
@@ -144,4 +158,18 @@ export interface Filters {
 }
 
 export type SortOption = 'name' | 'number' | 'price' | 'set' | 'quantity';
-export type SortDirection = 'asc' | 'desc'; 
+export type SortDirection = 'asc' | 'desc';
+
+export type LorcanaScannedCard = {
+    id: string;
+    name: string;
+    type: 'Lorcana';
+    imageUrl: string;
+    setCode: string;
+    card: LorcanaCard;
+    normalCount: number;
+    foilCount: number;
+    isFoil: boolean;
+};
+
+export type ScannedItem = ScannedCard | LorcanaScannedCard;

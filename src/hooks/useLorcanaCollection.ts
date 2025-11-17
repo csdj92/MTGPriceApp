@@ -20,27 +20,28 @@ export const useLorcanaCollection = ({ onCardsUpdate }: UseLorcanaCollectionProp
             // Get database connection
             const database = await getDB();
             
-            // Find the collection for this set
+            // Find the collection for this set by name (more reliable than Set_ID matching)
+            const setName = card.Set_Name || `Set ${card.Set_ID}`;
+            const collectionName = `Set: ${setName}`;
+
             const [collections] = await database.executeSql(
-                `SELECT id FROM lorcana_collections 
-                 WHERE description LIKE '%(' || ? || ')%'`,
-                [card.Set_ID]
+                `SELECT id FROM lorcana_collections
+                 WHERE name = ?`,
+                [collectionName]
             );
-            
+
             let collectionId = null;
-            
+
             if (collections.rows.length > 0) {
                 collectionId = collections.rows.item(0).id;
-                console.log(`[useLorcanaCollection] Found collection ${collectionId} for set ${card.Set_ID}`);
+                console.log(`[useLorcanaCollection] Found collection ${collectionId} for set ${setName}`);
             } else {
-                const setName = card.Set_Name || `Set ${card.Set_ID}`;
-                console.log(`[useLorcanaCollection] No collection found for set ${card.Set_ID}, creating one`);
-                
+                console.log(`[useLorcanaCollection] No collection found for set ${setName}, creating one`);
+
                 collectionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
                 const now = new Date().toISOString();
-                const collectionName = `Set: ${setName}`;
                 const description = `Collection for ${setName} (${card.Set_ID})`;
-                
+
                 await database.executeSql(
                     `INSERT INTO lorcana_collections (id, name, description, created_at, updated_at)
                      VALUES (?, ?, ?, ?, ?)`,

@@ -295,6 +295,7 @@ export const CardProcessingService = {
         type: 'MTG',
         scannedAt: Date.now(),
         imageUris: imageUris,
+        isFoil: cardWithUuid.hasFoil && !cardWithUuid.hasNonFoil,
         // Add flag to indicate this was found with exact setCode and cardNumber
         bypassVariantSelection: isEnhancedSearch
       };
@@ -585,6 +586,7 @@ export const CardProcessingService = {
         keywords: [],
         cmc: 0,
         frameEffects: [],
+        isFoil: false,
       };
       
       // Handle Lorcana card collection addition
@@ -674,7 +676,7 @@ export const CardProcessingService = {
         const setCode = card.setCode || 'UNKNOWN';
         const setName = card.setName || setCode;
         const setCollectionId = await databaseService.getOrCreateSetCollection(setCode, setName);
-        await databaseService.addCardToCollection(card.uuid, setCollectionId);
+        await databaseService.addCardToCollection(card.uuid, setCollectionId, card.isFoil ?? false);
       } catch (error) {
         Logger.error('Error adding MTG card to collection:', error);
         throw error;
@@ -720,7 +722,7 @@ export const CardProcessingService = {
       const setCode = scannedCard.setCode || 'UNKNOWN';
       const setName = scannedCard.setName || setCode;
       const setCollectionId = await databaseService.getOrCreateSetCollection(setCode, setName);
-      await databaseService.addCardToCollection(scannedCard.uuid, setCollectionId);
+      await databaseService.addCardToCollection(scannedCard.uuid, setCollectionId, scannedCard.isFoil ?? false);
     }
   }
 }; 

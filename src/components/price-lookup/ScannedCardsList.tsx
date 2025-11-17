@@ -166,6 +166,12 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
       >
         <CardImage uri={imageUri} name={item.name} />
         
+        {item.isFoil && (
+          <View style={styles.foilBadge}>
+            <Icon name="star" size={14} color="#FFD700" />
+          </View>
+        )}
+        
         {/* Show "New to Collection" label if the card is new */}
         {isNewToCollection && <NewToCollectionLabel setCode={item.setCode} />}
         
@@ -356,6 +362,14 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 8,
     textAlign: 'center',
+  },
+  foilBadge: {
+    position: 'absolute',
+    top: 2,
+    left: 2,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 8,
+    padding: 2,
   },
 });
 

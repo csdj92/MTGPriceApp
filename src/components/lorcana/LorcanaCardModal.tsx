@@ -6,6 +6,10 @@ import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
 import { useTheme } from '../../context/ThemeContext';
 import { LorcanaPriceDetails } from './LorcanaPriceDetails';
+import {
+    formatLorcanaRarity,
+    getLorcanaRarityColor,
+} from '../../utils/formatters';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -28,19 +32,8 @@ const getColorForBadge = (color: string | undefined): string => {
     }
 };
 
-const getRarityColor = (rarity: string | undefined): string => {
-    if (!rarity) return '#999999';
-    
-    switch(rarity.toLowerCase()) {
-        case 'common': return '#CCCCCC';
-        case 'uncommon': return '#7FFFD4';
-        case 'rare': return '#FFD700';
-        case 'super rare': return '#FF5733';
-        case 'legendary': return '#FF00FF';
-        case 'enchanted': return '#00BFFF';
-        default: return '#999999';
-    }
-};
+const getRarityColor = (rarity: string | undefined): string =>
+    getLorcanaRarityColor(rarity, '#999999');
 
 interface LorcanaCardModalProps {
     card: LorcanaCardWithPrice | null;
@@ -49,6 +42,8 @@ interface LorcanaCardModalProps {
     onDelete: () => void;
     onAddToCollection?: () => void;
     onRemoveFromCollection?: () => void;
+    priceData?: any;
+    isPriceLoading?: boolean;
 }
 
 interface CardHeaderDisplayProps {
@@ -84,7 +79,7 @@ const CardHeaderDisplay: React.FC<CardHeaderDisplayProps> = React.memo(({
                         <Text style={styles.badgeText}>{card.Color}</Text>
                     </View>
                     <View style={[styles.badge, { backgroundColor: getRarityColor(card.Rarity) }]}>
-                        <Text style={styles.badgeText}>{card.Rarity}</Text>
+                        <Text style={styles.badgeText}>{formatLorcanaRarity(card.Rarity)}</Text>
                     </View>
                 </View>
                 
@@ -271,7 +266,9 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
     onClose,
     onDelete,
     onAddToCollection,
-    onRemoveFromCollection
+    onRemoveFromCollection,
+    priceData,
+    isPriceLoading
 }) => {
     const { theme } = useTheme();
     if (!card) return null;
@@ -287,6 +284,11 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
     const handleImageError = useCallback(() => {
         handleImageLoadError(card.Image, card.Name);
     }, [card.Image, card.Name]);
+
+    // Use priceData if present, otherwise fallback to card.prices
+    const price = priceData?.usd ?? card.price_usd ?? card.prices?.usd;
+    const foilPrice = priceData?.usd_foil ?? card.price_usd_foil ?? card.prices?.usd_foil;
+    const lastUpdated = priceData?.last_updated ?? card.last_updated;
 
     return (
         <Modal
@@ -337,7 +339,23 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
                         <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
                             <Text style={[styles.sectionTitle, { color: theme.text }]}>Price Information</Text>
                             
-                            <CurrentPriceDisplay card={card} theme={theme} />
+                            {isPriceLoading ? (
+                                <Text style={[styles.priceValue, { color: theme.textSecondary }]}>Loading...</Text>
+                            ) : (
+                                <>
+                                    <View style={styles.priceRow}>
+                                        <Text style={[styles.priceLabel, { color: theme.text }]}>Regular:</Text>
+                                        <Text style={[styles.priceValue, { color: theme.success || theme.primary }]}>${price ? parseFloat(price).toFixed(2) : '0.00'}</Text>
+                                    </View>
+                                    <View style={styles.priceRow}>
+                                        <Text style={[styles.priceLabel, { color: theme.text }]}>Foil:</Text>
+                                        <Text style={[styles.priceValue, { color: theme.success || theme.primary }]}>${foilPrice ? parseFloat(foilPrice).toFixed(2) : '0.00'}</Text>
+                                    </View>
+                                    {lastUpdated && (
+                                        <Text style={[styles.priceUpdated, { color: theme.textSecondary || theme.text }]}>Updated: {new Date(lastUpdated).toLocaleDateString()}</Text>
+                                    )}
+                                </>
+                            )}
 
                             {/* Price History Section */}
                             {card.Unique_ID && (
@@ -345,8 +363,8 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
                                     <LorcanaPriceDetails 
                                         cardId={card.Unique_ID}
                                         cardName={card.Name}
-                                        currentPrice={card.price_usd || null}
-                                        currentFoilPrice={card.price_usd_foil || null}
+                                        currentPrice={price}
+                                        currentFoilPrice={foilPrice}
                                     />
                                 </View>
                             )}

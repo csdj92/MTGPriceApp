@@ -12,6 +12,12 @@ import {
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
 import type { ExtendedCard } from '../types/card';
+import {
+    formatLorcanaRarity,
+    getLorcanaRarityColor,
+    getLorcanaRarityShortLabel,
+    normalizeLorcanaRarity,
+} from '../utils/formatters';
 
 export interface CardItemProps {
     card: ExtendedCard;
@@ -288,7 +294,9 @@ const CardItem: React.FC<CardItemProps> = ({
                         {((viewMode === 'grid' && !shouldShowExpanded) || shouldShowExpanded) && card.rarity && (
                             <View style={[styles.rarityBadge, getRarityStyle(card.rarity)]}>
                                 <Text style={styles.rarityText}>
-                                    {shouldShowExpanded ? card.rarity : card.rarity.charAt(0).toUpperCase()}
+                                    {shouldShowExpanded
+                                        ? getDisplayRarity(card.rarity)
+                                        : getCondensedRarityLabel(card.rarity)}
                                 </Text>
                             </View>
                         )}
@@ -390,6 +398,11 @@ const getColorFromMana = (color: string): string => {
 };
 
 const getRarityStyle = (rarity: string) => {
+    const lorcanaColor = getLorcanaRarityColor(rarity, '');
+    if (lorcanaColor) {
+        return { backgroundColor: lorcanaColor };
+    }
+
     switch (rarity.toLowerCase()) {
         case 'common':
             return { backgroundColor: '#B0B0B0' };
@@ -398,10 +411,27 @@ const getRarityStyle = (rarity: string) => {
         case 'rare':
             return { backgroundColor: '#F9DA5E' };
         case 'mythic':
+        case 'mythic rare':
             return { backgroundColor: '#E85B37' };
         default:
             return { backgroundColor: '#B0B0B0' };
     }
+};
+
+const getDisplayRarity = (rarity: string): string => {
+    const normalized = normalizeLorcanaRarity(rarity);
+    if (normalized) {
+        return formatLorcanaRarity(rarity);
+    }
+    return rarity;
+};
+
+const getCondensedRarityLabel = (rarity: string): string => {
+    const normalized = normalizeLorcanaRarity(rarity);
+    if (normalized) {
+        return getLorcanaRarityShortLabel(rarity, '?');
+    }
+    return rarity.charAt(0).toUpperCase();
 };
 
 const styles = StyleSheet.create({

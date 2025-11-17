@@ -4,17 +4,28 @@ import { updateAllImageUrlsInDatabase } from '../utils/imageUtils'
 import { LorcanaCard, LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../types/lorcana'
 import DatabaseInitializer from './DatabaseInitializer'
 import { Logger } from '../utils/logger'
+import { cardImportService } from './CardImportService'
+import { lorcastAPI } from './LorcastAPIService'
 
 // Enable promise support for SQLite
 enablePromise(true)
 
 const LorcanaBulkCardApi = 'https://api.lorcana-api.com/bulk/cards'
 const LorcastPriceApi = 'https://api.lorcast.com/v0/cards/search'
-const LorcanaNewSetApi = 'https://api.lorcast.com/v0/sets/7/cards'
+
+// Function to get the latest set API URL dynamically
+const getLatestSetApiUrl = (setNumber: number = 10): string => {
+    return `https://api.lorcast.com/v0/sets/${setNumber}/cards`;
+};
+
+// Function to get set API URL for a specific set
+const getSetApiUrl = (setNumber: number): string => {
+    return `https://api.lorcast.com/v0/sets/${setNumber}/cards`;
+};
 
 let dbInstance: SQLiteDatabase | null = null
 let isInitialized = false
-let initializationPromise: Promise<void> | null = null
+let initializationPromise: Promise<boolean> | null = null
 
 // Utility function for standardized error handling
 const handleError = (message: string, error: any) => {
@@ -90,23 +101,52 @@ const ensureTablesCreated = async () => {
                 name TEXT NOT NULL,
                 description TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                set_number INTEGER
             );
         `);
-        console.log('[LorcanaService] Ensured lorcana_collections table exists.');
 
-        // Create lorcana_collection_cards table
+        // Add set_number column if it was missing in an existing DB
+        const [colInfo] = await db.executeSql('PRAGMA table_info(lorcana_collections)');
+        const colNames = new Set<string>();
+        for (let i = 0; i < colInfo.rows.length; i++) {
+            colNames.add(colInfo.rows.item(i).name);
+        }
+        if (!colNames.has('set_number')) {
+            await db.executeSql('ALTER TABLE lorcana_collections ADD COLUMN set_number INTEGER');
+        }
+
+        console.log('[LorcanaService] Ensured lorcana_collections table exists with set_number column.');
+
+        // Create lorcana_collection_cards table (new schema with quantity columns)
         await db.executeSql(`
             CREATE TABLE IF NOT EXISTS lorcana_collection_cards (
                 collection_id TEXT NOT NULL,
                 card_id TEXT NOT NULL,
+                quantity_normal INTEGER DEFAULT 0,
+                quantity_foil INTEGER DEFAULT 0,
                 added_at TEXT NOT NULL,
                 PRIMARY KEY (collection_id, card_id),
                 FOREIGN KEY (collection_id) REFERENCES lorcana_collections(id) ON DELETE CASCADE,
                 FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
             );
         `);
-        console.log('[LorcanaService] Ensured lorcana_collection_cards table exists.');
+
+        // If the table existed but lacked the new quantity columns, add them.
+        const [columnsInfo] = await db.executeSql('PRAGMA table_info(lorcana_collection_cards)');
+        const existingCols = new Set<string>();
+        for (let i = 0; i < columnsInfo.rows.length; i++) {
+            existingCols.add(columnsInfo.rows.item(i).name);
+        }
+
+        if (!existingCols.has('quantity_normal')) {
+            await db.executeSql('ALTER TABLE lorcana_collection_cards ADD COLUMN quantity_normal INTEGER DEFAULT 0');
+        }
+        if (!existingCols.has('quantity_foil')) {
+            await db.executeSql('ALTER TABLE lorcana_collection_cards ADD COLUMN quantity_foil INTEGER DEFAULT 0');
+        }
+
+        console.log('[LorcanaService] Ensured lorcana_collection_cards table exists with quantity columns.');
 
         return true;
     } catch (error) {
@@ -131,90 +171,164 @@ const mapLorcastSetCodeToSetId = (setCode: string): string | null => {
         '4': 'URS',   // Ursula's Return
         '5': 'SSK',   // Shimmering Skies
         '6': 'AZS',   // Azurite Sea
-        '7': 'ARI'    // Archazia's Island
+        '7': 'ARI',    // Archazia's Island
+        '8': 'ROJ',    // Reign of Jafar
+        '9': 'FAB',    // Fabled
+        '10': 'WHI',    // Whispers in the Well
     };
     return setMapping[setCode] || null;
 };
 
-export const initializeLorcanaDatabase = async () => {
-    try {
-        console.log('[LorcanaService] Initializing Lorcana database...');
-        isInitialized = false;
-        
-        // Use DatabaseInitializer to ensure database is initialized
-        await DatabaseInitializer.initializeAllDatabases();
-        
-        // Ensure core Lorcana tables are created, in case DatabaseInitializer skipped them
-        await ensureTablesCreated();
+export const initializeLorcanaDatabase = async (): Promise<boolean> => {
+    // ------------------------------------------------------------------
+    // Concurrency guard: if initialization is already complete, or a
+    // previous invocation is still in-flight, just wait/return instead of
+    // kicking off a brand-new run.  This prevents the "Initializing
+    // Lorcana database…" log spam seen in the console.
+    // ------------------------------------------------------------------
+    
 
-        // Create and populate tables specific to our implementation
-        await populateLorcanaCardPricesTable();
-        await createLorcanaPriceHistoryTable();
-        await createLorcanaAppSettingsTable();
-        await createLorcanaCardApiTimestampsTable();
-        
-        // Check if we need to update prices (run once per day)
+    if (initializationPromise) {
         try {
-            // Get the last update timestamp
-            const db = await getDB();
-            const [lastUpdateResult] = await db.executeSql(
-                `SELECT value FROM lorcana_app_settings WHERE key = 'last_price_update'`
-            );
-            
-            let shouldUpdate = true;
-            if (lastUpdateResult.rows.length > 0) {
-                const lastUpdate = new Date(lastUpdateResult.rows.item(0).value);
-                const now = new Date();
-                const oneDayAgo = new Date(now);
-                oneDayAgo.setDate(oneDayAgo.getDate() - 1);
-                
-                // Only update if it's been more than a day since the last update
-                shouldUpdate = lastUpdate < oneDayAgo;
-            }
-            
-            if (shouldUpdate) {
-                console.log('[LorcanaService] Running daily price update...');
-                
-                // Update in the background to not block initialization
-                setTimeout(async () => {
-                    try {
-                        const result = await updateAllLorcanaPrices();
-                        
-                        // Update the last update timestamp
-                        const timestamp = new Date().toISOString();
-                        await db.executeSql(
-                            `INSERT OR REPLACE INTO lorcana_app_settings (key, value) VALUES (?, ?)`,
-                            ['last_price_update', timestamp]
-                        );
-                        
-                        console.log(`[LorcanaService] Daily price update completed. Updated: ${result.updated}, Skipped: ${result.skipped}`);
-                    } catch (error) {
-                        console.error('[LorcanaService] Error during background price update:', error);
-                    }
-                }, 5000); // Wait 5 seconds after initialization before starting updates
-            } else {
-                console.log('[LorcanaService] Daily price update already performed recently. Skipping.');
-            }
-        } catch (error) {
-            console.error('[LorcanaService] Error checking for price updates:', error);
+            await initializationPromise;
+            return isInitialized;
+        } catch (err) {
+            console.error('[LorcanaService] Previous initialization failed, retrying…');
+            // fall through to retry
         }
-        
-        // The database and tables will be ready after calling initializeAllDatabases
-        console.log('[LorcanaService] Lorcana database initialized successfully');
-        isInitialized = true;
-        return true;
-    } catch (error) {
-        console.error('[LorcanaService] Error initializing Lorcana database:', error);
-        if (error instanceof Error) {
-            console.error('[LorcanaService] Error details:', {
-                message: error.message,
-                stack: error.stack,
-                name: error.name
-            });
-        }
-        isInitialized = false;
-        return false;
     }
+
+    initializationPromise = (async () => {
+        try {
+            console.log('[LorcanaService] Initializing Lorcana database...');
+            isInitialized = false;
+            
+            // Use DatabaseInitializer to ensure database is initialized
+            await DatabaseInitializer.initializeAllDatabases();
+            
+            // Ensure core Lorcana tables are created, in case DatabaseInitializer skipped them
+            await ensureTablesCreated();
+            
+            // Check if we need to populate the database with card data
+            const db = await getDB();
+            const [cardCount] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_cards');
+            const totalCards = cardCount.rows.item(0).count;
+            
+            console.log(`[LorcanaService] Found ${totalCards} cards in lorcana_cards table`);
+            
+            if (totalCards === 0) {
+                console.log('[LorcanaService] No cards found, attempting to load card data...');
+                try {
+                    // Try to load card data from the bulk API
+                    const result = await safeRefreshLorcanaCards();
+                    console.log(`[LorcanaService] Loaded ${result.added} new cards and updated ${result.updated} cards from bulk API`);
+                } catch (error) {
+                    console.error('[LorcanaService] Error loading card data from bulk API:', error);
+                    console.log('[LorcanaService] Continuing with empty database - collections will be created when cards are scanned');
+                }
+            }
+
+            // Create and populate tables specific to our implementation
+            await populateLorcanaCardPricesTable();
+            await createLorcanaPriceHistoryTable();
+            await createLorcanaAppSettingsTable();
+            await createLorcanaCardApiTimestampsTable();
+            
+            console.log('[LorcanaService] All tables created, starting JAF → ROJ fix...');
+            
+            // Run JAF ➔ ROJ set code fix once (non-blocking)
+            try {
+                await fixJAFtoROJSetIdentifiers();
+                console.log('[LorcanaService] JAF → ROJ fix completed');
+            } catch (err) {
+                console.error('[LorcanaService] Error running JAF ➔ ROJ fix:', err);
+            }
+            
+            // Force creation of set collections after initialization
+            try {
+                console.log('[LorcanaService] Forcing set collection creation check...');
+                const collections = await getLorcanaSetCollections(false);
+                console.log(`[LorcanaService] Found/created ${collections.length} set collections after initialization`);
+            } catch (err) {
+                console.error('[LorcanaService] Error in post-initialization collection check:', err);
+            }
+            
+            console.log('[LorcanaService] Starting daily price update check...');
+            
+            // Check if we need to update prices (run once per day)
+            try {
+                console.log('[LorcanaService] Getting last price update timestamp...');
+                
+                // Get the last update timestamp
+                const db = await getDB();
+                const [lastUpdateResult] = await db.executeSql(
+                    `SELECT value FROM lorcana_app_settings WHERE key = 'last_price_update'`
+                );
+                
+                console.log(`[LorcanaService] Found ${lastUpdateResult.rows.length} price update records`);
+                
+                let shouldUpdate = true;
+                if (lastUpdateResult.rows.length > 0) {
+                    const lastUpdate = new Date(lastUpdateResult.rows.item(0).value);
+                    const now = new Date();
+                    const oneDayAgo = new Date(now);
+                    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+                    
+                    // Only update if it's been more than a day since the last update
+                    shouldUpdate = lastUpdate < oneDayAgo;
+                    console.log(`[LorcanaService] Last update: ${lastUpdate.toISOString()}, shouldUpdate: ${shouldUpdate}`);
+                }
+                
+                if (shouldUpdate) {
+                    console.log('[LorcanaService] Running daily price update...');
+                    
+                    // Update in the background to not block initialization
+                    setTimeout(async () => {
+                        try {
+                            console.log('[LorcanaService] Starting background price update...');
+                            const result = await updateAllLorcanaPrices();
+                            
+                            // Update the last update timestamp
+                            const timestamp = new Date().toISOString();
+                            await db.executeSql(
+                                `INSERT OR REPLACE INTO lorcana_app_settings (key, value) VALUES (?, ?)`,
+                                ['last_price_update', timestamp]
+                            );
+                            
+                            console.log(`[LorcanaService] Daily price update completed. Updated: ${result.updated}, Skipped: ${result.skipped}`);
+                        } catch (error) {
+                            console.error('[LorcanaService] Error during background price update:', error);
+                        }
+                    }, 5000); // Wait 5 seconds after initialization before starting updates
+                } else {
+                    console.log('[LorcanaService] Daily price update already performed recently. Skipping.');
+                }
+            } catch (error) {
+                console.error('[LorcanaService] Error checking for price updates:', error);
+            }
+            
+            console.log('[LorcanaService] Price update check completed');
+            
+            // The database and tables will be ready after calling initializeAllDatabases
+            console.log('[LorcanaService] Lorcana database initialized successfully');
+            isInitialized = true;
+            console.log('[LorcanaService] initializeLorcanaDatabase returning true');
+            return true;
+        } catch (error) {
+            console.error('[LorcanaService] Error initializing Lorcana database:', error);
+            if (error instanceof Error) {
+                console.error('[LorcanaService] Error details:', {
+                    message: error.message,
+                    stack: error.stack,
+                    name: error.name
+                });
+            }
+            isInitialized = false;
+            return false;
+        }
+    })();
+
+    return initializationPromise!;
 };
 
 // Add function to populate the lorcana_card_prices table from existing data
@@ -338,6 +452,8 @@ export const getLorcanaCards = async () => {
 };
 
 export const setNames = async () => {
+    // Make sure the Lorcana database (and its tables) are ready before querying
+
     const db = await getDB();
     const [results] = await db.executeSql(`
         SELECT DISTINCT Set_ID, Set_Name 
@@ -475,6 +591,7 @@ const saveLorcanaPriceHistory = async (
     tcgplayerId: string | null,
     isFirstScan: boolean = false
 ) => {
+    // Early return if cardId is missing
     if (!cardId) {
         console.log('[LorcanaService] Cannot save price history without card ID');
         return;
@@ -482,28 +599,51 @@ const saveLorcanaPriceHistory = async (
 
     try {
         const db = await getDB();
-        
-        // If this is potentially a first scan, check if there are any existing records for this card
+
+        // If this is potentially a first scan, validate against existing history
         if (isFirstScan) {
             const [existingRecords] = await db.executeSql(
                 'SELECT COUNT(*) as count FROM lorcana_price_history WHERE card_id = ?',
                 [cardId]
             );
-            
-            // If there are existing records, this is not actually a first scan
+
             if (existingRecords.rows.item(0).count > 0) {
                 isFirstScan = false;
             }
         }
-        
+
+        // ************************* NEW DEDUPLICATION LOGIC *************************
+        // Avoid saving duplicate entries that have identical prices within the last hour
+        const [lastRecordResult] = await db.executeSql(
+            `SELECT usd, usd_foil, recorded_at FROM lorcana_price_history 
+             WHERE card_id = ? ORDER BY recorded_at DESC LIMIT 1`,
+            [cardId]
+        );
+
+        if (lastRecordResult.rows.length > 0) {
+            const lastRecord = lastRecordResult.rows.item(0);
+            const lastRecordedAt = new Date(lastRecord.recorded_at);
+            const now = new Date();
+            const oneHourMs = 60 * 60 * 1000;
+
+            const pricesUnchanged = lastRecord.usd === normalPrice && lastRecord.usd_foil === foilPrice;
+            const withinTimeWindow = now.getTime() - lastRecordedAt.getTime() < oneHourMs;
+
+            if (pricesUnchanged && withinTimeWindow) {
+                console.log(`[LorcanaService] Skipping duplicate price history entry for card ID: ${cardId}`);
+                return;
+            }
+        }
+        // ***************************************************************************
+
         const timestamp = new Date().toISOString();
-        
+
         await db.executeSql(
             `INSERT INTO lorcana_price_history (card_id, usd, usd_foil, tcgplayer_id, recorded_at, first_scan) 
              VALUES (?, ?, ?, ?, ?, ?)`,
             [cardId, normalPrice, foilPrice, tcgplayerId, timestamp, isFirstScan ? 1 : 0]
         );
-        
+
         console.log(`[LorcanaService] Price history saved for card ID: ${cardId}${isFirstScan ? ' (first scan)' : ''}`);
     } catch (error) {
         console.error(`[LorcanaService] Error saving price history: ${error}`);
@@ -785,7 +925,12 @@ const getLorcanaCardPriceBySearch = async (card: { Name: string; Set_Num?: numbe
         const version = parts.length > 1 ? parts.slice(1).join(" - ").trim() : "";
 
         // Format rarity to lowercase after underscore
-        const formattedRarity = card.Rarity ? card.Rarity.replace(' ', '_').replace('_R', '_r') : '';
+        const formattedRarity = card.Rarity
+            ? card.Rarity
+                .trim()
+                .replace(/[\s-]+/g, '_')
+                .toLowerCase()
+            : '';
         console.log('[LorcanaService] Formatted rarity:', formattedRarity);
 
         // Build search query using card details and properly encode each part
@@ -1026,6 +1171,7 @@ export const getOrCreateLorcanaSetCollection = async (setId: string, setName: st
 
         // Try to find existing collection
         const collectionName = `Set: ${setName}`;
+        console.log(`[LorcanaService] Looking for existing collection with name: "${collectionName}" or description containing: "${setId})"`);
         const [existingCollection] = await db.executeSql(
             'SELECT id FROM lorcana_collections WHERE name = ? OR description LIKE ?',
             [collectionName, `%${setId})`]
@@ -1036,16 +1182,36 @@ export const getOrCreateLorcanaSetCollection = async (setId: string, setName: st
             console.log(`[LorcanaService] Found existing collection: ${collectionId}`);
             return collectionId;
         }
+        
+        console.log(`[LorcanaService] No existing collection found, creating new one...`);
 
         // Create new collection
         const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
         const now = new Date().toISOString();
         const description = `Collection for ${setName} (${setId})`;
 
+        // Try to parse numeric component from setId (e.g., 'ROJ' is 8, 'ARI' is 7)
+        let numericSetNum: number | null = null;
+        const numericMatch = setId.match(/^(\d+)$/);
+        if (numericMatch) {
+            numericSetNum = parseInt(numericMatch[1], 10);
+        } else {
+            // fallback lookup via reverse mapping of mapLorcastSetCodeToSetId
+            const reverseMap: { [k: string]: number } = { TFC:1, ROF:2, INK:3, URS:4, SSK:5, AZS:6, ARI:7, ROJ:8, FAB:9, WHI:10 };
+            numericSetNum = reverseMap[setId.toUpperCase()] ?? null;
+        }
+
+        console.log(`[LorcanaService] Inserting collection with:`, {
+            id, 
+            collectionName, 
+            description, 
+            numericSetNum
+        });
+        
         await db.executeSql(
-            `INSERT INTO lorcana_collections (id, name, description, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)`,
-            [id, collectionName, description, now, now]
+            `INSERT INTO lorcana_collections (id, name, description, created_at, updated_at, set_number)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [id, collectionName, description, now, now, numericSetNum]
         );
 
         console.log(`[LorcanaService] Created new collection: ${id}`);
@@ -1060,6 +1226,7 @@ export const getOrCreateLorcanaSetCollection = async (setId: string, setName: st
             throw new Error('Failed to create collection - verification failed');
         }
 
+        console.log(`[LorcanaService] Collection verified successfully: ${id}`);
         return id;
     } catch (error) {
         console.error('[LorcanaService] Error in getOrCreateLorcanaSetCollection:', error);
@@ -1067,7 +1234,12 @@ export const getOrCreateLorcanaSetCollection = async (setId: string, setName: st
     }
 };
 
-export const addCardToLorcanaCollection = async (cardId: string, collectionId: string): Promise<void> => {
+export const addCardToLorcanaCollection = async (
+    cardId: string,
+    collectionId: string,
+    isFoil: boolean = false,
+    quantity: number = 1
+): Promise<void> => {
     try {
         if (!cardId || !collectionId) {
             console.error('[LorcanaService] Invalid card ID or collection ID:', { cardId, collectionId });
@@ -1115,13 +1287,45 @@ export const addCardToLorcanaCollection = async (cardId: string, collectionId: s
             Unique_ID: card.Unique_ID
         });
 
-        // Use a transaction to ensure all operations complete
+        // ---------------------------------------------------------------------
+        // Fetch current quantities BEFORE starting the transaction. This avoids
+        // relying on tx.executeSql (which has a void return type in typings),
+        // eliminating the TypeScript error "Property 'rows' does not exist on
+        // type 'Transaction'."
+        // ---------------------------------------------------------------------
+        const [existingRowResult] = await db.executeSql(
+            'SELECT quantity_normal, quantity_foil FROM lorcana_collection_cards WHERE collection_id = ? AND card_id = ?',
+            [collectionId, cardId]
+        );
+
+        const rowExists = existingRowResult.rows.length > 0;
+        const currentNormal = rowExists ? existingRowResult.rows.item(0).quantity_normal || 0 : 0;
+        const currentFoil = rowExists ? existingRowResult.rows.item(0).quantity_foil || 0 : 0;
+
+        // Use a transaction to ensure all write operations complete atomically
         await db.transaction(async (tx) => {
-            // Add to collection_cards table
-            await tx.executeSql(
-                'INSERT OR REPLACE INTO lorcana_collection_cards (collection_id, card_id, added_at) VALUES (?, ?, ?)',
-                [collectionId, cardId, now]
-            );
+            // No need to query inside the transaction – we already have the
+            // current quantities.
+
+            if (!rowExists) {
+                // Insert new row with proper quantities
+                const qNormal = isFoil ? 0 : quantity;
+                const qFoil = isFoil ? quantity : 0;
+                await tx.executeSql(
+                    `INSERT INTO lorcana_collection_cards (collection_id, card_id, quantity_normal, quantity_foil, added_at)
+                     VALUES (?, ?, ?, ?, ?)`,
+                    [collectionId, cardId, qNormal, qFoil, now]
+                );
+            } else {
+                // Increment appropriate quantity column
+                const newNormal = currentNormal + (isFoil ? 0 : quantity);
+                const newFoil = currentFoil + (isFoil ? quantity : 0);
+                await tx.executeSql(
+                    `UPDATE lorcana_collection_cards SET quantity_normal = ?, quantity_foil = ?, added_at = ?
+                     WHERE collection_id = ? AND card_id = ?`,
+                    [newNormal, newFoil, now, collectionId, cardId]
+                );
+            }
 
             // Update collection timestamp
             await tx.executeSql(
@@ -1164,9 +1368,62 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
     collectedCards: number;
     completionPercentage: number;
     totalValue: number;
+    set_number: number;
 }>> => {
+    console.log(`[LorcanaService] getLorcanaSetCollections called with forceRefresh: ${forceRefresh}`);
     try {
         const db = await getDB();
+        console.log('[LorcanaService] Database connection obtained for getLorcanaSetCollections');
+        // Auto-create missing set collections on first run ------------------
+        // If there are currently no Lorcana set collections, we create one for
+        // every distinct Set_ID in the master card table so the Set Completion
+        // screen always has something to display (even before the user scans
+        // any cards).
+        // -------------------------------------------------------------------
+        const [existingSetCollections] = await db.executeSql(
+            "SELECT COUNT(*) as cnt FROM lorcana_collections WHERE name LIKE 'Set: %'"
+        );
+
+        console.log(`[LorcanaService] Found ${existingSetCollections.rows.item(0).cnt} existing Lorcana set collections`);
+
+        if (existingSetCollections.rows.item(0).cnt === 0) {
+            console.log('[LorcanaService] No existing set collections found, creating them from cards...');
+
+            // Get distinct sets from cards
+            const [distinctSets] = await db.executeSql(
+                `SELECT DISTINCT Set_ID, Set_Name, Set_Num FROM lorcana_cards
+                 WHERE Set_ID IS NOT NULL AND Set_Name IS NOT NULL
+                 ORDER BY Set_Num ASC`
+            );
+
+            console.log(`[LorcanaService] Found ${distinctSets.rows.length} distinct sets to create collections for`);
+
+            // Create collections for each set
+            for (let i = 0; i < distinctSets.rows.length; i++) {
+                const row = distinctSets.rows.item(i);
+                const setId = row.Set_ID;
+                const setName = row.Set_Name;
+                const setNum = row.Set_Num;
+
+                try {
+                    // Create collection directly
+                    const collectionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+                    const now = new Date().toISOString();
+                    const description = `Collection for ${setName} (${setId})`;
+
+                    await db.executeSql(
+                        `INSERT OR IGNORE INTO lorcana_collections (id, name, description, created_at, updated_at, set_number)
+                         VALUES (?, ?, ?, ?, ?, ?)`,
+                        [collectionId, `Set: ${setName}`, description, now, now, setNum]
+                    );
+
+                    console.log(`[LorcanaService] Created collection for ${setName} (${setId})`);
+                } catch (error) {
+                    console.error(`[LorcanaService] Failed to create collection for ${setName}:`, error);
+                }
+            }
+        }
+        // -------------------------------------------------------------------
         // Use 24 hour cache time 
         // const cacheTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
@@ -1226,34 +1483,97 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
         }
         */
 
+        // Ensure all collections have set_number set for proper ordering
+        await db.executeSql(`
+            UPDATE lorcana_collections
+            SET set_number = CASE
+                WHEN description LIKE '%(TFC)' THEN 1
+                WHEN description LIKE '%(ROF)' THEN 2
+                WHEN description LIKE '%(INK)' THEN 3
+                WHEN description LIKE '%(URS)' THEN 4
+                WHEN description LIKE '%(SSK)' THEN 5
+                WHEN description LIKE '%(AZS)' THEN 6
+                WHEN description LIKE '%(ARI)' THEN 7
+                WHEN description LIKE '%(ROJ)' THEN 8
+                WHEN description LIKE '%(FAB)' THEN 9
+                WHEN description LIKE '%(WHI)' THEN 10
+                ELSE set_number
+            END
+            WHERE name LIKE 'Set: %' AND (set_number IS NULL OR set_number = 0)
+        `);
+
         // Get all collections with their updated stats
-        const [results] = await db.executeSql(`
+        console.log('[LorcanaService] Executing main collection stats query...');
+
+
+        // First check if lorcana_collection_cards table exists
+        let collectionCardsTableExists = false;
+        try {
+            await db.executeSql("SELECT 1 FROM lorcana_collection_cards LIMIT 1");
+            collectionCardsTableExists = true;
+            console.log('[LorcanaService] lorcana_collection_cards table exists');
+        } catch (error) {
+            console.log('[LorcanaService] lorcana_collection_cards table does not exist, will use simplified query');
+        }
+
+        let results;
+        try {
+            if (collectionCardsTableExists) {
+                // Use full query with collection cards - map text codes to numeric IDs
+                const mappedQuery = `
             WITH CollectionStats AS (
-                SELECT 
+                SELECT
                     c.id,
                     c.name,
                     c.description,
                     c.created_at,
                     c.updated_at,
                     COALESCE(cc.collected_count, 0) as collected_cards,
-                    (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) 
-                        FROM lorcana_cards lc 
-                        WHERE lc.Set_ID = SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1)
-                        AND lc.Name IS NOT NULL
-                        AND lc.Unique_ID IS NOT NULL
-                    ) as total_cards,
+                    CASE
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'TFC' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '1' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROF' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '2' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'INK' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '3' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'URS' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '4' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'SSK' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '5' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'AZS' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '6' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ARI' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '7' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROJ' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '8' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'FAB' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '9' AND lc.Unique_ID IS NOT NULL
+                        )
+                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'WHI' THEN (
+                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '10' AND lc.Unique_ID IS NOT NULL
+                        )
+                        ELSE 0
+                    END as total_cards,
                     (
                         SELECT COALESCE(SUM(
-                            CASE 
+                            CASE
                                 WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
-                                ELSE 0 
+                                ELSE 0
                             END
                         ), 0)
                         FROM lorcana_cards lc
                         INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
                         WHERE lcc.collection_id = c.id
-                    ) as total_value
+                    ) as total_value,
+                    c.set_number
                 FROM lorcana_collections c
                 LEFT JOIN (
                     SELECT collection_id, COUNT(*) as collected_count
@@ -1262,7 +1582,7 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                 ) cc ON c.id = cc.collection_id
                 WHERE c.name LIKE 'Set: %'
             )
-            SELECT 
+            SELECT
                 id,
                 name,
                 description,
@@ -1271,15 +1591,152 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                 collected_cards,
                 total_cards,
                 total_value,
-                CASE 
-                    WHEN total_cards > 0 THEN (CAST(collected_cards AS FLOAT) / total_cards) * 100 
-                    ELSE 0 
+                set_number,
+                CASE
+                    WHEN total_cards > 0 THEN (CAST(collected_cards AS FLOAT) / total_cards) * 100
+                    ELSE 0
                 END as completion_percentage
             FROM CollectionStats
-            ORDER BY name;
-        `);
+            ORDER BY set_number ASC
+            `;
 
-        return Array.from({length: results.rows.length}, (_, i) => {
+                [results] = await db.executeSql(mappedQuery);
+            } else {
+                // Simplified query without collection cards table - map text codes to numeric IDs
+                const simplifiedQuery = `
+            SELECT
+                c.id,
+                c.name,
+                c.description,
+                c.created_at,
+                c.updated_at,
+                0 as collected_cards,
+                CASE
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'TFC' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '1' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROF' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '2' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'INK' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '3' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'URS' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '4' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'SSK' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '5' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'AZS' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '6' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ARI' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '7' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROJ' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '8' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'FAB' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '9' AND lc.Unique_ID IS NOT NULL
+                    )
+                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'WHI' THEN (
+                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '10' AND lc.Unique_ID IS NOT NULL
+                    )
+                    ELSE 0
+                END as total_cards,
+                0 as total_value,
+                c.set_number,
+                0 as completion_percentage
+            FROM lorcana_collections c
+            WHERE c.name LIKE 'Set: %'
+            ORDER BY c.set_number ASC
+            `;
+
+                [results] = await db.executeSql(simplifiedQuery);
+            }
+            console.log(`[LorcanaService] Main query returned ${results.rows.length} rows`);
+        } catch (queryError) {
+            console.error('[LorcanaService] Main collection stats query failed:', queryError);
+            throw queryError;
+        }
+
+        // If for some reason we still have zero collections (e.g. first run
+        // where card data arrived a little later), try one more time to create
+        // them and re-query.
+        if (results.rows.length === 0) {
+            console.log('[LorcanaService] No Lorcana collections found after primary query – attempting auto-creation fallback');
+
+            // Check again if we have any cards
+            const [cardCountFallback] = await db.executeSql('SELECT COUNT(*) as cnt FROM lorcana_cards');
+            console.log(`[LorcanaService] Fallback: Found ${cardCountFallback.rows.item(0).cnt} total Lorcana cards in database`);
+
+            const [distinctAgain] = await db.executeSql(
+                `SELECT DISTINCT Set_ID, Set_Name FROM lorcana_cards
+                 WHERE Set_ID IS NOT NULL AND Set_Name IS NOT NULL`
+            );
+            console.log(`[LorcanaService] Fallback: Found ${distinctAgain.rows.length} distinct sets in lorcana_cards table`);
+            
+            for (let i = 0; i < distinctAgain.rows.length; i++) {
+                const row = distinctAgain.rows.item(i);
+                console.log(`[LorcanaService] Fallback: Creating collection for set: ${row.Set_ID} - ${row.Set_Name}`);
+                await getOrCreateLorcanaSetCollection(row.Set_ID, row.Set_Name);
+            }
+
+            // Re-run the main query
+            [results] = await db.executeSql(`
+                WITH CollectionStats AS (
+                    SELECT 
+                        c.id,
+                        c.name,
+                        c.description,
+                        c.created_at,
+                        c.updated_at,
+                        COALESCE(cc.collected_count, 0) as collected_cards,
+                        (
+                            SELECT COUNT(DISTINCT lc.Unique_ID)
+                            FROM lorcana_cards lc
+                            WHERE lc.Set_ID = SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1)
+                            AND lc.Unique_ID IS NOT NULL
+                        ) as total_cards,
+                        (
+                            SELECT COALESCE(SUM(
+                                CASE 
+                                    WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
+                                    ELSE 0 
+                                END
+                            ), 0)
+                            FROM lorcana_cards lc
+                            INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
+                            WHERE lcc.collection_id = c.id
+                        ) as total_value,
+                        c.set_number
+                    FROM lorcana_collections c
+                    LEFT JOIN (
+                        SELECT collection_id, COUNT(*) as collected_count
+                        FROM lorcana_collection_cards
+                        GROUP BY collection_id
+                    ) cc ON c.id = cc.collection_id
+                    WHERE c.name LIKE 'Set: %'
+                )
+                SELECT 
+                    id,
+                    name,
+                    description,
+                    created_at,
+                    updated_at,
+                    collected_cards,
+                    total_cards,
+                    total_value,
+                    set_number,
+                    CASE 
+                        WHEN total_cards > 0 THEN (CAST(collected_cards AS FLOAT) / total_cards) * 100 
+                        ELSE 0 
+                    END as completion_percentage
+                FROM CollectionStats
+            ;`);
+        }
+
+        const collections = Array.from({length: results.rows.length}, (_, i) => {
             const row = results.rows.item(i);
             return {
                 id: row.id,
@@ -1291,9 +1748,12 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                 totalCards: row.total_cards,
                 collectedCards: row.collected_cards,
                 completionPercentage: row.completion_percentage,
-                totalValue: row.total_value || 0
+                totalValue: row.total_value || 0,
+                set_number: row.set_number
             };
         });
+        console.log(`[LorcanaService] Returning ${collections.length} collections`);
+        return collections;
     } catch (error) {
         console.error('Error getting Lorcana set collections:', error);
         throw error;
@@ -1304,9 +1764,145 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
 export const isLorcanaInitialized = () => isInitialized;
 
 // Add this function to ensure initialization
+export const cleanupDuplicateCards = async (): Promise<{ deleted: number; remaining: number }> => {
+    try {
+        console.log('[LorcanaService] Starting duplicate card cleanup...');
+
+        const db = await getDB();
+
+        // First, get counts before cleanup
+        const [beforeResult] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_cards');
+        const totalBefore = beforeResult.rows.item(0).count;
+
+        // Delete cards with numeric Set_ID (old format) or set_ prefixed IDs
+        const [deleteResult] = await db.executeSql(
+            "DELETE FROM lorcana_cards WHERE Set_ID GLOB '[0-9]*' OR Set_ID LIKE 'set_%'"
+        );
+
+        // Reclaim space
+        await db.executeSql('VACUUM');
+
+        // Get counts after cleanup
+        const [afterResult] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_cards');
+        const totalAfter = afterResult.rows.item(0).count;
+
+        const deleted = totalBefore - totalAfter;
+
+        console.log(`[LorcanaService] Cleanup complete: Deleted ${deleted} duplicate cards, ${totalAfter} cards remaining`);
+
+        return {
+            deleted,
+            remaining: totalAfter
+        };
+    } catch (error) {
+        console.error('[LorcanaService] Error during duplicate cleanup:', error);
+        throw error;
+    }
+};
+
+export const clearAllLorcanaCards = async (): Promise<{ cleared: number }> => {
+    try {
+        console.log('[LorcanaService] Starting complete card table clear...');
+
+        const db = await getDB();
+
+        // First, get counts before clearing
+        const [beforeResult] = await db.executeSql('SELECT COUNT(*) as count FROM lorcana_cards');
+        const totalBefore = beforeResult.rows.item(0).count;
+
+        // Also clear related tables to maintain consistency
+        await db.executeSql('DELETE FROM lorcana_collection_cards');
+        await db.executeSql('DELETE FROM lorcana_card_prices');
+
+        // Clear the main cards table
+        await db.executeSql('DELETE FROM lorcana_cards');
+
+        // Reclaim space
+        await db.executeSql('VACUUM');
+
+        console.log(`[LorcanaService] Complete clear finished: Removed ${totalBefore} cards and all related data`);
+
+        return {
+            cleared: totalBefore
+        };
+    } catch (error) {
+        console.error('[LorcanaService] Error during complete card clear:', error);
+        throw error;
+    }
+};
+
 export const ensureLorcanaInitialized = async () => {
-    if (!isInitialized) {
-        await initializeLorcanaDatabase();
+    try {
+        console.log('[LorcanaService] Checking if Lorcana database is initialized...');
+
+        const db = await getDB();
+
+        // Check if tables exist by trying to query them
+        try {
+            await db.executeSql('SELECT 1 FROM lorcana_cards LIMIT 1');
+            console.log('[LorcanaService] Lorcana tables already exist');
+            return;
+        } catch (error) {
+            console.log('[LorcanaService] Lorcana tables do not exist, creating them...');
+        }
+
+        // Create tables if they don't exist
+        await db.transaction(async (tx) => {
+            // Lorcana cards table
+            await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Artist TEXT, Body_Text TEXT, Card_Num INTEGER, Classifications TEXT,
+                Color TEXT, Cost INTEGER, Date_Added TEXT, Date_Modified TEXT,
+                Flavor_Text TEXT, Franchise TEXT, Image TEXT, Inkable INTEGER,
+                Lore INTEGER, Name TEXT, Rarity TEXT, Set_ID TEXT, Set_Name TEXT,
+                Set_Num INTEGER, Strength INTEGER, Type TEXT, Unique_ID TEXT UNIQUE,
+                Willpower INTEGER, price_usd TEXT, price_usd_foil TEXT,
+                last_updated TEXT, collected INTEGER DEFAULT 0
+            );`);
+
+            // Lorcana collections table
+            await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collections (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                total_value REAL DEFAULT 0,
+                card_count INTEGER DEFAULT 0,
+                set_number INTEGER
+            );`);
+
+            // Lorcana collection cards table
+            await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collection_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                collection_id TEXT NOT NULL,
+                card_id TEXT NOT NULL,
+                quantity INTEGER DEFAULT 1,
+                added_at TEXT NOT NULL,
+                FOREIGN KEY (collection_id) REFERENCES lorcana_collections(id) ON DELETE CASCADE
+            );`);
+
+            // Lorcana card prices table
+            await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_card_prices (
+                card_id TEXT PRIMARY KEY NOT NULL,
+                usd REAL,
+                usd_foil REAL,
+                tcgplayer_id INTEGER,
+                last_updated TEXT NOT NULL,
+                FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
+            );`);
+
+            // Create indices for better performance
+            await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_name ON lorcana_cards(Name);');
+            await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_unique_id ON lorcana_cards(Unique_ID);');
+            await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_collection_id ON lorcana_collection_cards(collection_id);');
+            await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_card_id ON lorcana_collection_cards(card_id);');
+        });
+
+        console.log('[LorcanaService] Lorcana database tables created successfully');
+    } catch (error) {
+        console.error('[LorcanaService] Error ensuring Lorcana database is initialized:', error);
+        throw error;
     }
 };
 
@@ -1402,7 +1998,7 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
         if (tableResult.rows.length > 0) {
             // If the prices table exists, use the full query with price data
             query = `
-                SELECT c.*, p.usd, p.usd_foil, p.tcgplayer_id, p.last_updated
+                SELECT c.*, cc.quantity_normal, cc.quantity_foil, p.usd, p.usd_foil, p.tcgplayer_id, p.last_updated
                 FROM lorcana_cards c
                 INNER JOIN lorcana_collection_cards cc ON c.Unique_ID = cc.card_id
                 LEFT JOIN lorcana_card_prices p ON c.Unique_ID = p.card_id
@@ -1418,7 +2014,7 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
             // If the prices table doesn't exist, use a simpler query without joining to the prices table
             console.log('[LorcanaService] lorcana_card_prices table not found, using simpler query');
             query = `
-                SELECT c.*
+                SELECT c.*, cc.quantity_normal, cc.quantity_foil
                 FROM lorcana_cards c
                 INNER JOIN lorcana_collection_cards cc ON c.Unique_ID = cc.card_id
                 WHERE cc.collection_id = ?
@@ -1431,7 +2027,7 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
             }
         }
 
-        let results;
+        let results: any;
         if (pageSize > 0) {
             [results] = await db.executeSql(query, [collectionId, pageSize, offset]);
         } else {
@@ -1472,6 +2068,8 @@ export const getLorcanaCollectionCards = async (collectionId: string, page: numb
                     Image: item.Image,
                     collected: true, // Since it's in a collection, set collected to true
                     // Add price information - either from the joined prices table or from the card itself
+                    quantity_normal: item.quantity_normal ?? 0,
+                    quantity_foil: item.quantity_foil ?? 0,
                     prices: {
                         usd: item.usd || item.price_usd || null,
                         usd_foil: item.usd_foil || item.price_usd_foil || null,
@@ -1506,26 +2104,46 @@ export const deleteLorcanaCardFromCollection = async (cardId: string, collection
 };
 
 // Add this new function to get missing cards for a set
+// Helper function to convert text set codes to numeric IDs
+const getNumericSetId = (textSetId: string): string => {
+    const mapping: { [key: string]: string } = {
+        'TFC': '1',   // The First Chapter
+        'ROF': '2',   // Rise of the Floodborn
+        'INK': '3',   // Into the Inklands
+        'URS': '4',   // Ursula's Return
+        'SSK': '5',   // Shimmering Skies
+        'AZS': '6',   // Azurite Sea
+        'ARI': '7',   // Archazia's Island
+        'ROJ': '8',   // Reign of Jafar
+        'FAB': '9',   // Fabled
+        'WHI': '10'   // Whispers in the Well
+    };
+    return mapping[textSetId] || textSetId; // Return original if not found
+};
+
 export const getLorcanaSetMissingCards = async (setId: string, collectionId: string): Promise<LorcanaCardWithPrice[]> => {
     try {
         const db = await getDB();
-        
+
+        // Convert text set code to numeric ID for database lookup
+        const numericSetId = getNumericSetId(setId);
+
         // Get all cards from the set, and check if they are in the specified collection
         const [results] = await db.executeSql(`
-            SELECT lc.*, 
-                   CASE 
-                       WHEN lcc.card_id IS NOT NULL THEN 1 
-                       ELSE 0 
+            SELECT lc.*,
+                   CASE
+                       WHEN lcc.card_id IS NOT NULL THEN 1
+                       ELSE 0
                    END as collected
             FROM lorcana_cards lc
             LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id AND lcc.collection_id = ?
-            WHERE lc.Set_ID = ? 
-            AND lc.Unique_ID IS NOT NULL 
+            WHERE lc.Set_ID = ?
+            AND lc.Unique_ID IS NOT NULL
             AND lc.Name IS NOT NULL
-            ORDER BY 
+            ORDER BY
                 CASE WHEN lc.Rarity = 'Enchanted' THEN 1 ELSE 0 END DESC,
                 lc.Card_Num ASC;
-        `, [collectionId, setId]);
+        `, [collectionId, numericSetId]);
 
         const cards: LorcanaCardWithPrice[] = [];
         for (let i = 0; i < results.rows.length; i++) {
@@ -1572,6 +2190,7 @@ export const deleteLorcanaCollection = async (collectionId: string): Promise<voi
 // Function to fetch and store enchanted cards from Lorcast API
 export const fetchAndStoreEnchantedCards = async () => {
     try {
+        console.log('[EnchantedImport] Fetching enchanted cards from Lorcast API');
         const response = await fetch('https://api.lorcast.com/v0/cards/search?q=rarity:enchanted');
         
         if (!response.ok) {
@@ -1579,72 +2198,71 @@ export const fetchAndStoreEnchantedCards = async () => {
         }
 
         const data = await response.json();
+        console.log(`[EnchantedImport] API returned ${data?.results?.length ?? 0} cards`);
+        
         const db = await getDB();
 
         // Insert cards in batches
         const batchSize = 20;
         for (let i = 0; i < data.results.length; i += batchSize) {
             const batch = data.results.slice(i, Math.min(i + batchSize, data.results.length));
+            console.log(`[EnchantedImport] Processing batch ${i / batchSize + 1} – ${batch.length} cards`);
             await db.transaction((tx) => {
                 batch.forEach((card: any) => {
                     if (!card || !card.name || !card.set?.code) return;
 
-                    const setId = mapLorcastSetCodeToSetId(card.set.code);
-                    if (!setId) return;
+                    // Prefer our internal mapping; fall back to API-provided IDs if unknown
+                    const setId = mapLorcastSetCodeToSetId(card.set.code) || card.set.id || card.set.code;
+                    if (!setId) {
+                        console.log('[EnchantedImport] Skipping card (no setId):', card.name, card.set.code);
+                        return;
+                    }
 
-                    // Map Lorcast API fields to database fields
-                    const cardData = {
-                        Artist: card.illustrators?.join(', ') || null,
-                        Body_Text: card.text || null,
-                        Card_Num: parseInt(card.collector_number) || null,
-                        Classifications: card.classifications?.join(', ') || null,
-                        Color: card.ink || null,
-                        Cost: card.cost || null,
-                        Date_Added: card.released_at || null,
-                        Date_Modified: new Date().toISOString(),
-                        Flavor_Text: null,
-                        Franchise: null,
-                        Image: card.image_uris?.digital?.normal || null,
-                        Inkable: card.inkwell ? 1 : 0,
-                        Lore: card.lore || null,
-                        Name: card.version ? `${card.name} - ${card.version}` : card.name,
-                        Rarity: 'Enchanted',
-                        Set_ID: setId,
-                        Set_Name: card.set.name || null,
-                        Set_Num: parseInt(card.collector_number) || null,
-                        Strength: card.strength || null,
-                        Type: card.type?.join(', ') || null,
-                        Unique_ID: card.id || null,
-                        Willpower: card.willpower || null,
-                        price_usd: null,
-                        price_usd_foil: card.prices?.usd_foil ? card.prices.usd_foil.toString() : null,
-                        last_updated: new Date().toISOString(),
-                        collected: 0
-                    };
+                    console.log(`[EnchantedImport] Inserting card ${card.name} (#${card.collector_number}) into set ${setId}`);
 
                     tx.executeSql(
                         `INSERT OR REPLACE INTO lorcana_cards (
                             Artist, Body_Text, Card_Num, Classifications, Color, Cost,
-                            Date_Added, Date_Modified, Flavor_Text, Franchise, Image,
-                            Inkable, Lore, Name, Rarity, Set_ID, Set_Name, Set_Num,
-                            Strength, Type, Unique_ID, Willpower,
-                            price_usd, price_usd_foil, last_updated, collected
+                            Date_Added, Date_Modified, Flavor_Text, Franchise, Image, Inkable,
+                            Lore, Name, Rarity, Set_ID, Set_Name, Set_Num, Strength, Type,
+                            Unique_ID, Willpower, collected, last_updated, price_usd, price_usd_foil
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                         [
-                            cardData.Artist, cardData.Body_Text, cardData.Card_Num,
-                            cardData.Classifications, cardData.Color, cardData.Cost,
-                            cardData.Date_Added, cardData.Date_Modified, cardData.Flavor_Text,
-                            cardData.Franchise, cardData.Image, cardData.Inkable,
-                            cardData.Lore, cardData.Name, cardData.Rarity,
-                            cardData.Set_ID, cardData.Set_Name, cardData.Set_Num,
-                            cardData.Strength, cardData.Type, cardData.Unique_ID,
-                            cardData.Willpower, cardData.price_usd, cardData.price_usd_foil,
-                            cardData.last_updated, cardData.collected
+                            card.illustrators ? card.illustrators[0] : null,
+                            card.text || null,
+                            parseInt(card.collector_number) || null,
+                            card.classifications ? card.classifications.join(', ') : null,
+                            card.ink || null,
+                            card.cost || null,
+                            card.released_at || new Date().toISOString(),
+                            new Date().toISOString(),
+                            card.flavor_text || null,
+                            '',
+                            card.image_uris?.digital?.normal || null,
+                            card.inkwell ? 1 : 0,
+                            card.lore || null,
+                            card.name,
+                            card.rarity || null,
+                            setId,
+                            card.set.name || null,
+                            parseInt(card.collector_number) || null,
+                            card.strength || null,
+                            card.type?.join(', ') || null,
+                            card.id || null,
+                            card.willpower || null,
+                            0, // collected
+                            new Date().toISOString(), // last_updated
+                            null, // price_usd
+                            card.prices?.usd_foil ? card.prices.usd_foil.toString() : null,
                         ]
                     );
+                    console.log('[EnchantedImport] Inserted/updated', card.id);
                 });
             });
+            console.log('[EnchantedImport] Batch committed');
         }
+
+        console.log('[EnchantedImport] All batches processed');
     } catch (error) {
         console.error('[LorcanaService] Error fetching and storing enchanted cards:', error);
         throw error;
@@ -1773,158 +2391,28 @@ export const updateAllCardImages = async (batchSize = 25, startIndex = 0) => {
 
 
 
-// Function to safely refresh data without losing collection information
-// Function to safely refresh data without losing collection information
+/**
+ * UPDATED: Now uses the new CardImportService
+ * Safely refresh all Lorcana cards from Lorcast API
+ * This will fetch ALL sets and ALL cards including Enchanted, Epic, and Iconic
+ */
 export const safeRefreshLorcanaCards = async (): Promise<{ updated: number, added: number }> => {
     try {
-        // First ensure we have an active database connection
-        const db = await getDB();
-        
-        // Tracking variables
-        let updatedCount = 0;
-        let addedCount = 0;
-        console.log('[LorcanaService] Starting safeRefreshLorcanaCards');
+        console.log('[LorcanaService] Starting safeRefreshLorcanaCards using new CardImportService...');
 
-        // Step 1: Fetch latest bulk data
-        const response = await fetch(LorcanaBulkCardApi);
-        if (!response.ok) throw new Error(`API request failed: ${response.status}`);
-        
-        const cardData = await response.json();
-        console.log(`[LorcanaService] Loaded ${cardData.length} Lorcana cards from API`);
-        
-        // Log the structure of the first card to understand the API response format
-        if (cardData.length > 0) {
-            console.log('[LorcanaService] First card structure:', JSON.stringify(cardData[0], null, 2));
-        }
-        
-        // Step 2: Process in batches
-        const batchSize = 100;
-        for (let i = 0; i < cardData.length; i += batchSize) {
-            const batch = cardData.slice(i, i + batchSize);
-            console.log(`[LorcanaService] Processing batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(cardData.length / batchSize)}`);
-            
-            // Process each card in the batch
-            for (const card of batch) {
-                // Log raw card data based on actual API structure (PascalCase)
-                console.log('[LorcanaService] Processing card (raw API data):', {
-                    Name: card.Name,
-                    Unique_ID: card.Unique_ID,
-                    Set_ID: card.Set_ID,
-                    Card_Num: card.Card_Num
-                });
+        // Use the new import service to import all sets
+        const result = await cardImportService.importAllSets((progress) => {
+            console.log(`[LorcanaService] Progress: Set ${progress.currentSet}/${progress.totalSets} - ${progress.setName}: ${progress.processedCards}/${progress.totalCards} cards`);
+        });
 
-                // Skip if required fields are missing
-                if (!card.Name || !card.Unique_ID) {
-                    console.log('[LorcanaService] Skipping card due to missing Name or Unique_ID:', card);
-                    continue;
-                }
-
-                // Check if the card already exists
-                const [existingResults] = await db.executeSql(
-                    'SELECT Unique_ID, collected FROM lorcana_cards WHERE Unique_ID = ?',
-                    [card.Unique_ID]
-                );
-                
-                if (existingResults.rows.length > 0) {
-                    // Card exists - update it but preserve the collected status
-                    await db.executeSql(
-                        `UPDATE lorcana_cards SET 
-                            Artist = ?, Body_Text = ?, Card_Num = ?, Classifications = ?,
-                            Color = ?, Cost = ?, Date_Added = ?, Date_Modified = ?,
-                            Flavor_Text = ?, Franchise = ?, Image = ?, Inkable = ?,
-                            Lore = ?, Name = ?, Rarity = ?, Set_ID = ?, Set_Name = ?,
-                            Set_Num = ?, Strength = ?, Type = ?, Willpower = ?,
-                            last_updated = ?
-                        WHERE Unique_ID = ?`,
-                        [
-                            card.Artist || null,
-                            card.Body_Text || null,
-                            card.Card_Num || null,
-                            card.Classifications || null,
-                            card.Color || null,
-                            card.Cost || null,
-                            card.Date_Added || null,
-                            new Date().toISOString(),
-                            card.Flavor_Text || null,
-                            card.Franchise || null,
-                            card.Image || null,
-                            card.Inkable ? 1 : 0,
-                            card.Lore || null,
-                            card.Name,
-                            card.Rarity || null,
-                            card.Set_ID || null,
-                            card.Set_Name || null,
-                            card.Set_Num || null,
-                            card.Strength || null,
-                            card.Type || null,
-                            card.Willpower || null,
-                            new Date().toISOString(),
-                            card.Unique_ID
-                        ]
-                    );
-                    
-                    updatedCount++;
-                    console.log(`[LorcanaService] Updated card: ${card.Name} (${card.Unique_ID})`);
-                } else {
-                    // New card - insert it
-                    await db.executeSql(
-                        `INSERT INTO lorcana_cards (
-                            Artist, Body_Text, Card_Num, Classifications, Color, Cost,
-                            Date_Added, Date_Modified, Flavor_Text, Franchise, Image, Inkable,
-                            Lore, Name, Rarity, Set_ID, Set_Name, Set_Num, Strength, Type,
-                            Unique_ID, Willpower, collected, last_updated, price_usd, price_usd_foil
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [
-                            card.Artist || null,
-                            card.Body_Text || null,
-                            card.Card_Num || null,
-                            card.Classifications || null,
-                            card.Color || null,
-                            card.Cost || null,
-                            card.Date_Added || null,
-                            new Date().toISOString(),
-                            card.Flavor_Text || null,
-                            card.Franchise || null,
-                            card.Image || null,
-                            card.Inkable ? 1 : 0,
-                            card.Lore || null,
-                            card.Name,
-                            card.Rarity || null,
-                            card.Set_ID || null,
-                            card.Set_Name || null,
-                            card.Set_Num || null,
-                            card.Strength || null,
-                            card.Type || null,
-                            card.Unique_ID,
-                            card.Willpower || null,
-                            0, // collected
-                            new Date().toISOString(), // last_updated
-                            null, // price_usd
-                            null  // price_usd_foil
-                        ]
-                    );
-                    
-                    addedCount++;
-                    console.log(`[LorcanaService] Added new card: ${card.Name} (${card.Unique_ID})`);
-                }
-            }
-
-            console.log(`[LorcanaService] Batch complete. Current counts - Added: ${addedCount}, Updated: ${updatedCount}`);
-        }
-        
-        // Step 3: Fetch and update enchanted cards (these might not be in the bulk API)
-        try {
-            await fetchAndStoreEnchantedCards();
-        } catch (error) {
-            console.error('[LorcanaService] Error updating enchanted cards:', error);
-            // Continue even if enchanted cards update fails
-        }
-        
         // Force re-initialization
         isInitialized = true;
-        
-        console.log(`[LorcanaService] Refresh complete. Total Added: ${addedCount}, Total Updated: ${updatedCount}`);
-        return { updated: updatedCount, added: addedCount };
+
+        console.log(`[LorcanaService] Refresh complete using new system:`, result.summary);
+        return {
+            updated: result.updatedCards,
+            added: result.addedCards
+        };
     } catch (error) {
         console.error('[LorcanaService] Error in safeRefreshLorcanaCards:', error);
         return handleError('Error safely refreshing Lorcana cards', error);
@@ -1932,149 +2420,152 @@ export const safeRefreshLorcanaCards = async (): Promise<{ updated: number, adde
 };
 
 
-export const getNewSetCards = async (forceUpdate: boolean = false) => {
+/**
+ * UPDATED: Now uses the new CardImportService
+ * Fetch and import all cards for a specific set including Enchanted, Epic, and Iconic cards
+ */
+export const getNewSetCards = async (setNumber: number = 10, forceUpdate: boolean = false) => {
     try {
-        console.log('[LorcanaService] Fetching new set cards from Lorcast API...');
-        const response = await fetch(LorcanaNewSetApi);
-        if (!response.ok) throw new Error(`API request failed: ${response.status}`);
-        const newSetCardsData = await response.json();
-        
-        console.log(`[LorcanaService] Fetched ${newSetCardsData.length || 0} new set cards`);
-        
-        // Get database connection
+        console.log(`[LorcanaService] Fetching set ${setNumber} cards using new CardImportService...`);
+
+        // Use the new import service to import this specific set
+        const result = await cardImportService.importSet(setNumber, (progress) => {
+            console.log(`[LorcanaService] Progress: ${progress.processedCards}/${progress.totalCards} cards processed`);
+        });
+
+        const summary = `Set ${setNumber} import complete: ${result.added} added, ${result.updated} updated, ${result.skipped} skipped`;
+        console.log(`[LorcanaService] ${summary}`);
+
+        return {
+            added: result.added,
+            existing: 0, // Not tracked in new system
+            updated: result.updated,
+            skipped: result.skipped,
+            cards: [], // Cards not returned to reduce memory usage
+            summary
+        };
+    } catch (error) {
+        console.error('[LorcanaService] Error fetching new set cards:', error);
+        throw error;
+    }
+};
+
+/**
+ * Fetch a single card by set number and collector number from the Lorcast API
+ * This is used to get special/iconic cards that aren't included in the bulk set endpoint
+ */
+const fetchSingleCardFromLorcast = async (setNumber: number, collectorNumber: number): Promise<any | null> => {
+    try {
+        const url = `https://api.lorcast.com/v0/cards/${setNumber}/${collectorNumber}`;
+        console.log(`[LorcanaService] Fetching single card: set ${setNumber}, number ${collectorNumber}`);
+
+        const response = await fetch(url);
+        if (!response.ok) {
+            if (response.status === 404) {
+                console.log(`[LorcanaService] Card not found: set ${setNumber}, number ${collectorNumber}`);
+                return null;
+            }
+            throw new Error(`API request failed: ${response.status}`);
+        }
+
+        const cardData = await response.json();
+        console.log(`[LorcanaService] Successfully fetched card: ${cardData.name} - ${cardData.version}`);
+        return cardData;
+    } catch (error) {
+        console.error(`[LorcanaService] Error fetching card ${setNumber}/${collectorNumber}:`, error);
+        return null;
+    }
+};
+
+/**
+ * Fetch and import special/iconic cards (241-242) for sets that have them
+ * These cards are not included in the bulk /sets/:id/cards endpoint
+ */
+export const fetchSpecialIconicCards = async (setNumber: number): Promise<{ added: number, updated: number }> => {
+    try {
+        console.log(`[LorcanaService] Fetching special iconic cards for set ${setNumber}...`);
+
         const db = await getDB();
         let addedCount = 0;
-        let existingCount = 0;
         let updatedCount = 0;
-        let skippedCount = 0;
 
-        // First check which cards already exist in the database
-        // Get the set ID mapping for set 7
-        const setId = mapLorcastSetCodeToSetId('7') || 'ARI'; // Default to ARI if mapping fails
-        
-        const existingCardIds = new Set<string>();
-        const [existingCardsResult] = await db.executeSql(
-            'SELECT Unique_ID FROM lorcana_cards WHERE Unique_ID LIKE ?',
-            [`${setId}-%`]
-        );
-        
-        for (let i = 0; i < existingCardsResult.rows.length; i++) {
-            existingCardIds.add(existingCardsResult.rows.item(i).Unique_ID);
-        }
-        
-        console.log(`[LorcanaService] Found ${existingCardIds.size} existing cards in the database for set ${setId}`);
-        
-        // Process each card in the new set
-        await db.transaction(async (tx) => {
-            for (const apiCard of newSetCardsData) {
-                // Skip cards that don't have essential data
-                if (!apiCard.name || !apiCard.collector_number || !apiCard.set) {
-                    console.log('[LorcanaService] Skipping card with missing essential data:', 
-                      JSON.stringify({
-                        name: apiCard.name,
-                        collector_number: apiCard.collector_number,
-                        set: apiCard.set
-                      }));
-                    skippedCount++;
-                    continue;
-                }
-                
-                // Get the proper set code from our mapping
-                const numericSetCode = apiCard.set.code;
-                const properSetCode = mapLorcastSetCodeToSetId(numericSetCode) || apiCard.set.code;
-                
-                // Create a unique ID using the proper set code
-                const uniqueId = `${properSetCode}-${apiCard.collector_number}`;
-                const cardNum = Number(apiCard.collector_number);
-                
-                // Check if card already exists using our pre-populated Set
-                const cardExists = existingCardIds.has(uniqueId);
-                
-                if (!cardExists) {
-                    // Card doesn't exist, insert it
-                    console.log(`[LorcanaService] Adding new card: ${apiCard.name} (${uniqueId})`);
-                    await db.executeSql(`
-                        INSERT INTO lorcana_cards (
-                            Artist, Body_Text, Card_Num, Classifications, Color, Cost,
-                            Date_Added, Date_Modified, Flavor_Text, Franchise, Image, Inkable,
-                            Lore, Name, Rarity, Set_ID, Set_Name, Set_Num, Strength, Type,
-                            Unique_ID, Willpower, collected, last_updated, price_usd, price_usd_foil
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        // Iconic cards are numbered 241 and 242 in sets 9 and 10
+        const iconicCardNumbers = [241, 242];
+
+        for (const collectorNum of iconicCardNumbers) {
+            const apiCard = await fetchSingleCardFromLorcast(setNumber, collectorNum);
+
+            if (!apiCard) {
+                console.log(`[LorcanaService] No iconic card found at ${collectorNum} for set ${setNumber}`);
+                continue;
+            }
+
+            // Get the proper set code from our mapping
+            const numericSetCode = apiCard.set.code;
+            const properSetCode = mapLorcastSetCodeToSetId(numericSetCode) || apiCard.set.code;
+            const uniqueId = `${properSetCode}-${apiCard.collector_number}`;
+            const cardNum = Number(apiCard.collector_number);
+
+            // Check if card already exists
+            const [existingCard] = await db.executeSql(
+                'SELECT Unique_ID FROM lorcana_cards WHERE Unique_ID = ?',
+                [uniqueId]
+            );
+
+            if (existingCard.rows.length === 0) {
+                // Insert new card
+                console.log(`[LorcanaService] Adding new iconic card: ${apiCard.name} - ${apiCard.version} (${uniqueId})`);
+                await db.executeSql(`
+                    INSERT INTO lorcana_cards (
+                        Artist, Body_Text, Card_Num, Classifications, Color, Cost,
+                        Date_Added, Date_Modified, Flavor_Text, Franchise, Image, Inkable,
+                        Lore, Name, Rarity, Set_ID, Set_Name, Set_Num, Strength, Type,
+                        Unique_ID, Willpower, collected, last_updated, price_usd, price_usd_foil
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
-                        // Artist: first illustrator from the API
                         apiCard.illustrators ? apiCard.illustrators[0] : null,
-                        // Body_Text: from API "text"
                         apiCard.text || null,
-                        // Card_Num: should be the collector_number
                         cardNum,
-                        // Classifications: join classifications array with commas
                         apiCard.classifications ? apiCard.classifications.join(', ') : null,
-                        // Color: choose a primary ink, e.g. the first value from inks array
                         apiCard.inks && apiCard.inks.length > 0 ? apiCard.inks[0] : null,
-                        // Cost:
                         apiCard.cost || null,
-                        // Date_Added: you can use the API "released_at" or a custom date string
                         apiCard.released_at || new Date().toISOString(),
-                        // Flavor_Text:
                         apiCard.flavor_text || null,
-                        // Franchise: if not provided, use an empty string or default value
                         '',
-                        // Image: use image_uris.digital.normal
                         apiCard.image_uris?.digital?.normal || null,
-                        // Inkable: convert boolean to integer (false -> 0, true -> 1)
                         apiCard.inkwell ? 1 : 0,
-                        // Lore:
                         apiCard.lore || null,
-                        // Name: combine "name" and "version" if needed
                         `${apiCard.name}${apiCard.version ? ` - ${apiCard.version}` : ''}`,
-                        // Rarity:
                         apiCard.rarity || null,
-                        // Set_ID: should be the mapped text code (like ARI)
                         properSetCode,
-                        // Set_Name: from set.name
                         apiCard.set.name || null,
-                        // Set_Num: Should be the set's position in release order
                         Number(numericSetCode) || null,
-                        // Strength:
                         apiCard.strength || null,
-                        // Type: take the first type from the type array
                         apiCard.type && apiCard.type.length > 0 ? apiCard.type[0] : null,
-                        // Unique_ID: using the proper set code (like ARI-1)
                         uniqueId,
-                        // Willpower:
                         apiCard.willpower || null,
-                        // price_usd:
+                        0, // collected
+                        new Date().toISOString(),
                         apiCard.prices?.usd || null,
-                        // price_usd_foil:
                         apiCard.prices?.usd_foil || null
-                    ]);
-                    
-                    addedCount++;
-                } else if (forceUpdate) {
-                    // Card exists and we want to update it
-                    // Get the existing card to preserve certain values
-                    const [existingCardResult] = await db.executeSql(
-                        'SELECT collected FROM lorcana_cards WHERE Unique_ID = ?',
-                        [uniqueId]
-                    );
-                    
-                    const wasCollected = existingCardResult.rows.length > 0 ? 
-                        existingCardResult.rows.item(0).collected === 1 : false;
-                    
-                    console.log(`[LorcanaService] Updating existing card: ${apiCard.name} (${uniqueId})`);
-                    await db.executeSql(`
-                        UPDATE lorcana_cards SET
-                            Artist = ?, Body_Text = ?, Card_Num = ?, Classifications = ?, 
-                            Color = ?, Cost = ?, Date_Modified = datetime('now'), 
-                            Flavor_Text = ?, Image = ?, Inkable = ?, Lore = ?, 
-                            Name = ?, Rarity = ?, Set_ID = ?, Set_Name = ?, 
-                            Set_Num = ?, Strength = ?, Type = ?, Willpower = ?,
-                            last_updated = datetime('now'), price_usd = ?, price_usd_foil = ?
-                        WHERE Unique_ID = ?`,
+                    ]
+                );
+                addedCount++;
+            } else {
+                // Update existing card
+                console.log(`[LorcanaService] Updating existing iconic card: ${apiCard.name} - ${apiCard.version} (${uniqueId})`);
+                await db.executeSql(`
+                    UPDATE lorcana_cards SET
+                        Artist = ?, Body_Text = ?, Card_Num = ?, Classifications = ?,
+                        Color = ?, Cost = ?, Date_Modified = datetime('now'),
+                        Flavor_Text = ?, Image = ?, Inkable = ?, Lore = ?,
+                        Name = ?, Rarity = ?, Set_ID = ?, Set_Name = ?,
+                        Set_Num = ?, Strength = ?, Type = ?, Willpower = ?,
+                        last_updated = datetime('now'), price_usd = ?, price_usd_foil = ?
+                    WHERE Unique_ID = ?`,
                     [
                         apiCard.illustrators ? apiCard.illustrators[0] : null,
                         apiCard.text || null,
-                        // Card_Num: should be the collector_number
                         cardNum,
                         apiCard.classifications ? apiCard.classifications.join(', ') : null,
                         apiCard.inks && apiCard.inks.length > 0 ? apiCard.inks[0] : null,
@@ -2085,10 +2576,8 @@ export const getNewSetCards = async (forceUpdate: boolean = false) => {
                         apiCard.lore || null,
                         `${apiCard.name}${apiCard.version ? ` - ${apiCard.version}` : ''}`,
                         apiCard.rarity || null,
-                        // Set_ID: should be the mapped text code (like ARI)
                         properSetCode,
                         apiCard.set.name || null,
-                        // Set_Num: Should be the set's position in release order
                         Number(numericSetCode) || null,
                         apiCard.strength || null,
                         apiCard.type && apiCard.type.length > 0 ? apiCard.type[0] : null,
@@ -2096,56 +2585,32 @@ export const getNewSetCards = async (forceUpdate: boolean = false) => {
                         apiCard.prices?.usd || null,
                         apiCard.prices?.usd_foil || null,
                         uniqueId
-                    ]);
-                    
-                    updatedCount++;
-                } else {
-                    // Card already exists and we're not updating it
-                    existingCount++;
-                    if (existingCount <= 5) {
-                        console.log(`[LorcanaService] Card already exists: ${apiCard.name} (${uniqueId})`);
-                    }
-                }
-                
-                // Always update the price data in the separate table if it exists
-                if ((apiCard.prices?.usd || apiCard.prices?.usd_foil) && uniqueId) {
-                    await db.executeSql(
-                        `INSERT OR REPLACE INTO lorcana_card_prices 
-                        (card_id, usd, usd_foil, tcgplayer_id, last_updated) 
-                        VALUES (?, ?, ?, ?, ?)`,
-                        [
-                            uniqueId,
-                            apiCard.prices?.usd || null,
-                            apiCard.prices?.usd_foil || null,
-                            apiCard.tcgplayer_id || null,
-                            new Date().toISOString()
-                        ]
-                    );
-                }
+                    ]
+                );
+                updatedCount++;
             }
-        });
-        
-        // Generate the summary AFTER the transaction has completed
-        const summary = `[LorcanaService] Database update summary:
-        - Total cards fetched: ${newSetCardsData.length}
-        - Cards already in database: ${existingCount}
-        - Cards updated: ${updatedCount}
-        - Cards skipped due to missing data: ${skippedCount}
-        - New cards added: ${addedCount}
-        `;
-        
-        console.log(summary);
-        
-        return { 
-            added: addedCount, 
-            existing: existingCount, 
-            updated: updatedCount,
-            skipped: skippedCount, 
-            cards: newSetCardsData,
-            summary
-        };
+
+            // Update price table
+            if ((apiCard.prices?.usd || apiCard.prices?.usd_foil) && uniqueId) {
+                await db.executeSql(
+                    `INSERT OR REPLACE INTO lorcana_card_prices
+                    (card_id, usd, usd_foil, tcgplayer_id, last_updated)
+                    VALUES (?, ?, ?, ?, ?)`,
+                    [
+                        uniqueId,
+                        apiCard.prices?.usd || null,
+                        apiCard.prices?.usd_foil || null,
+                        apiCard.tcgplayer_id || null,
+                        new Date().toISOString()
+                    ]
+                );
+            }
+        }
+
+        console.log(`[LorcanaService] Iconic cards import complete for set ${setNumber}: ${addedCount} added, ${updatedCount} updated`);
+        return { added: addedCount, updated: updatedCount };
     } catch (error) {
-        console.error('[LorcanaService] Error fetching new set cards:', error);
+        console.error(`[LorcanaService] Error fetching iconic cards for set ${setNumber}:`, error);
         throw error;
     }
 };
@@ -2320,24 +2785,79 @@ export const downloadLatestSetCards = async (forceUpdate: boolean = false) => {
     try {
         await ensureLorcanaInitialized();
         console.log(`[LorcanaService] Starting download of latest set cards (forceUpdate: ${forceUpdate})`);
-        
-        const result = await getNewSetCards(forceUpdate);
-        
-        console.log(`[LorcanaService] Latest set cards download completed successfully:
-        - ${result.added} new cards added
-        - ${result.existing} cards already in database
-        - ${result.updated} cards updated
-        - ${result.skipped} cards skipped due to missing data
-        - ${result.cards.length} total cards processed
+
+        // Download both sets 9 (Fabled) and 10 (Whispers in the Well) to ensure completeness
+        const setsToDownload = [9, 10];
+        let totalAdded = 0;
+        let totalExisting = 0;
+        let totalUpdated = 0;
+        let totalSkipped = 0;
+        let totalProcessed = 0;
+
+        for (const setNumber of setsToDownload) {
+            console.log(`[LorcanaService] Downloading set ${setNumber}...`);
+            try {
+                const result = await getNewSetCards(setNumber, forceUpdate); // Don't fetch iconic cards here, we'll do it after all sets
+
+                totalAdded += result.added;
+                totalExisting += result.existing;
+                totalUpdated += result.updated;
+                totalSkipped += result.skipped;
+                totalProcessed += result.cards.length;
+
+                console.log(`[LorcanaService] Set ${setNumber} download completed:
+                - ${result.added} new cards added
+                - ${result.existing} cards already in database
+                - ${result.updated} cards updated
+                - ${result.skipped} cards skipped
+                - ${result.cards.length} total cards processed`);
+            } catch (setError) {
+                console.error(`[LorcanaService] Error downloading set ${setNumber}:`, setError);
+                // Continue with other sets even if one fails
+            }
+        }
+
+        console.log(`[LorcanaService] All set downloads completed successfully:
+        - ${totalAdded} new cards added
+        - ${totalExisting} cards already in database
+        - ${totalUpdated} cards updated
+        - ${totalSkipped} cards skipped due to missing data
+        - ${totalProcessed} total cards processed
         `);
-        
+
+        // After downloading the new sets, also fetch enchanted cards to ensure we have the latest enchanted versions
+        console.log('[LorcanaService] Fetching enchanted cards to ensure completeness...');
+        try {
+            const enchantedResult = await fetchAndStoreEnchantedCards();
+            console.log('[LorcanaService] Enchanted cards fetch completed');
+        } catch (enchantedError) {
+            console.error('[LorcanaService] Error fetching enchanted cards:', enchantedError);
+            // Don't fail the entire operation if enchanted cards fetch fails
+        }
+
+        // Also fetch special/iconic cards for sets that have them (sets 9 and 10)
+        console.log('[LorcanaService] Fetching special iconic cards for sets 9 and 10...');
+        for (const setNum of [9, 10]) {
+            try {
+                const iconicResult = await fetchSpecialIconicCards(setNum);
+                console.log(`[LorcanaService] Iconic cards for set ${setNum}: ${iconicResult.added} added, ${iconicResult.updated} updated`);
+            } catch (iconicError) {
+                console.error(`[LorcanaService] Error fetching iconic cards for set ${setNum}:`, iconicError);
+                // Don't fail the entire operation if iconic cards fetch fails
+            }
+        }
+
         // Return user-friendly result object
         return {
             success: true,
-            ...result,
-            message: forceUpdate 
-                ? `Downloaded latest set data. ${result.added} new cards added and ${result.updated} cards updated.`
-                : `Downloaded latest set data. ${result.added} new cards added.`
+            added: totalAdded,
+            existing: totalExisting,
+            updated: totalUpdated,
+            skipped: totalSkipped,
+            cards: [], // Array of all cards processed across sets
+            message: forceUpdate
+                ? `Downloaded latest set data. ${totalAdded} new cards added and ${totalUpdated} cards updated.`
+                : `Downloaded latest set data. ${totalAdded} new cards added.`
         };
     } catch (error) {
         console.error('[LorcanaService] Error downloading latest set cards:', error);
@@ -2349,10 +2869,10 @@ export const downloadLatestSetCards = async (forceUpdate: boolean = false) => {
     }
 };
 
-export const deleteAllSet7Cards = async () => {
+export const deleteAllSet10Cards = async () => {
     await ensureLorcanaInitialized();
     const db = await getDB();
-    await db.executeSql('DELETE FROM lorcana_cards WHERE Set_ID = ?', ['ARI']);
+    await db.executeSql('DELETE FROM lorcana_cards WHERE Set_ID = ?', ['WHI']);
 };
 
 /**
@@ -2923,46 +3443,61 @@ const createLorcanaCardApiTimestampsTable = async () => {
                 last_fetched_timestamp INTEGER NOT NULL
             )`
         );
-        console.log('[LorcanaService] Ensured lorcana_card_api_timestamps table exists.');
     } catch (error) {
-        handleError('Error creating lorcana_card_api_timestamps table', error);
+        console.error('[LorcanaService] Error creating lorcana_card_api_timestamps table:', error);
     }
 };
 
+// ---------------------------------------------------------------------------
+// Legacy helper kept for backward-compatibility with initialization routine.
+// It now delegates to the generic fixCardSetIdentifiers('4') logic (JAF→ROJ).
+// ---------------------------------------------------------------------------
+export const fixJAFtoROJSetIdentifiers = async () => {
+  try {
+    const result = await fixCardSetIdentifiers('4'); // numeric code 4 → ROJ
+    return result;
+  } catch (err) {
+    console.error('[LorcanaService] fixJAFtoROJSetIdentifiers error', err);
+    return { updated: 0, skipped: 0, message: 'failed' };
+  }
+};
+
+// ---------------------------------------------------------------------------
+// New helper functions for caching Lorcana card API fetch timestamps
+// ---------------------------------------------------------------------------
 export const getLorcanaCardApiTimestamp = async (cardId: string): Promise<number | null> => {
-    if (!cardId) {
-        console.warn('[LorcanaService] getLorcanaCardApiTimestamp called with null or empty cardId');
-        return null;
-    }
     try {
+        if (!cardId) return null;
+        // Ensure the timestamps table exists
+        await createLorcanaCardApiTimestampsTable();
         const db = await getDB();
         const [result] = await db.executeSql(
-            `SELECT last_fetched_timestamp FROM lorcana_card_api_timestamps WHERE card_id = ?`,
+            'SELECT last_fetched_timestamp FROM lorcana_card_api_timestamps WHERE card_id = ?',
             [cardId]
         );
         if (result.rows.length > 0) {
-            return result.rows.item(0).last_fetched_timestamp;
+            const ts = result.rows.item(0).last_fetched_timestamp;
+            // SQLite may return numbers as strings; coerce to number
+            return ts !== null && ts !== undefined ? Number(ts) : null;
         }
         return null;
     } catch (error) {
-        handleError(`Error getting API timestamp for card ${cardId}`, error);
-        return null; // Return null on error to allow fetching
+        console.error('[LorcanaService] Error getting Lorcana card API timestamp:', error);
+        return null;
     }
 };
 
 export const setLorcanaCardApiTimestamp = async (cardId: string, timestamp: number): Promise<void> => {
-    if (!cardId) {
-        console.warn('[LorcanaService] setLorcanaCardApiTimestamp called with null or empty cardId');
-        return;
-    }
     try {
+        if (!cardId) return;
+        // Ensure the timestamps table exists
+        await createLorcanaCardApiTimestampsTable();
         const db = await getDB();
         await db.executeSql(
             `INSERT OR REPLACE INTO lorcana_card_api_timestamps (card_id, last_fetched_timestamp) VALUES (?, ?)`,
             [cardId, timestamp]
         );
     } catch (error) {
-        handleError(`Error setting API timestamp for card ${cardId}`, error);
+        console.error('[LorcanaService] Error setting Lorcana card API timestamp:', error);
     }
 };
-

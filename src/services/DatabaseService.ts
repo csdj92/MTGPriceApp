@@ -4,6 +4,9 @@ import RNFS from 'react-native-fs';
 import { migrateNewData } from './migrateNewData';
 import { MigrationManager } from '../database/migrations/MigrationManager';
 import { InitialSchemaMigration } from '../database/migrations/001_InitialSchema';
+import { AddSetNumberToLorcanaCollections } from '../database/migrations/002_AddSetNumberToLorcanaCollections';
+import AddLorcanaSetsTable from '../database/migrations/003_AddLorcanaSetsTable';
+import AddImportHistoryTable from '../database/migrations/004_AddImportHistoryTable';
 import { DataMerger } from '../database/DataMerger';
 import { InteractionManager } from 'react-native';
 import { AllPrintingsJsonDatabase } from './database/AllPrintingsJsonDatabase';
@@ -546,7 +549,10 @@ export default class DatabaseService {
             // Initialize migration manager
             this.migrationManager = new MigrationManager(this.db);
             this.migrationManager.registerMigration(InitialSchemaMigration);
-            
+            this.migrationManager.registerMigration(AddSetNumberToLorcanaCollections);
+            this.migrationManager.registerMigration({ version: 3, up: AddLorcanaSetsTable.up });
+            this.migrationManager.registerMigration({ version: 4, up: AddImportHistoryTable.up });
+
             // Run migrations
             await this.migrationManager.migrateToLatest();
 
@@ -625,7 +631,8 @@ export default class DatabaseService {
                     card_uuid TEXT NOT NULL,
                     quantity INTEGER DEFAULT 1,
                     added_at TEXT NOT NULL,
-                    PRIMARY KEY (collection_id, card_uuid),
+                    is_foil INTEGER DEFAULT 0,
+                    PRIMARY KEY (collection_id, card_uuid, is_foil),
                     FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
                 )
             `);
@@ -659,8 +666,6 @@ export default class DatabaseService {
                     cardkingdom_foil_price REAL DEFAULT 0,
                     cardsphere_normal_price REAL DEFAULT 0,
                     cardsphere_foil_price REAL DEFAULT 0,
-                    cardhoarder_normal_price REAL DEFAULT 0,
-                    cardhoarder_foil_price REAL DEFAULT 0,
                     last_updated INTEGER NOT NULL
                 )
             `);
@@ -680,8 +685,8 @@ export default class DatabaseService {
                     cardkingdom_foil_price REAL DEFAULT 0,
                     cardsphere_normal_price REAL DEFAULT 0,
                     cardsphere_foil_price REAL DEFAULT 0,
-                    recorded_at INTEGER NOT NULL,
-                    PRIMARY KEY (uuid, recorded_at),
+                    timestamp INTEGER NOT NULL,
+                    PRIMARY KEY (uuid, timestamp),
                     FOREIGN KEY (uuid) REFERENCES prices(uuid) ON DELETE CASCADE
                 )
             `);
@@ -950,7 +955,7 @@ export default class DatabaseService {
         }
     }
     //mtg.db add card to collection
-    async addCardToCollection(cardUuid: string, collectionId: string): Promise<void> {
+    async addCardToCollection(cardUuid: string, collectionId: string, isFoil: boolean = false): Promise<void> {
         if (!cardUuid) {
             throw new Error('Card UUID is required');
         }
@@ -985,16 +990,16 @@ export default class DatabaseService {
                 // Use INSERT OR REPLACE to handle both new cards and updates
                 await tx.executeSql(
                     `INSERT OR REPLACE INTO collection_cards 
-                     (collection_id, card_uuid, quantity, added_at) 
+                     (collection_id, card_uuid, quantity, added_at, is_foil) 
                      VALUES (?, ?, 
                         COALESCE(
                             (SELECT quantity + 1 FROM collection_cards 
-                             WHERE collection_id = ? AND card_uuid = ?), 
+                             WHERE collection_id = ? AND card_uuid = ? AND is_foil = ?), 
                             1
                         ), 
-                        ?
+                        ?, ?
                      )`,
-                    [collectionId, cardUuid, collectionId, cardUuid, now]
+                    [collectionId, cardUuid, collectionId, cardUuid, isFoil ? 1 : 0, now, isFoil ? 1 : 0]
                 );
                 console.log(`[DatabaseService] Card added/updated in collection_cards table`);
 
@@ -1129,56 +1134,22 @@ export default class DatabaseService {
     }
     //mtgjson.db cleanup old price history
     private async cleanupOldPriceHistory(): Promise<void> {
+        if (!this.db) {
+            console.warn('[DatabaseService] Database not initialized for cleanupOldPriceHistory.');
+            return;
+        }
+        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const startTime = performance.now();
         try {
-            await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
-                // First check if the price_history table exists
-                const [tableCheck] = await db.executeSql(`
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='price_history'
-                `);
-                
-                if (tableCheck.rows.length === 0) {
-                    console.log('[DatabaseService] price_history table does not exist, attempting to create it');
-                    // Create price_history table if it doesn't exist
-                    await db.executeSql(`
-                        CREATE TABLE IF NOT EXISTS price_history (
-                            uuid TEXT NOT NULL,
-                            normal_price REAL DEFAULT 0,
-                            foil_price REAL DEFAULT 0,
-                            tcg_normal_price REAL DEFAULT 0,
-                            tcg_foil_price REAL DEFAULT 0,
-                            cardmarket_normal_price REAL DEFAULT 0,
-                            cardmarket_foil_price REAL DEFAULT 0,
-                            cardkingdom_normal_price REAL DEFAULT 0,
-                            cardkingdom_foil_price REAL DEFAULT 0,
-                            cardsphere_normal_price REAL DEFAULT 0,
-                            cardsphere_foil_price REAL DEFAULT 0,
-                            recorded_at INTEGER NOT NULL,
-                            PRIMARY KEY (uuid, recorded_at)
-                        )
-                    `);
-                    
-                    // Add index for better query performance
-                    await db.executeSql(`
-                        CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at)
-                    `);
-                    
-                    console.log('[DatabaseService] Successfully created price_history table');
-                    return; // Skip deletion since table is new
-                }
-                
-                // If table exists, proceed with cleanup
-                const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-                await db.executeSql(
-                    'DELETE FROM price_history WHERE recorded_at < ?',
-                    [thirtyDaysAgo]
-                );
-                console.log('[DatabaseService] Cleaned up price history older than 30 days');
-            });
+            // console.log('[DatabaseService] Cleaning up old price history...');
+            // await this.db.executeSql('DELETE FROM price_history WHERE recorded_at < ?', [thirtyDaysAgo]);
+            await this.db.executeSql('DELETE FROM price_history WHERE timestamp < ?', [thirtyDaysAgo]); // Corrected column name
+            // console.log('[DatabaseService] Old price history cleaned up successfully.');
         } catch (error) {
             console.error('[DatabaseService] Error cleaning up old price history:', error);
-            // Don't throw the error - just log it since this is a maintenance operation
-            // and we don't want it to prevent other price updates from happening
+        } finally {
+            const endTime = performance.now();
+            console.log(`[DatabaseService] History cleanup time: ${(endTime - startTime) / 1000} ms`);
         }
     }
 
@@ -1193,8 +1164,8 @@ export default class DatabaseService {
         cardkingdom_foil?: number;
         cardsphere_normal?: number;
         cardsphere_foil?: number;
-        cardhoarder_normal?: number;
-        cardhoarder_foil?: number;
+        // cardhoarder_normal?: number; // Removed
+        // cardhoarder_foil?: number; // Removed
     }>): Promise<void> {
         try {
             console.time('[DatabaseService] Total price update time');
@@ -1277,8 +1248,8 @@ export default class DatabaseService {
             cardkingdom_foil?: number;
             cardsphere_normal?: number;
             cardsphere_foil?: number;
-            cardhoarder_normal?: number;
-            cardhoarder_foil?: number;
+            // cardhoarder_normal?: number; // Removed
+            // cardhoarder_foil?: number; // Removed
         }][],
         timestamp: number
     ): Promise<void> {
@@ -1288,7 +1259,8 @@ export default class DatabaseService {
                 await db.transaction(async (tx) => {
                     // Convert batch data to SQL placeholders and values
                     const placeholders = batch.map(() => 
-                        '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                        // Recollect: uuid, normal, foil, tcg_norm, tcg_foil, cm_norm, cm_foil, ck_norm, ck_foil, cs_norm, cs_foil, last_updated (12 total)
+                        '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)' // Adjusted for 12 columns
                     ).join(',');
                     
                     const values = batch.flatMap(([uuid, priceObj]) => [
@@ -1303,8 +1275,8 @@ export default class DatabaseService {
                         priceObj.cardkingdom_foil || 0,
                         priceObj.cardsphere_normal || 0,
                         priceObj.cardsphere_foil || 0,
-                        priceObj.cardhoarder_normal || 0,
-                        priceObj.cardhoarder_foil || 0,
+                        // priceObj.cardhoarder_normal || 0, // Removed
+                        // priceObj.cardhoarder_foil || 0, // Removed
                         timestamp
                     ]);
                     
@@ -1322,8 +1294,8 @@ export default class DatabaseService {
                             cardkingdom_foil_price,
                             cardsphere_normal_price,
                             cardsphere_foil_price,
-                            cardhoarder_normal_price,
-                            cardhoarder_foil_price,
+                            // cardhoarder_normal_price, // Removed
+                            // cardhoarder_foil_price, // Removed
                             last_updated
                         ) VALUES ${placeholders}
                     `, values);
@@ -1348,70 +1320,96 @@ export default class DatabaseService {
             cardkingdom_foil?: number;
             cardsphere_normal?: number;
             cardsphere_foil?: number;
-            cardhoarder_normal?: number;
-            cardhoarder_foil?: number;
+            // cardhoarder_normal?: number; // Removed
+            // cardhoarder_foil?: number; // Removed
         }][],
         currentTimestamp: number,
-        historyTimestamp: number
+        historyTimestamp: number // This is the correct timestamp to be inserted
     ): Promise<void> {
-        try {
-            await AllPrintingsJsonDatabase.getInstance().safeMTGJsonOperation(async (db) => {
-                // First check if the price_history table exists
-                const [tableCheck] = await db.executeSql(`
-                    SELECT name FROM sqlite_master 
-                    WHERE type='table' AND name='price_history'
-                `);
-                
-                if (tableCheck.rows.length === 0) {
-                    console.log('[DatabaseService] price_history table does not exist, skipping history update');
-                    return;
-                }
-                
-                // Use a transaction for better performance
-                await db.transaction(async (tx) => {
-                    // Convert batch data to SQL placeholders and values
-                    const placeholders = batch.map(() => 
-                        '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-                    ).join(',');
-                    
-                    const values = batch.flatMap(([uuid, priceObj]) => [
-                        uuid,
-                        priceObj.normal || 0,
-                        priceObj.foil || 0,
-                        priceObj.tcg_normal || 0,
-                        priceObj.tcg_foil || 0,
-                        priceObj.cardmarket_normal || 0,
-                        priceObj.cardmarket_foil || 0,
-                        priceObj.cardkingdom_normal || 0,
-                        priceObj.cardkingdom_foil || 0,
-                        priceObj.cardsphere_normal || 0,
-                        priceObj.cardsphere_foil || 0,
-                        historyTimestamp
-                    ]);
-                    
-                    // Insert into price history
-                    await tx.executeSql(`
-                        INSERT OR IGNORE INTO price_history (
-                            uuid, 
-                            normal_price, 
-                            foil_price,
-                            tcg_normal_price,
-                            tcg_foil_price,
-                            cardmarket_normal_price,
-                            cardmarket_foil_price,
-                            cardkingdom_normal_price,
-                            cardkingdom_foil_price,
-                            cardsphere_normal_price,
-                            cardsphere_foil_price,
-                            recorded_at
-                        ) VALUES ${placeholders}
-                    `, values);
-                });
-            });
-        } catch (error) {
-            console.error('[DatabaseService] Error updating price history:', error);
-            // Don't throw error to prevent interrupting the price update process
-            // if price history update fails
+        if (!this.db) {
+            console.warn('[DatabaseService] Database not initialized for updatePricesWithHistory.');
+            return;
+        }
+
+        // const tableInfo = await this.db.executeSql('PRAGMA table_info(price_history);');
+        // console.log('[DatabaseService] price_history table columns:', JSON.stringify(tableInfo[0].rows.raw(), null, 2));
+
+        // const allTables = await this.db.executeSql("SELECT name FROM sqlite_master WHERE type='table';");
+        // console.log('[DatabaseService] All tables in database:');
+        // allTables[0].rows.raw().forEach(table => console.log(`- ${table.name}`));
+
+
+        // Check if price_history table exists
+        // const checkTableResult = await this.db.executeSql(
+        //     "SELECT name FROM sqlite_master WHERE type='table' AND name='price_history';"
+        // );
+        // if (checkTableResult[0].rows.length === 0) {
+        //     console.error('[DatabaseService] price_history table does not exist. Skipping history update.');
+        //     return;
+        // } else {
+        //     console.log('[DatabaseService] price_history table exists');
+        // }
+        
+
+        const priceHistoryValues: any[] = [];
+        const placeholders: string[] = [];
+
+        for (const [uuid, prices] of batch) {
+            priceHistoryValues.push(
+                uuid,
+                prices.normal ?? 0,
+                prices.foil ?? 0,
+                prices.tcg_normal ?? 0,
+                prices.tcg_foil ?? 0,
+                prices.cardmarket_normal ?? 0,
+                prices.cardmarket_foil ?? 0,
+                prices.cardkingdom_normal ?? 0,
+                prices.cardkingdom_foil ?? 0,
+                prices.cardsphere_normal ?? 0,
+                prices.cardsphere_foil ?? 0,
+                // prices.cardhoarder_normal ?? 0, // Removed
+                // prices.cardhoarder_foil ?? 0, // Removed
+                historyTimestamp // Use historyTimestamp here for recorded_at/timestamp
+            );
+            // uuid, normal, foil, tcg_n, tcg_f, cm_n, cm_f, ck_n, ck_f, cs_n, cs_f, timestamp (12 total)
+            placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'); // Adjusted for 12 columns
+        }
+
+        // if (priceHistoryValues.length > 0) {
+        //     console.log('[DatabaseService] First set of values:', priceHistoryValues.slice(0, 14));
+        // }
+
+        if (placeholders.length > 0) {
+            const historySql = `
+                INSERT OR IGNORE INTO price_history (
+                    uuid, 
+                    normal_price, 
+                    foil_price,
+                    tcg_normal_price,
+                    tcg_foil_price,
+                    cardmarket_normal_price,
+                    cardmarket_foil_price,
+                    cardkingdom_normal_price,
+                    cardkingdom_foil_price,
+                    cardsphere_normal_price,
+                    cardsphere_foil_price,
+                    // cardhoarder_normal_price, // Removed
+                    // cardhoarder_foil_price, // Removed
+                    timestamp 
+                ) VALUES ${placeholders.join(', ')};
+            `;
+            // console.log('[DatabaseService] History SQL:', historySql.substring(0, 500)); // Log part of the SQL
+            // console.log('[DatabaseService] Number of history entries to insert:', batch.length);
+
+
+            try {
+                await this.db.executeSql(historySql, priceHistoryValues);
+                // console.log(`[DatabaseService] Successfully inserted/ignored ${batch.length} price history entries.`);
+            } catch (error) {
+                console.error('[DatabaseService] Error updating price history:', error);
+                // console.error('Failed SQL for history:', historySql);
+                // console.error('Failed values for history:', JSON.stringify(priceHistoryValues.slice(0,28))); // Log first few values
+            }
         }
     }
 
@@ -1423,6 +1421,7 @@ export default class DatabaseService {
         cardmarket: { normal: number; foil: number };
         cardkingdom: { normal: number; foil: number };
         cardsphere: { normal: number; foil: number };
+        // cardhoarder: { normal: number; foil: number }; // Removed
     }[]> {
         if (!mtgJsonDb) {
             throw new Error('MTGJson database not initialized');
@@ -1436,16 +1435,17 @@ export default class DatabaseService {
                     cardmarket_normal_price, cardmarket_foil_price,
                     cardkingdom_normal_price, cardkingdom_foil_price,
                     cardsphere_normal_price, cardsphere_foil_price,
-                    recorded_at
+                    // cardhoarder_normal_price, cardhoarder_foil_price, // Removed
+                    timestamp
                 FROM price_history
                 WHERE uuid = ?
-                ORDER BY recorded_at DESC
+                ORDER BY timestamp DESC
                 LIMIT 30`,
                 [uuid]
             );
 
             return result.rows.raw().map(row => ({
-                date: new Date(row.recorded_at).toISOString().split('T')[0],
+                date: new Date(row.timestamp).toISOString().split('T')[0],
                 normal: parseFloat(row.normal_price) || 0,
                 foil: parseFloat(row.foil_price) || 0,
                 tcgplayer: {
@@ -1464,6 +1464,10 @@ export default class DatabaseService {
                     normal: parseFloat(row.cardsphere_normal_price) || 0,
                     foil: parseFloat(row.cardsphere_foil_price) || 0
                 }
+                // cardhoarder: { // Removed
+                //     normal: parseFloat(row.cardhoarder_normal_price) || 0,
+                //     foil: parseFloat(row.cardhoarder_foil_price) || 0
+                // }
             }));
         } catch (error) {
             console.error('[DatabaseService] Error getting card price history:', error);
@@ -1741,15 +1745,6 @@ export default class DatabaseService {
                 }
                     
                 const requiredTables = ['prices', 'price_history', 'app_settings'];
-                const allTablesExist = requiredTables.every(tableName => existingTables.has(tableName));
-                    
-                if (allTablesExist) {
-                    console.log(`[DatabaseService] Found ${existingTables.size} of ${requiredTables.length} required price tables`);
-                    // Update cache
-                    DatabaseService.tableCacheTimestamp = now;
-                    DatabaseService.tablesCreated = true;
-                    return;
-                }
                 
                 // Check which indexes exist
                 const [indexesResult] = await db.executeSql(`
@@ -1770,7 +1765,6 @@ export default class DatabaseService {
                     existingIndexes.add(indexesResult.rows.item(i).name);
                 }
                 
-                // Use a transaction for creating tables and indexes
                 await db.transaction(async (tx) => {                    
                     // Create app_settings table if needed
                     if (!existingTables.has('app_settings')) {
@@ -1799,15 +1793,80 @@ export default class DatabaseService {
                                 cardkingdom_foil_price REAL DEFAULT 0,
                                 cardsphere_normal_price REAL DEFAULT 0,
                                 cardsphere_foil_price REAL DEFAULT 0,
-                                cardhoarder_normal_price REAL DEFAULT 0,
-                                cardhoarder_foil_price REAL DEFAULT 0,
                                 last_updated INTEGER NOT NULL
                             )
                         `);
                         console.log('[DatabaseService] Prices table created/verified');
                     }
                     
-                    // Create price_history table if needed
+                    // --- More robust check for price_history table schema ---
+                    if (existingTables.has('price_history')) {
+                        let needsRecreation = false;
+                        const [, columnsInfo] = await tx.executeSql(`PRAGMA table_info(price_history)`);
+                        let foundTimestampColumn = false;
+                        let pkCorrect = false;
+                        const pkCols: string[] = [];
+                        let hasAllExpectedPriceColumns = true;
+                        const expectedPriceColumnsForHistory = [
+                            'normal_price', 'foil_price',
+                            'tcg_normal_price', 'tcg_foil_price',
+                            'cardmarket_normal_price', 'cardmarket_foil_price',
+                            'cardkingdom_normal_price', 'cardkingdom_foil_price',
+                            'cardsphere_normal_price', 'cardsphere_foil_price'
+                            // 'cardhoarder_normal_price', 'cardhoarder_foil_price' // Removed
+                        ];
+                        const actualColumnNames = new Set<string>();
+
+                        for (let i = 0; i < columnsInfo.rows.length; i++) {
+                            const col = columnsInfo.rows.item(i);
+                            actualColumnNames.add(col.name);
+                            if (col.name === 'timestamp' && col.type === 'INTEGER' && col.notnull === 1) {
+                                foundTimestampColumn = true;
+                            }
+                            if (col.pk > 0) {
+                                pkCols.push(col.name);
+                            }
+                        }
+
+                        for (const expectedCol of expectedPriceColumnsForHistory) {
+                            if (!actualColumnNames.has(expectedCol)) {
+                                hasAllExpectedPriceColumns = false;
+                                console.log(`[DatabaseService] price_history (AllPrintings.sqlite) missing column: ${expectedCol}`);
+                                break;
+                            }
+                        }
+                        // Explicitly check that cardhoarder columns DO NOT exist
+                        if (actualColumnNames.has('cardhoarder_normal_price') || actualColumnNames.has('cardhoarder_foil_price')) {
+                            console.log(`[DatabaseService] price_history (AllPrintings.sqlite) still has cardhoarder columns.`);
+                            hasAllExpectedPriceColumns = false; 
+                        }
+
+                        if (foundTimestampColumn) {
+                            if (pkCols.length === 2 && pkCols.includes('uuid') && pkCols.includes('timestamp')) {
+                                pkCorrect = true;
+                            }
+                        } else {
+                            needsRecreation = true;
+                        }
+
+                        if (!pkCorrect || !hasAllExpectedPriceColumns) { // If timestamp not found, pkCorrect would be false, or if missing columns
+                            needsRecreation = true;
+                        }
+
+                        if (needsRecreation) {
+                            console.log(`[DatabaseService] Price_history table (AllPrintings.sqlite) needs recreation. HasAllExpectedCols: ${hasAllExpectedPriceColumns}, FoundTimestamp: ${foundTimestampColumn}, PKCorrect: ${pkCorrect}. Dropping table.`);
+                            await tx.executeSql('DROP TABLE IF EXISTS price_history');
+                            existingTables.delete('price_history');
+                            existingIndexes.delete('idx_price_history_recorded_at');
+                            existingIndexes.delete('idx_price_history_normal');
+                            existingIndexes.delete('idx_price_history_foil');
+                        } else {
+                            console.log("[DatabaseService] Price_history table (AllPrintings.sqlite) schema appears correct.");
+                        }
+                    }
+                    // --- End of robust check ---
+
+                    // Create price_history table if it doesn't exist (or was just dropped)
                     if (!existingTables.has('price_history')) {
                         await tx.executeSql(`
                             CREATE TABLE IF NOT EXISTS price_history (
@@ -1822,12 +1881,12 @@ export default class DatabaseService {
                                 cardkingdom_foil_price REAL DEFAULT 0,
                                 cardsphere_normal_price REAL DEFAULT 0,
                                 cardsphere_foil_price REAL DEFAULT 0,
-                                recorded_at INTEGER NOT NULL,
-                                PRIMARY KEY (uuid, recorded_at),
+                                timestamp INTEGER NOT NULL,
+                                PRIMARY KEY (uuid, timestamp),
                                 FOREIGN KEY (uuid) REFERENCES prices(uuid) ON DELETE CASCADE
                             )
                         `);
-                        console.log('[DatabaseService] Price history table created/verified');
+                        console.log('[DatabaseService] Price history table (AllPrintings.sqlite) created/verified');
                     }
                     
                     // Create missing indexes
@@ -1835,7 +1894,7 @@ export default class DatabaseService {
                         await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_last_updated ON prices(last_updated)`);
                     }
                     if (!existingIndexes.has('idx_price_history_recorded_at')) {
-                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at)`);
+                        await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(timestamp)`);
                     }
                     if (!existingIndexes.has('idx_prices_normal')) {
                         await tx.executeSql(`CREATE INDEX IF NOT EXISTS idx_prices_normal ON prices(normal_price)`);
@@ -2333,7 +2392,7 @@ export default class DatabaseService {
 
             // Check number of days of history
             const [daysResult] = await mtgJsonDb.executeSql(
-                "SELECT COUNT(DISTINCT DATE(recorded_at/1000, 'unixepoch')) as days FROM price_history"
+                "SELECT COUNT(DISTINCT DATE(timestamp/1000, 'unixepoch')) as days FROM price_history"
             );
             const daysOfHistory = daysResult.rows.item(0).days;
 
@@ -2405,7 +2464,7 @@ export default class DatabaseService {
             // Get price history with formatted dates
             const [result] = await mtgJsonDb.executeSql(`
                 SELECT 
-                    datetime(recorded_at/1000, 'unixepoch') as date,
+                    datetime(timestamp/1000, 'unixepoch') as date,
                     normal_price,
                     foil_price,
                     tcg_normal_price,
@@ -2414,7 +2473,7 @@ export default class DatabaseService {
                     cardmarket_foil_price
                 FROM price_history
                 WHERE uuid = ?
-                ORDER BY recorded_at DESC
+                ORDER BY timestamp DESC
                 LIMIT 30
             `, [uuid]);
 
@@ -2438,7 +2497,7 @@ export default class DatabaseService {
             // Get some basic stats
             const [statsResult] = await mtgJsonDb.executeSql(`
                 SELECT 
-                    COUNT(DISTINCT DATE(recorded_at/1000, 'unixepoch')) as days,
+                    COUNT(DISTINCT DATE(timestamp/1000, 'unixepoch')) as days,
                     MIN(normal_price) as min_price,
                     MAX(normal_price) as max_price,
                     AVG(normal_price) as avg_price
@@ -3428,6 +3487,18 @@ export const getDB = async () => {
         console.error('[DatabaseService] Database initialization failed completely:', error);
             throw error;
         }
+};
+
+export const getLorcanaDB = async () => {
+    try {
+        console.log('[DatabaseService] Getting Lorcana database...');
+        const db = await DatabaseInitializer.getDatabase('lorcana');
+        console.log('[DatabaseService] Lorcana database obtained');
+        return db;
+    } catch (error) {
+        console.error('[DatabaseService] Failed to get Lorcana database:', error);
+        throw error;
+    }
 };
 
 export const databaseService = new DatabaseService(); 

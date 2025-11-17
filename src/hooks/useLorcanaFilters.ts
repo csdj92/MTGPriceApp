@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
 
 export type SortOption = 'name' | 'price' | 'number';
@@ -31,6 +31,7 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
     const [filters, setFilters] = useState<Filters>(defaultFilters);
     const [sortBy, setSortBy] = useState<SortOption>('number');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+    const [filteredAndSortedCards, setFilteredAndSortedCards] = useState<LorcanaCardWithPrice[]>([]);
 
     const resetFilters = useCallback(() => {
         setFilters(defaultFilters);
@@ -49,8 +50,8 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
         }
     }, [sortBy]);
 
-    const filteredAndSortedCards = useCallback(() => {
-        return cards.filter(card => {
+    useEffect(() => {
+        const filtered = cards.filter(card => {
             // Text search
             if (filters.search && !card.Name?.toLowerCase().includes(filters.search.toLowerCase()) &&
                 !card.Body_Text?.toLowerCase().includes(filters.search.toLowerCase())) {
@@ -85,7 +86,9 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
             }
 
             return true;
-        }).sort((a, b) => {
+        });
+
+        const sorted = [...filtered].sort((a, b) => {
             switch (sortBy) {
                 case 'name':
                     return sortDirection === 'asc' 
@@ -102,6 +105,8 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
                     return sortDirection === 'asc' ? numA - numB : numB - numA;
             }
         });
+
+        setFilteredAndSortedCards(sorted);
     }, [cards, filters, sortBy, sortDirection]);
 
     return {
@@ -111,7 +116,8 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
         updateFilters,
         resetFilters,
         toggleSort,
-        filteredAndSortedCards
+        filteredAndSortedCards,
+        setFilteredAndSortedCards
     };
 };
 

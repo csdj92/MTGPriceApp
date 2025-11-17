@@ -18,6 +18,8 @@ export interface LorcanaCard {
     Image?: string;
     price_usd?: string | null;
     price_usd_foil?: string | null;
+    quantity_normal?: number;
+    quantity_foil?: number;
     collected?: boolean;
     Artist?: string;
     Date_Added?: string;
@@ -49,6 +51,8 @@ export interface PartialLorcanaCard {
     Image?: string;
     price_usd?: string | null;
     price_usd_foil?: string | null;
+    quantity_normal?: number;
+    quantity_foil?: number;
     collected?: boolean;
     Artist?: string;
     Date_Added?: string;
@@ -69,6 +73,8 @@ export interface LorcanaCardWithPrice extends LorcanaCard {
     isExpanded?: boolean;
     collected?: boolean;
     last_updated?: string;
+    quantity_normal?: number;
+    quantity_foil?: number;
 }
 
 // Add a partial version of the LorcanaCardWithPrice interface for use with database results
@@ -77,4 +83,6 @@ export interface PartialLorcanaCardWithPrice extends PartialLorcanaCard {
     isExpanded?: boolean;
     collected?: boolean;
     last_updated?: string;
+    quantity_normal?: number;
+    quantity_foil?: number;
 } 

@@ -404,11 +404,22 @@ class DatabaseInitializer {
           FOREIGN KEY (collection_id) REFERENCES lorcana_collections(id) ON DELETE CASCADE
         );`);
 
+        // Lorcana card prices table
+        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_card_prices (
+          card_id TEXT PRIMARY KEY NOT NULL,
+          usd REAL,
+          usd_foil REAL,
+          tcgplayer_id INTEGER,
+          last_updated TEXT NOT NULL,
+          FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
+        );`);
+
         // Create indices for better performance
         await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_name ON lorcana_cards(Name);');
         await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_unique_id ON lorcana_cards(Unique_ID);');
         await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_collection_id ON lorcana_collection_cards(collection_id);');
         await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_card_id ON lorcana_collection_cards(card_id);');
+        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_card_prices_card_id ON lorcana_card_prices(card_id);');
       });
 
       Logger.info('[DatabaseInitializer] Lorcana tables created successfully');

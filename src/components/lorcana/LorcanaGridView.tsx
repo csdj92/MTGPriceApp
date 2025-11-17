@@ -11,11 +11,13 @@ import { useLorcanaCollection } from '../../hooks/useLorcanaCollection';
 import { useLorcanaPrices } from '../../hooks/useLorcanaPrices';
 import { useLorcanaFilters } from '../../hooks/useLorcanaFilters';
 import SortHeader from '../shared/SortHeader';
-import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils'; 
+import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess, preloadImages } from '../../utils/imageUtils'; 
 import {  fetchCardVersionsByName } from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
 import type { Theme } from '../../context/ThemeContext';
+import { useLorcanaPriceCache } from '../../hooks/useLorcanaPriceCache';
+import { imageCacheService } from '../../services/ImageCacheService';
 
 // Fix Icon type with proper type assertion
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -33,6 +35,7 @@ interface LorcanaGridViewProps {
     onExportCollection?: () => void;
     cardCount?: number;
     totalValue?: string;
+    newToCollectionCards?: Set<string>;
 }
 
 const ITEMS_PER_PAGE = 12;
@@ -45,7 +48,8 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     onCardsUpdate,
     onExportCollection,
     cardCount,
-    totalValue
+    totalValue,
+    newToCollectionCards = new Set<string>()
 }) => {
     const { theme } = useTheme();
     const styles = useStyles();
@@ -58,6 +62,10 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [showVersionModal, setShowVersionModal] = useState(false);
     const [availableVersions, setAvailableVersions] = useState<LorcanaCardWithPrice[]>([]);
 
+    // Multiselect state
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
+    const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
+
     // Custom hooks
     const { addToCollection, refreshCollectionStatus } = useLorcanaCollection({ onCardsUpdate });
     const { updatePrices, updatingPrices } = useLorcanaPrices({ cards, onCardsUpdate });
@@ -68,27 +76,108 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         updateFilters,
         resetFilters,
         toggleSort,
-        filteredAndSortedCards
+        filteredAndSortedCards,
+        setFilteredAndSortedCards
     } = useLorcanaFilters({ cards });
+    const { getPrice, priceCache, isLoading: priceLoading } = useLorcanaPriceCache();
+
+    // Preload images for visible cards
+    useEffect(() => {
+        if (filteredAndSortedCards.length > 0) {
+            const visibleCards = filteredAndSortedCards.slice(0, ITEMS_PER_PAGE);
+            const imageUrls = visibleCards.map(card => card.Image).filter(Boolean) as string[];
+            
+            // Use both old preload method and new cache service
+            preloadImages(imageUrls);
+            
+            // Progressive download with cache service
+            imageCacheService.preloadSetImages(
+                'current_view', 
+                visibleCards.filter(card => card.Image).map(card => ({ Image: card.Image!, Name: card.Name }))
+            );
+        }
+    }, [filteredAndSortedCards]);
+
+    // Fetch prices for visible cards
+    useEffect(() => {
+        const visibleCards = filteredAndSortedCards.slice(0, ITEMS_PER_PAGE);
+        visibleCards.forEach(card => {
+            const cardId = card.Unique_ID || card.Name;
+            if (!priceCache[cardId]) {
+                getPrice(card);
+            }
+        });
+    }, [filteredAndSortedCards, priceCache, getPrice]);
 
     // Callbacks
     const handleCardPress = useCallback((card: LorcanaCardWithPrice) => {
-        setSelectedCard(card);
-    }, []);
+        if (isSelectionMode) {
+            // Toggle selection
+            toggleCardSelection(card.Unique_ID);
+        } else {
+            // Show card details
+            setSelectedCard(card);
+        }
+    }, [isSelectionMode]);
 
     const handleCardLongPress = useCallback(async (card: LorcanaCardWithPrice) => {
-        setSelectedCard(null); // Close the card details modal first
-        
-        try {
-            // Fetch available versions from the service
-            const versions = await fetchCardVersionsByName(card.Name);
-            setAvailableVersions(versions);
-            setSelectedCard(card);
-            setShowVersionModal(true);
-        } catch (error) {
-            console.error('Error fetching card versions:', error);
+        if (isSelectionMode) {
+            // Already in selection mode, just toggle
+            toggleCardSelection(card.Unique_ID);
+        } else {
+            // Enter selection mode and select this card
+            setIsSelectionMode(true);
+            setSelectedCardIds(new Set([card.Unique_ID]));
         }
+    }, [isSelectionMode]);
+
+    const toggleCardSelection = useCallback((cardId: string) => {
+        setSelectedCardIds(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(cardId)) {
+                newSet.delete(cardId);
+                // Exit selection mode if no cards selected
+                if (newSet.size === 0) {
+                    setIsSelectionMode(false);
+                }
+            } else {
+                newSet.add(cardId);
+            }
+            return newSet;
+        });
     }, []);
+
+    const handleCancelSelection = useCallback(() => {
+        setIsSelectionMode(false);
+        setSelectedCardIds(new Set());
+    }, []);
+
+    const handleBulkAddToCollection = useCallback(async () => {
+        const selectedCards = filteredAndSortedCards.filter(card =>
+            selectedCardIds.has(card.Unique_ID)
+        );
+
+        for (const card of selectedCards) {
+            await addToCollection(card);
+        }
+
+        handleCancelSelection();
+        if (refreshCollectionStatus && cards) {
+            refreshCollectionStatus(cards);
+        }
+    }, [selectedCardIds, filteredAndSortedCards, addToCollection, refreshCollectionStatus, cards]);
+
+    const handleBulkDelete = useCallback(() => {
+        const selectedCards = filteredAndSortedCards.filter(card =>
+            selectedCardIds.has(card.Unique_ID)
+        );
+
+        selectedCards.forEach(card => {
+            onDeleteCard(card);
+        });
+
+        handleCancelSelection();
+    }, [selectedCardIds, filteredAndSortedCards, onDeleteCard]);
 
     const handleVersionChange = useCallback(async (newVersion: LorcanaCardWithPrice) => {
         try {
@@ -146,10 +235,15 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const renderCard = useCallback(({ item }: { item: LorcanaCardWithPrice }) => (
         <LorcanaCard
             card={item}
+            priceData={priceCache[item.Unique_ID || item.Name]}
+            isPriceLoading={!!priceLoading[item.Unique_ID || item.Name]}
             onPress={() => handleCardPress(item)}
             onLongPress={() => handleCardLongPress(item)}
+            isNew={newToCollectionCards.has(item.Unique_ID)}
+            isSelected={selectedCardIds.has(item.Unique_ID)}
+            showSelectionIndicator={isSelectionMode}
         />
-    ), [handleCardPress, handleCardLongPress]);
+    ), [handleCardPress, handleCardLongPress, priceCache, priceLoading, newToCollectionCards, selectedCardIds, isSelectionMode]);
 
     const keyExtractor = useCallback((item: LorcanaCardWithPrice) => item.Unique_ID || '', []);
 
@@ -165,6 +259,18 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         []
     );
 
+    // When showing version modal, fetch prices for those versions if not cached
+    useEffect(() => {
+        if (showVersionModal && availableVersions.length > 0) {
+            availableVersions.forEach(card => {
+                const cardId = card.Unique_ID || card.Name;
+                if (!priceCache[cardId]) {
+                    getPrice(card);
+                }
+            });
+        }
+    }, [showVersionModal, availableVersions, priceCache, getPrice]);
+
     if (isLoading) {
         return (
             <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
@@ -175,19 +281,50 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
     return (
         <View style={[styles.container, { backgroundColor: theme.background }]}>
-            <View style={styles.headerControlsContainer}> 
-                <SortHeader
-                    sortBy={sortBy}
-                    sortDirection={sortDirection}
-                    onSortChange={toggleSort}
-                    onFilterPress={() => setShowFilters(!showFilters)}
-                    onExportPress={onExportCollection}
-                    showExportButton={!!onExportCollection}
-                    cardCount={cardCount}
-                    totalValue={totalValue}
-                    showStats={cardCount !== undefined && totalValue !== undefined}
-                />
-            </View>
+            {isSelectionMode ? (
+                <View style={[styles.selectionHeader, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
+                    <Text style={[styles.selectionCount, { color: theme.text }]}>
+                        {selectedCardIds.size} selected
+                    </Text>
+                    <View style={styles.selectionActions}>
+                        <TouchableOpacity
+                            style={[styles.actionButton, { backgroundColor: theme.primary }]}
+                            onPress={handleBulkAddToCollection}
+                        >
+                            <Icon name="plus" size={20} color="#fff" />
+                            <Text style={styles.actionButtonText}>Add to Collection</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.actionButton, { backgroundColor: theme.error }]}
+                            onPress={handleBulkDelete}
+                        >
+                            <Icon name="delete" size={20} color="#fff" />
+                            <Text style={styles.actionButtonText}>Delete</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.actionButton, { backgroundColor: theme.border }]}
+                            onPress={handleCancelSelection}
+                        >
+                            <Icon name="close" size={20} color={theme.text} />
+                            <Text style={[styles.actionButtonText, { color: theme.text }]}>Cancel</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            ) : (
+                <View style={styles.headerControlsContainer}>
+                    <SortHeader
+                        sortBy={sortBy}
+                        sortDirection={sortDirection}
+                        onSortChange={toggleSort}
+                        onFilterPress={() => setShowFilters(!showFilters)}
+                        onExportPress={onExportCollection}
+                        showExportButton={!!onExportCollection}
+                        cardCount={cardCount}
+                        totalValue={totalValue}
+                        showStats={cardCount !== undefined && totalValue !== undefined}
+                    />
+                </View>
+            )}
 
             {showFilters && (
                 <LorcanaFilters
@@ -199,7 +336,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             )}
 
             <FlatList
-                data={filteredAndSortedCards()}
+                data={filteredAndSortedCards}
                 renderItem={renderCard}
                 keyExtractor={keyExtractor}
                 numColumns={3}
@@ -207,18 +344,20 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 onEndReached={loadMoreCards}
                 onEndReachedThreshold={0.5}
                 ListFooterComponent={isLoadingMore ? <ActivityIndicator size="large" color="#2196F3" /> : null}
-                initialNumToRender={12}
-                maxToRenderPerBatch={6}
-                windowSize={15}
-                removeClippedSubviews={false} // Setting to true can have bugs, ensure it works if enabled
-                updateCellsBatchingPeriod={50}
-                getItemLayout={filteredAndSortedCards().length > 0 ? getItemLayout : undefined} // Apply only if data exists
+                initialNumToRender={9}
+                maxToRenderPerBatch={4}
+                windowSize={7}
+                removeClippedSubviews={true}
+                updateCellsBatchingPeriod={20}
+                getItemLayout={getItemLayout}
             />
 
             {selectedCard && (
                 <Suspense fallback={<ActivityIndicator size="small" color={theme.primary} />}>
                     <LorcanaCardModal
                         card={selectedCard}
+                        priceData={priceCache[selectedCard.Unique_ID || selectedCard.Name]}
+                        isPriceLoading={!!priceLoading[selectedCard.Unique_ID || selectedCard.Name]}
                         visible={selectedCard !== null && !showVersionModal}
                         onClose={() => setSelectedCard(null)}
                         onDelete={handleDeleteCard}
@@ -232,8 +371,11 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 <Suspense fallback={<ActivityIndicator size="small" color={theme.primary} />}>
                     <LorcanaVersionModal
                         card={selectedCard}
-                        visible={showVersionModal} // Keep visible prop
-                        availableVersions={availableVersions}
+                        visible={showVersionModal}
+                        availableVersions={availableVersions.map(card => ({
+                            ...card,
+                            prices: priceCache[card.Unique_ID || card.Name] || card.prices,
+                        }))}
                         onClose={() => setShowVersionModal(false)}
                         onVersionChange={handleVersionChange}
                         onAddToCollection={!selectedCard?.collected ? handleAddToCollection : undefined}
@@ -256,7 +398,34 @@ const useStyles = () => useThemedStyles((theme: Theme) => ({
         paddingVertical: 5,
         borderBottomWidth: 1,
         borderBottomColor: theme.border,
-        backgroundColor: theme.surface, 
+        backgroundColor: theme.surface,
+    },
+    selectionHeader: {
+        padding: 12,
+        borderBottomWidth: 1,
+        gap: 12,
+    },
+    selectionCount: {
+        fontSize: 16,
+        fontWeight: '600' as '600',
+    },
+    selectionActions: {
+        flexDirection: 'row' as 'row',
+        gap: 8,
+        flexWrap: 'wrap' as 'wrap',
+    },
+    actionButton: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 8,
+        gap: 6,
+    },
+    actionButtonText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '600' as '600',
     },
     loadingContainer: {
         flex: 1,

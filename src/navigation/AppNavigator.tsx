@@ -8,7 +8,7 @@ import CollectionScreen from '../screens/collection/CollectionScreen';
 import SearchScreen from '../screens/search/SearchScreen';
 import WatchlistScreen from '../screens/watchlist/WatchlistScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
-import PriceLookupScreen from '../screens/price/PriceLookupScreen';
+import PriceLookupScreen from '../screens/price/PriceLookupScreen.refactored';
 import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScreen';
 import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
 import CardDetailsScreen from '../screens/CardDetailsScreen';

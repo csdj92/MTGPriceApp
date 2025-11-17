@@ -381,60 +381,100 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                 return;
             }
 
-            // Show a loading indicator
-            setIsLoading(true);
-
-            // Export the collection
-            const filePath = await exportService.exportLorcanaCollections();
-            
-            // Hide loading indicator
-            setIsLoading(false);
-
-            // Ask if the user wants to share the file
+            // Show export options
             Alert.alert(
-                'Export Successful',
-                'Your Lorcana collection has been exported successfully. Would you like to share it?',
+                'Export Options',
+                'Choose what you want to export:',
                 [
                     {
-                        text: 'No',
-                        style: 'cancel'
-                    },
-                    {
-                        text: 'Share',
+                        text: 'Export Collection',
                         onPress: async () => {
                             try {
-                                // Show loading indicator during share
+                                // Show a loading indicator
                                 setIsLoading(true);
-                                
-                                // Show a message about what to expect
-                                if (Platform.OS === 'android') {
-                                    console.log('Showing Android share instructions');
-                                    Alert.alert(
-                                        'Sharing Instructions',
-                                        'You will now see share options. If the file is not attached, you can find it in your Downloads/LorcanaExports folder to share manually.',
-                                        [{ text: 'OK', onPress: async () => {
-                                            await exportService.shareLorcanaCollections(filePath);
-                                            setIsLoading(false);
-                                        }}]
-                                    );
-                                } else {
-                                    // On iOS, just share directly
-                                    await exportService.shareLorcanaCollections(filePath);
-                                    setIsLoading(false);
-                                }
-                            } catch (error) {
-                                console.error('Error sharing:', error);
+
+                                // Export the collection
+                                const filePath = await exportService.exportLorcanaCollections();
+
+                                // Hide loading indicator
                                 setIsLoading(false);
-                                Alert.alert('Share Error', 'Failed to share. You can find the export file in your downloads folder.');
+
+                                // Ask if the user wants to share the file
+                                Alert.alert(
+                                    'Export Successful',
+                                    'Your Lorcana collection has been exported successfully. Would you like to share it?',
+                                    [
+                                        {
+                                            text: 'No',
+                                            style: 'cancel'
+                                        },
+                                        {
+                                            text: 'Share',
+                                            onPress: async () => {
+                                                try {
+                                                    // Show loading indicator during share
+                                                    setIsLoading(true);
+
+                                                    // Show a message about what to expect
+                                                    if (Platform.OS === 'android') {
+                                                        console.log('Showing Android share instructions');
+                                                        Alert.alert(
+                                                            'Sharing Instructions',
+                                                            'You will now see share options. If the file is not attached, you can find it in your Downloads/LorcanaExports folder to share manually.',
+                                                            [{ text: 'OK', onPress: async () => {
+                                                                await exportService.shareLorcanaCollections(filePath);
+                                                                setIsLoading(false);
+                                                            }}]
+                                                        );
+                                                    } else {
+                                                        // On iOS, just share directly
+                                                        await exportService.shareLorcanaCollections(filePath);
+                                                        setIsLoading(false);
+                                                    }
+                                                } catch (error) {
+                                                    console.error('Error sharing:', error);
+                                                    setIsLoading(false);
+                                                    Alert.alert('Share Error', 'Failed to share. You can find the export file in your downloads folder.');
+                                                }
+                                            }
+                                        }
+                                    ]
+                                );
+                            } catch (error) {
+                                console.error('Error exporting collection:', error);
+                                setIsLoading(false);
+                                Alert.alert('Export Error', 'Failed to export collection. Please try again.');
                             }
                         }
+                    },
+                    {
+                        text: 'Export Database',
+                        onPress: async () => {
+                            try {
+                                // Show a loading indicator
+                                setIsLoading(true);
+
+                                // Export the database as SQL dump
+                                await exportService.exportDatabaseAsSQL('lorcana');
+
+                                // Hide loading indicator
+                                setIsLoading(false);
+                            } catch (error) {
+                                console.error('Error exporting database:', error);
+                                setIsLoading(false);
+                                Alert.alert('Export Error', 'Failed to export database. Please try again.');
+                            }
+                        }
+                    },
+                    {
+                        text: 'Cancel',
+                        style: 'cancel'
                     }
                 ]
             );
         } catch (error) {
-            console.error('Error exporting collection:', error);
-            setIsLoading(false);
-            Alert.alert('Export Error', 'Failed to export your collection. Please try again.');
+            console.error('Error in export menu:', error);
+            Alert.alert('Export Error', 'Failed to show export options. Please try again.');
         }
     };
 
