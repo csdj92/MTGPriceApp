@@ -6,9 +6,9 @@
  * discovery of new sets.
  */
 
-import { Database } from 'react-native-sqlite-storage';
+import SQLite from 'react-native-sqlite-storage';
 
-export const up = async (db: Database): Promise<void> => {
+export const up = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     console.log('[Migration 003] Creating lorcana_sets table...');
 
     await db.executeSql(`
@@ -41,7 +41,7 @@ export const up = async (db: Database): Promise<void> => {
     console.log('[Migration 003] ✓ lorcana_sets table created successfully');
 };
 
-export const down = async (db: Database): Promise<void> => {
+export const down = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     console.log('[Migration 003] Dropping lorcana_sets table...');
 
     await db.executeSql('DROP INDEX IF EXISTS idx_lorcana_sets_number');

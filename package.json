@@ -1,5 +1,5 @@
 {
-  "name": "MTGPriceApp",
+  "name": "LorcanaCollector",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -17,28 +17,29 @@
     "@react-native-documents/picker": "^10.1.1",
     "@react-native-ml-kit/text-recognition": "^1.5.2",
     "@react-native-picker/picker": "^2.11.0",
-    "@react-navigation/bottom-tabs": "^7.3.3",
+    "@react-navigation/bottom-tabs": "^7.14.0",
     "@react-navigation/material-top-tabs": "^7.2.3",
-    "@react-navigation/native": "^7.0.19",
-    "@react-navigation/native-stack": "^7.3.3",
+    "@react-navigation/native": "^7.1.28",
+    "@react-navigation/native-stack": "^7.13.0",
     "@types/react-native-sqlite-storage": "^6.0.5",
     "lodash": "^4.17.21",
-    "react": "19.0.0",
-    "react-native": "^0.78.1",
+    "react": "^19.2.0",
+    "react-native": "^0.83.0",
     "react-native-cli": "^2.0.1",
     "react-native-fs": "^2.18.0",
     "react-native-gifted-charts": "^1.4.58",
     "react-native-image-crop-picker": "^0.42.0",
     "react-native-linear-gradient": "^2.8.3",
     "react-native-pager-view": "^6.7.0",
-    "react-native-reanimated": "^3.17.0",
+    "react-native-reanimated": "^4.2.0",
     "react-native-safe-area-context": "^5.1.0",
-    "react-native-screens": "^4.9.1",
+    "react-native-screens": "^4.23.0",
     "react-native-sqlite-storage": "^6.0.1",
     "react-native-svg": "^15.11.2",
     "react-native-tab-view": "^4.0.6",
     "react-native-vector-icons": "^10.2.0",
     "react-native-vision-camera": "^4.6.4",
+    "react-native-worklets-core": "^1.6.3",
     "react-native-zip-archive": "^7.0.1",
     "use-debounce": "^10.0.4"
   },
@@ -49,9 +50,10 @@
     "@react-native-community/cli": "^15.0.1",
     "@react-native-community/cli-platform-android": "^15.0.1",
     "@react-native-community/cli-platform-ios": "^15.0.1",
-    "@react-native/babel-preset": "^0.78.0",
+    "@react-native/babel-preset": "^0.83.0",
     "@react-native/eslint-config": "0.78.1",
-    "@react-native/metro-config": "^0.78.0",
+    "@react-native/gradle-plugin": "^0.84.0",
+    "@react-native/metro-config": "^0.83.0",
     "@react-native/typescript-config": "0.78.1",
     "@types/lodash": "^4.17.16",
     "@types/react": "^19.0.12",
@@ -64,15 +66,18 @@
     "react-test-renderer": "19.0.0",
     "typescript": "5.8.2"
   },
+  "overrides": {
+    "@react-native/codegen": "0.83.0"
+  },
   "engines": {
     "node": ">=18"
   },
   "codegenConfig": {
-    "name": "MTGPriceAppSpecs",
+    "name": "LorcanaCollectorSpecs",
     "type": "components",
     "jsSrcsDir": "src",
     "android": {
-      "javaPackageName": "com.mtgpriceapp"
+      "javaPackageName": "com.lorcanacollector"
     }
   }
 }

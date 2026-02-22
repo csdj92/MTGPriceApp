@@ -16,7 +16,6 @@ import { databaseService } from '../../services/DatabaseService';
 import { fixCardNames, getNewSetCards, safeRefreshLorcanaCards,fixCardSetIdentifiers,deleteAllSet10Cards, updateAllLorcanaPrices,reloadLorcanaCards, fetchAndStoreEnchantedCards, cleanupDuplicateCards, clearAllLorcanaCards} from '../../services/LorcanaService';
 import { cardImportService } from '../../services/CardImportService';
 import { useTheme } from '../../context/ThemeContext';
-import { downloadAndImportPriceData } from '../../utils/priceData';
 import SQLite from 'react-native-sqlite-storage';
 import { AddSetNumberToLorcanaCollections } from '../../database/migrations/002_AddSetNumberToLorcanaCollections';
 import { MigrationManager } from '../../database/migrations/MigrationManager';
@@ -365,26 +364,11 @@ const SettingsScreen = () => {
                         setIsRebuilding(true);
                         InteractionManager.runAfterInteractions(async () => {
                             try {
-                                // Step 1: Download MTGJson Database
-                                const downloadSuccess = await databaseService.downloadMTGJsonDatabase();
-                                if (!downloadSuccess) {
-                                    throw new Error('Failed to download MTGJson database.');
-                                }
-
-                                // Step 2: Initialize Database Structure
+                                // Lorcana-only compatibility path: just reinitialize and verify.
                                 await databaseService.initDatabase();
 
-                                // Step 3: Force Price Data Update
-                                const shouldUpdate = await databaseService.shouldUpdatePrices(true);
-                                if (shouldUpdate) {
-                                    await downloadAndImportPriceData((progress: number) => {
-                                        console.log(`Price data download progress: ${progress}%`);
-                                    }, true);
-                                }
-
-                                // Step 4: Verify Database Integrity
-                                const integrityCheck = await databaseService.verifyPriceDataIntegrity();
-                                if (!integrityCheck.isValid) {
+                                const isHealthy = await databaseService.verifyDatabaseState();
+                                if (!isHealthy) {
                                     throw new Error('Database integrity check failed.');
                                 }
 

@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
-import { ExtendedCard } from '../../types/card';
+import { LorcanaCard } from '../../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface CardVersionCheckerProps {
-    card: ExtendedCard | null;
+    card: LorcanaCard | null;
     originalText: string;
     verificationScore: number;
     isVerifying: boolean;
@@ -98,17 +98,17 @@ const CardVersionChecker: React.FC<CardVersionCheckerProps> = ({
                     <>
                         <View style={styles.infoRow}>
                             <Text style={styles.label}>Detected:</Text>
-                            <Text style={styles.value} numberOfLines={1}>{card.name}</Text>
+                            <Text style={styles.value} numberOfLines={1}>{card.Name || card.name}</Text>
                         </View>
-                        
+
                         <View style={styles.infoRow}>
                             <Text style={styles.label}>OCR Text:</Text>
                             <Text style={styles.value} numberOfLines={2}>{originalText}</Text>
                         </View>
-                        
+
                         <View style={styles.infoRow}>
                             <Text style={styles.label}>Set:</Text>
-                            <Text style={styles.value} numberOfLines={1}>{card.setName} ({card.setCode})</Text>
+                            <Text style={styles.value} numberOfLines={1}>{card.Set_Name || card.set_name} ({card.Set_ID || card.set_id})</Text>
                         </View>
                         
                         <View style={styles.scoreContainer}>

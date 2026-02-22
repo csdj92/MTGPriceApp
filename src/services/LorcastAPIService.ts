@@ -182,7 +182,7 @@ class LorcastAPIService {
             console.log(`[LorcastAPI] Fetched ${cards.length} cards for set ${setIdOrCode}`);
 
             // Validate cards
-            const validCards = cards.filter(card => {
+            const validCards = cards.filter((card: any) => {
                 const isValid = card && card.name && card.set && card.set.code && card.collector_number;
                 if (!isValid) {
                     console.warn(`[LorcastAPI] ⚠ Filtering out invalid card from fetchSetCards:`, {
@@ -257,7 +257,7 @@ class LorcastAPIService {
             console.log(`[LorcastAPI] Search returned ${cards.length} cards`);
 
             // Validate cards
-            const validCards = cards.filter(card => {
+            const validCards = cards.filter((card: any) => {
                 const isValid = card && card.name && card.set && card.set.code && card.collector_number;
                 if (!isValid) {
                     console.warn(`[LorcastAPI] ⚠ Filtering out invalid card from searchCards:`, {

@@ -16,7 +16,7 @@ const DatabaseErrorScreen: React.FC<DatabaseErrorScreenProps> = ({
       onRetry();
     } else {
       try {
-        await databaseService.initializeAllDatabases();
+        await databaseService.initDatabase();
       } catch (err) {
         console.error('Retry failed:', err);
       }
@@ -25,7 +25,7 @@ const DatabaseErrorScreen: React.FC<DatabaseErrorScreenProps> = ({
 
   const handleDiagnose = async () => {
     try {
-      const diagnostics = await databaseService.diagnoseCollectionIssues();
+      const diagnostics = await databaseService.verifyDatabaseState();
       console.log('Database diagnostics:', JSON.stringify(diagnostics, null, 2));
       Alert.alert('Diagnostics Complete', 'Diagnostics logged to console. Please check your development logs.');
     } catch (err) {

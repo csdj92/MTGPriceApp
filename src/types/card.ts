@@ -1,130 +1,5 @@
 import { LorcanaCard as LorcanaDbCard } from './lorcana';
 
-export interface Card {
-    uuid?: string;
-    name: string;
-    setCode: string;
-    rarity: string;
-    manaCost?: string;
-    type?: string;
-    text?: string;
-    imageUrl?: string;
-}
-
-export interface ExtendedCard {
-    id: string;
-    uuid?: string;
-    name: string;
-    setCode: string;
-    setName: string;
-    collectorNumber: string;
-    type: string;
-    manaCost?: string;
-    text?: string;
-    rarity?: string;
-    booster?: string;
-    toughness?: string;
-    power?: string;
-    rulings_uri?: string;
-    edhrec_rank?: number;
-    related_uris?: {
-        tcgplayer_infinite_articles: string;
-        tcgplayer_infinite_decks: string;
-        edhrec: string;
-        gatherer: string;
-    };
-    imageUrl?: string;
-    imageUris?: {
-        small?: string;
-        normal?: string;
-        large?: string;
-        art_crop?: string;
-    };
-    prices: {
-        usd?: string | null;
-        usdFoil?: string | null;
-        usdEtched?: string | null;
-        eur?: string | null;
-        eurFoil?: string | null;
-        tix?: string | null;
-        normal?: number;
-        foil?: number;
-        tcgplayer?: {
-            normal: number;
-            foil: number;
-        };
-        cardmarket?: {
-            normal: number;
-            foil: number;
-        };
-    };
-    purchaseUrls: {
-        tcgplayer?: string;
-        cardmarket?: string;
-        cardhoarder?: string;
-    };
-    purchase_uris?: {
-        tcgplayer?: string;
-        cardmarket?: string;
-        cardhoarder?: string;
-    };
-    legalities: {
-        [format: string]: string;
-    };
-    quantity?: number;
-    scannedAt?: number;
-    isExpanded?: boolean;
-    collected?: boolean;
-    hasNonFoil: boolean;
-    hasFoil: boolean;
-    colors?: string[];
-    colorIdentity: string[];
-    keywords: string[];
-    cmc: number;
-    flavorText?: string;
-    frameEffects: string[];
-    /**
-     * Indicates that this specific scanned/collected copy is the foil printing.
-     * A card can support foils in general (hasFoil = true) but individual copies
-     * in the user's collection should specify whether *that* copy is foil.
-     */
-    isFoil?: boolean;
-    isOriginalScan?: boolean;
-    // Double-sided card properties
-    isDoubleSided?: boolean;
-    layout?: string;
-    otherSide?: any;
-    otherSideName?: string;
-    side?: string;
-    card_faces?: {
-        name: string;
-        type_line?: string;
-        oracle_text?: string;
-        mana_cost?: string;
-        colors?: string[];
-        image_uris?: {
-            small?: string;
-            normal?: string;
-            large?: string;
-            art_crop?: string;
-        };
-    }[];
-}
-
-// Define the ScannedCard type using the ExtendedCard as a base
-export type ScannedCard = Omit<ExtendedCard, 'type'> & { 
-  type: 'MTG' | 'Lorcana';
-  bypassVariantSelection?: boolean; // Flag to bypass variant selection when true
-  originalText?: string; // The original OCR text used to identify the card
-  source?: string; // The source of the scan (e.g., 'camera', 'manual')
-  /** Whether this individual scan represents a foil version */
-  isFoil?: boolean;
-  cardId?: string;
-  normalCount?: number;
-  foilCount?: number;
-  card?: LorcanaCard | ExtendedCard;
-};
-
 export interface OcrResult {
     text: string;
     mainName?: string | null;
@@ -134,42 +9,75 @@ export interface OcrResult {
     cardNumber?: string | null;
 }
 
-export interface LorcanaCard extends Card {
+export interface LorcanaCard {
+    uuid?: string;
+    name: string;
+    setCode: string;
+    rarity: string;
+    imageUrl?: string;
     version: string;  // The subtitle/version part of the card
     isLorcana: true;
 }
 
-export interface MtgCard extends Card {
-    subtype: string | null;  // The subtype after the em dash in type line
-    isLorcana: false;
+export interface CardPrices {
+    usd?: string | null;
+    usdFoil?: string | null;
+    usd_foil?: string | null;
+    [key: string]: string | number | null | undefined;
 }
 
-export interface Filters {
-    search: string;
-    rarities: string[];
-    colors: string[];
-    colorIdentity: string[];
-    keywords: string[];
-    collectionStatus: 'all' | 'collected' | 'missing';
-    priceRange: { min: number | null; max: number | null };
-    power?: string;
-    toughness?: string;
-    edhrecRank?: number;
+export interface ScannedCard {
+    id?: string;
+    uuid?: string;
+    name: string;
+    type: 'Lorcana';
+    setCode?: string;
+    setName?: string;
+    collectorNumber?: string;
+    imageUrl?: string;
+    imageUris?: {
+        normal?: string;
+        large?: string;
+        small?: string;
+        [key: string]: string | undefined;
+    };
+    prices?: CardPrices;
+    purchaseUrls?: Record<string, string | undefined>;
+    legalities?: Record<string, string | undefined>;
+    scannedAt?: number;
+    rarity?: string;
+    hasFoil?: boolean;
+    hasNonFoil?: boolean;
+    isFoil?: boolean;
+    colorIdentity?: string[];
+    keywords?: string[];
+    cmc?: number;
+    frameEffects?: string[];
+    card?: LorcanaDbCard | unknown;
 }
+
+// Legacy type alias for backward compatibility
+export type ExtendedCard = ScannedCard;
 
 export type SortOption = 'name' | 'number' | 'price' | 'set' | 'quantity';
 export type SortDirection = 'asc' | 'desc';
 
 export type LorcanaScannedCard = {
     id: string;
+    uuid?: string;
     name: string;
     type: 'Lorcana';
     imageUrl: string;
     setCode: string;
+    setName?: string;
+    rarity?: string;
+    prices?: CardPrices;
+    scannedAt?: number;
     card: LorcanaCard;
     normalCount: number;
     foilCount: number;
     isFoil: boolean;
 };
 
-export type ScannedItem = ScannedCard | LorcanaScannedCard;
+// ScannedItem now only supports Lorcana cards
+export type ScannedItem = LorcanaScannedCard;

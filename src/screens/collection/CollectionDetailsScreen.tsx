@@ -6,8 +6,6 @@ import { databaseService } from '../../services/DatabaseService';
 import { getLorcanaCollectionCards, getLorcanaSetCollections, getLorcanaSetMissingCards, removeLorcanaCardFromCollection, } from '../../services/LorcanaService';
 import { exportService, collectionEventEmitter } from '../../services/ExportService';
 import LorcanaGridView from '../../components/lorcana/LorcanaGridView';
-import MTGGridView from '../../components/MTGGridView';
-import type { ExtendedCard } from '../../types/card';
 import type { LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Collection } from '../../types/collection';
@@ -22,7 +20,6 @@ type Props = NativeStackScreenProps<RootStackParamList, 'CollectionDetails'>;
 
 const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     const { collectionId } = route.params;
-    const [mtgCards, setMtgCards] = useState<ExtendedCard[]>([]);
     const [lorcanaCards, setLorcanaCards] = useState<PartialLorcanaCardWithPrice[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [collection, setCollection] = useState<Collection | null>(null);
@@ -48,113 +45,49 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                 throw initError;
             }
 
-            // First try MTG collections
-            let collections;
+            // Load Lorcana collections
             try {
-                collections = await databaseService.getCollections();
-                if (!collections || !Array.isArray(collections)) {
-                    console.error('Got invalid collections data');
-                    throw new Error('Invalid collections data received');
-                }
-            } catch (error) {
-                console.error(`Failed to get collections: ${error}`);
-                throw error;
-            }
+                const lorcanaCollections = await getLorcanaSetCollections()
+                    .catch(error => {
+                        console.error('[CollectionDetailsScreen] Error getting Lorcana collections:', error);
+                        return [];
+                    });
+                const lorcanaCollection = lorcanaCollections.find(c => c.id === collectionId);
 
-            const mtgCollection = collections.find(c => c.id === collectionId);
+                if (lorcanaCollection) {
+                    setCollection({
+                        id: lorcanaCollection.id,
+                        name: lorcanaCollection.name,
+                        description: lorcanaCollection.description || null,
+                        createdAt: lorcanaCollection.createdAt || new Date().toISOString(),
+                        updatedAt: lorcanaCollection.updatedAt || new Date().toISOString(),
+                        totalValue: lorcanaCollection.totalValue || 0,
+                        cardCount: lorcanaCollection.cardCount || 0,
+                        type: 'Lorcana'
+                    });
+                    navigation.setOptions({ title: lorcanaCollection.name });
 
-            if (mtgCollection) {
-                setCollection({
-                    id: mtgCollection.id,
-                    name: mtgCollection.name,
-                    description: mtgCollection.description || null,
-                    createdAt: mtgCollection.createdAt || new Date().toISOString(),
-                    updatedAt: mtgCollection.updatedAt || new Date().toISOString(),
-                    totalValue: mtgCollection.totalValue || 0,
-                    cardCount: mtgCollection.cardCount || 0,
-                    type: 'MTG'
-                });
-                navigation.setOptions({ title: mtgCollection.name });
-                
-                // Extract set code from the description (format: "Collection for [setName] ([setCode])")
-                const setCodeMatch = mtgCollection.description?.match(/\(([^)]+)\)$/);
-                if (setCodeMatch && setCodeMatch[1]) {
-                    const setCode = setCodeMatch[1];
-                    try {
-                        const allSetCards = await databaseService.getSetMissingCards(setCode)
-                            .catch(error => {
-                                console.error(`[CollectionDetailsScreen] Error getting set cards for ${setCode}:`, error);
-                                return [];
-                            });
-                        setMtgCards(allSetCards);
-                        setHasMore(false); // Disable pagination since we have all cards
-                    } catch (error) {
-                        console.error(`[CollectionDetailsScreen] Error processing set cards for ${setCode}:`, error);
-                        setMtgCards([]);
-                        setHasMore(false);
-                    }
-                }
-            } else {
-                // If not found in MTG collections, check Lorcana collections
-                try {
-                    const lorcanaCollections = await getLorcanaSetCollections()
-                        .catch(error => {
-                            console.error('[CollectionDetailsScreen] Error getting Lorcana collections:', error);
-                            return [];
-                        });
-                    const lorcanaCollection = lorcanaCollections.find(c => c.id === collectionId);
-
-                    if (lorcanaCollection) {
-                        setCollection({
-                            id: lorcanaCollection.id,
-                            name: lorcanaCollection.name,
-                            description: lorcanaCollection.description || null,
-                            createdAt: lorcanaCollection.createdAt || new Date().toISOString(),
-                            updatedAt: lorcanaCollection.updatedAt || new Date().toISOString(),
-                            totalValue: lorcanaCollection.totalValue || 0,
-                            cardCount: lorcanaCollection.cardCount || 0,
-                            type: 'Lorcana'
-                        });
-                        navigation.setOptions({ title: lorcanaCollection.name });
-                        
-                        // Extract set ID from the description (format: "Collection for Set Name (SET_ID)")
-                        const setIdMatch = lorcanaCollection.description?.match(/\((.*?)\)$/);
-                        if (setIdMatch && setIdMatch[1]) {
-                            const setId = setIdMatch[1];
-                            try {
-                                const allSetCards = await getLorcanaSetMissingCards(setId, collectionId)
-                                    .catch(error => {
-                                        console.error(`[CollectionDetailsScreen] Error getting Lorcana set cards for ${setId}:`, error);
-                                        return [];
-                                    });
-                                setLorcanaCards(allSetCards.filter(card => 
-                                    card !== null && card !== undefined // Keep as PartialLorcanaCardWithPrice[]
-                                ));
-                            } catch (error) {
-                                console.error(`[CollectionDetailsScreen] Error processing Lorcana set cards for ${setId}:`, error);
-                                setLorcanaCards([]);
-                            }
+                    // Extract set ID from the description (format: "Collection for Set Name (SET_ID)")
+                    const setIdMatch = lorcanaCollection.description?.match(/\((.*?)\)$/);
+                    if (setIdMatch && setIdMatch[1]) {
+                        const setId = setIdMatch[1];
+                        try {
+                            const allSetCards = await getLorcanaSetMissingCards(setId, collectionId)
+                                .catch(error => {
+                                    console.error(`[CollectionDetailsScreen] Error getting Lorcana set cards for ${setId}:`, error);
+                                    return [];
+                                });
+                            setLorcanaCards(allSetCards.filter(card =>
+                                card !== null && card !== undefined
+                            ));
+                        } catch (error) {
+                            console.error(`[CollectionDetailsScreen] Error processing Lorcana set cards for ${setId}:`, error);
+                            setLorcanaCards([]);
                         }
-                    } else {
-                        // Neither MTG nor Lorcana collection found
-                        console.warn(`[CollectionDetailsScreen] Collection not found: ${collectionId}`);
-                        // Set empty collection data
-                        setCollection({
-                            id: collectionId,
-                            name: 'Collection',
-                            description: null,
-                            createdAt: new Date().toISOString(),
-                            updatedAt: new Date().toISOString(),
-                            totalValue: 0,
-                            cardCount: 0,
-                            type: 'MTG'
-                        });
-                        setMtgCards([]);
-                        setLorcanaCards([]);
                     }
-                } catch (error) {
-                    console.error('[CollectionDetailsScreen] Error processing Lorcana collections:', error);
-                    // Set default values
+                } else {
+                    // Collection not found
+                    console.warn(`[CollectionDetailsScreen] Collection not found: ${collectionId}`);
                     setCollection({
                         id: collectionId,
                         name: 'Collection',
@@ -163,11 +96,23 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                         updatedAt: new Date().toISOString(),
                         totalValue: 0,
                         cardCount: 0,
-                        type: 'MTG'
+                        type: 'Lorcana'
                     });
-                    setMtgCards([]);
                     setLorcanaCards([]);
                 }
+            } catch (error) {
+                console.error('[CollectionDetailsScreen] Error processing Lorcana collections:', error);
+                setCollection({
+                    id: collectionId,
+                    name: 'Collection',
+                    description: null,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                    totalValue: 0,
+                    cardCount: 0,
+                    type: 'Lorcana'
+                });
+                setLorcanaCards([]);
             }
         } catch (error) {
             console.error('Error loading collection:', error);
@@ -180,9 +125,8 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                 updatedAt: new Date().toISOString(),
                 totalValue: 0,
                 cardCount: 0,
-                type: 'MTG'
+                type: 'Lorcana'
             });
-            setMtgCards([]);
             setLorcanaCards([]);
         } finally {
             setIsLoading(false);
@@ -210,80 +154,48 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         };
     }, [loadCollection]);
 
-    const loadMoreCards = async (page: number, type: 'MTG' | 'Lorcana') => {
+    const loadMoreCards = async (page: number) => {
         if (!hasMore || isLoadingMore) return;
 
         setIsLoadingMore(true);
         try {
-            if (type === 'MTG') {
-                try {
-                    const newCards = await databaseService.getCollectionCards(collectionId, page)
-                        .catch(error => {
-                            console.error(`[CollectionDetailsScreen] Error getting MTG collection cards for page ${page}:`, error);
-                            return [];
-                        });
-                        
-                    if (newCards.length === 0) {
-                        setHasMore(false);
-                        return;
-                    }
-                    
-                    if (page === 1) {
-                        setMtgCards(newCards.map(card => ({ ...card, isExpanded: false })));
-                    } else {
-                        setMtgCards(prevCards => [...prevCards, ...newCards.map(card => ({ ...card, isExpanded: false }))]);
-                    }
-                } catch (error) {
-                    console.error(`[CollectionDetailsScreen] Error processing MTG cards for page ${page}:`, error);
-                    setHasMore(false);
-                    // Keep existing cards, don't overwrite
-                }
-            } else {
-                try {
-                    const newCards = await getLorcanaCollectionCards(collectionId, page)
-                        .catch(error => {
-                            console.error(`[CollectionDetailsScreen] Error getting Lorcana collection cards for page ${page}:`, error);
-                            return [];
-                        });
-                        
-                    if (newCards.length === 0) {
-                        setHasMore(false);
-                        return;
-                    }
-                    
-                    const validCards = newCards.filter(card => 
-                        Boolean(card?.Unique_ID || card?.id) // Keep as PartialLorcanaCardWithPrice[]
-                    ) as PartialLorcanaCardWithPrice[];
-                    
-                    setLorcanaCards(prevCards => {
-                        try {
-                            const updatedCards = page === 1 ? validCards : [...prevCards, ...validCards];
-                            
-                            // Calculate total value safely
-                            const totalValue = updatedCards.reduce((sum, card) => {
-                                const price = card.prices?.usd ? parseFloat(card.prices.usd) : 0;
-                                return sum + (isNaN(price) ? 0 : price);
-                            }, 0);
+            const newCards = await getLorcanaCollectionCards(collectionId, page)
+                .catch(error => {
+                    console.error(`[CollectionDetailsScreen] Error getting Lorcana collection cards for page ${page}:`, error);
+                    return [];
+                });
 
-                            // Update collection with new total value
-                            setCollection(prev => prev ? {
-                                ...prev,
-                                totalValue
-                            } : null);
-
-                            return updatedCards;
-                        } catch (error) {
-                            console.error(`[CollectionDetailsScreen] Error processing Lorcana cards state update:`, error);
-                            // Return previous state to avoid breaking the app
-                            return prevCards;
-                        }
-                    });
-                } catch (error) {
-                    console.error(`[CollectionDetailsScreen] Error processing Lorcana cards for page ${page}:`, error);
-                    setHasMore(false);
-                    // Keep existing cards, don't overwrite
-                }
+            if (newCards.length === 0) {
+                setHasMore(false);
+                return;
             }
+
+            const validCards = newCards.filter(card =>
+                Boolean(card?.Unique_ID || card?.id)
+            ) as PartialLorcanaCardWithPrice[];
+
+            setLorcanaCards(prevCards => {
+                try {
+                    const updatedCards = page === 1 ? validCards : [...prevCards, ...validCards];
+
+                    // Calculate total value safely
+                    const totalValue = updatedCards.reduce((sum, card) => {
+                        const price = card.prices?.usd ? parseFloat(card.prices.usd) : 0;
+                        return sum + (isNaN(price) ? 0 : price);
+                    }, 0);
+
+                    // Update collection with new total value
+                    setCollection(prev => prev ? {
+                        ...prev,
+                        totalValue
+                    } : null);
+
+                    return updatedCards;
+                } catch (error) {
+                    console.error(`[CollectionDetailsScreen] Error processing Lorcana cards state update:`, error);
+                    return prevCards;
+                }
+            });
             setCurrentPage(page);
         } catch (error) {
             console.error('Error loading more cards:', error);
@@ -292,12 +204,6 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
             setIsLoadingMore(false);
         }
     };
-
-    const handleCardPress = useCallback((card: ExtendedCard) => {
-        // Make sure we have the most up-to-date card data from state
-        const updatedCard = mtgCards.find(c => c.id === card.id) || card;
-        navigation.navigate('CardDetails', { card: updatedCard });
-    }, [navigation, mtgCards]);
 
     const handleLorcanaCardPress = useCallback((card: PartialLorcanaCardWithPrice) => {
         // Safe navigation - make sure we have a valid card and collectionId
@@ -310,28 +216,6 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
             console.error('[CollectionDetailsScreen] Cannot navigate to card details: invalid card or collectionId');
         }
     }, [collectionId, navigation]);
-
-    const handleDeleteCard = useCallback((card: ExtendedCard) => {
-        if (!card.id || !collectionId) {
-            console.error('[CollectionDetailsScreen] Cannot delete card: missing id or collectionId');
-            return;
-        }
-        
-        try {
-            databaseService.markCardAsMissing(card.id, collectionId)
-                .then(() => {
-                    setMtgCards(prevCards => prevCards.map(c => 
-                        c.id === card.id ? { ...c, quantity: 0 } : c
-                    ));
-                    // No need to update the collection count since the card is still in the collection, just marked as missing
-                })
-                .catch(error => {
-                    console.error('[CollectionDetailsScreen] Error marking card as missing:', error);
-                });
-        } catch (error) {
-            console.error('[CollectionDetailsScreen] Exception when marking card as missing:', error);
-        }
-    }, [collectionId, databaseService]);
 
     const handleRemoveLorcanaCardFromCollection = useCallback((card: PartialLorcanaCardWithPrice) => {
         const cardId = card.Unique_ID || (card as any).id;
@@ -369,15 +253,15 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     }, [collectionId, collection, databaseService]);
 
     const handleEndReached = () => {
-        if (!isLoading && !isLoadingMore && hasMore && collection) {
-            loadMoreCards(currentPage + 1, collection.type);
+        if (!isLoading && !isLoadingMore && hasMore) {
+            loadMoreCards(currentPage + 1);
         }
     };
 
     const handleExportCollection = async () => {
         try {
-            if (!collection || collection.type !== 'Lorcana') {
-                Alert.alert('Export Error', 'Only Lorcana collections can be exported at this time.');
+            if (!collection) {
+                Alert.alert('Export Error', 'No collection to export.');
                 return;
             }
 
@@ -478,10 +362,8 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     };
 
-    const cards = collection?.type === 'MTG' ? mtgCards : lorcanaCards;
-
     useEffect(() => {
-        if (collection?.type === 'Lorcana' && lorcanaCards.length > 0) {
+        if (lorcanaCards.length > 0) {
             const totalValue = lorcanaCards.reduce((sum, card) => {
                 // Only count collected cards
                 if (!card.collected) return sum;
@@ -492,50 +374,41 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         }
     }, [lorcanaCards]);
 
-    // Add useEffect hook to update totalValue when mtgCards changes
-    useEffect(() => {
-        if (collection?.type === 'MTG' && mtgCards.length > 0) {
-            const totalValue = mtgCards.reduce((sum, card) => {
-                // Only count collected cards
-                if (!card.collected) return sum;
-                // Parse price from card data
-                const price = card.prices?.usd ? parseFloat(card.prices.usd) : 0;
-                return sum + (isNaN(price) ? 0 : price);
-            }, 0);
-            setCollection(prev => prev ? { ...prev, totalValue } : null);
-        }
-    }, [mtgCards]);
-
     // Prepare stats for LorcanaGridView
-    const lorcanaCardCount = collection?.type === 'Lorcana' ? lorcanaCards.filter(card => card.collected).length : 0;
-    const lorcanaTotalValue = collection?.type === 'Lorcana' ? 
-        lorcanaCards.reduce((sum, card) => 
-            sum + (card.collected && card.prices?.usd ? Number(card.prices.usd) : 0), 0).toFixed(2)
-        : "0.00";
+    const lorcanaCardCount = lorcanaCards.filter(card => card.collected).length;
+    const lorcanaTotalValue =
+        lorcanaCards.reduce((sum, card) => {
+            if (!card.collected) return sum;
+
+            // Get prices with fallback to foil if normal not available
+            const normalPrice = card.price_usd || card.prices?.usd || 0;
+            const foilPrice = card.price_usd_foil || card.prices?.usd_foil || 0;
+            const priceToUse = normalPrice || foilPrice;
+            const priceToUseFoil = foilPrice || normalPrice;
+
+            // Calculate value for normal and foil quantities
+            const quantityNormal = card.quantity_normal || 0;
+            const quantityFoil = card.quantity_foil || 0;
+
+            const normalValue = quantityNormal * Number(priceToUse);
+            const foilValue = quantityFoil * Number(priceToUseFoil);
+
+            return sum + normalValue + foilValue;
+        }, 0).toFixed(2);
 
     return (
         <View style={[styles.container]}>
-            {collection?.type === 'Lorcana' ? (
-                <LorcanaGridView
-                    cards={lorcanaCards.filter(card => card && typeof card.Unique_ID === 'string') as LorcanaCardWithPrice[]}
-                    isLoading={isLoading}
-                    onCardPress={handleLorcanaCardPress}
-                    onDeleteCard={handleRemoveLorcanaCardFromCollection}
-                    onCardsUpdate={setLorcanaCards}
-                    onExportCollection={handleExportCollection}
-                    cardCount={lorcanaCardCount}
-                    totalValue={lorcanaTotalValue}
-                />
-            ) : (
-                <MTGGridView
-                    cards={mtgCards}
-                    isLoading={isLoading}
-                    onCardPress={handleCardPress}
-                    onDeleteCard={handleDeleteCard}
-                    onCardsUpdate={setMtgCards}
-                    collectionId={collectionId}
-                />
-            )}
+            <LorcanaGridView
+                cards={lorcanaCards.filter(card => card && typeof card.Unique_ID === 'string') as LorcanaCardWithPrice[]}
+                isLoading={isLoading}
+                onCardPress={handleLorcanaCardPress}
+                onDeleteCard={handleRemoveLorcanaCardFromCollection}
+                onCardsUpdate={setLorcanaCards}
+                onExportCollection={handleExportCollection}
+                cardCount={lorcanaCardCount}
+                totalValue={lorcanaTotalValue}
+                collectionId={collectionId}
+            />
         </View>
     );
 };

@@ -24,8 +24,13 @@ export function useLorcanaPriceCache() {
         setIsLoading(prev => ({ ...prev, [cardId]: false }));
       }
     },
-    [priceCache]
+    []
   );
 
-  return { getPrice, priceCache, isLoading };
+  const clearCache = useCallback(() => {
+    setPriceCache({});
+    setIsLoading({});
+  }, []);
+
+  return { getPrice, priceCache, setPriceCache, isLoading, clearCache };
 } 

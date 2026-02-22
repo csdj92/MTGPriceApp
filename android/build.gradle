@@ -13,9 +13,24 @@ buildscript {
     }
     dependencies {
         classpath('com.android.tools.build:gradle:8.7.3') // Ensure this matches your Gradle wrapper
-        classpath("com.facebook.react:react-native-gradle-plugin") // Plugin for React Native
+        classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion") // Kotlin plugin
     }
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+allprojects {
+    repositories {
+        mavenLocal()
+        google()
+        mavenCentral()
+        maven {
+            url("$rootDir/../node_modules/react-native/android")
+        }
+        maven {
+            url("$rootDir/../node_modules/jsc-android/dist")
+        }
+    }
+}
+

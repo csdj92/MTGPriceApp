@@ -23,7 +23,7 @@ import { searchLorcanaCards } from '../../services/LorcanaService';
 import SortHeader from '../../components/shared/SortHeader';
 import CardScanner from '../../components/CardScanner';
 import { CardProcessingService, ProcessedOcrResult } from '../../services/CardProcessingService';
-import type { OcrResult, ExtendedCard } from '../../types/card';
+import type { OcrResult } from '../../types/card';
 import { LorcanaCard as LorcanaDbCard } from '../../types/lorcana';
 import LorcanaCardSelectionModal from '../../components/LorcanaCardSelectionModal';
 import SetSelector from '../../components/price-lookup/SetSelector';
@@ -43,7 +43,6 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
   const styles = useStyles();
   /* ----------------------- scan-history state ---------------------- */
   const {
-    scannedCards,
     lorcanaScannedCards,
     totalPrice,
     addLorcanaCard,
@@ -174,7 +173,7 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
         <ActivityIndicator style={{ marginTop: 32 }} size="large" />
       ) : (
         <UnifiedScannedList
-          scannedCards={scannedCards}
+          scannedCards={[]}
           lorcanaScannedCards={lorcanaScannedCards}
           onRemoveCard={removeCard}
           onSelectCard={() => {}}
@@ -197,72 +196,45 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
         animationType="slide"
         onRequestClose={() => setCameraActive(false)}
       >
-        {(() => {
-          // Build recent cards list (last 20) for CardScanner widget
-          const recentMtg: ExtendedCard[] = scannedCards.slice(0, 20) as unknown as ExtendedCard[];
-          const recentLorcana: ExtendedCard[] = lorcanaScannedCards.slice(0, 20).map(lc => ({
-            id: lc.id,
-            name: lc.name,
-            setCode: lc.setCode,
-            setName: lc.setCode,
-            collectorNumber: '',
-            type: 'Lorcana',
-            rarity: (lc as any).rarity ?? (lc.card as any)?.Rarity ?? 'Common',
-            imageUrl: lc.imageUrl,
-            imageUris: { normal: lc.imageUrl },
-            prices: {},
-            purchaseUrls: {},
-            legalities: {},
-            hasFoil: true,
-            hasNonFoil: true,
-            colorIdentity: [],
-            keywords: [],
-            cmc: 0,
-            frameEffects: [],
-          } as unknown as ExtendedCard));
-          const recentCombined = [...recentLorcana, ...recentMtg];
-          return (
-            <View style={{ flex: 1 }}>
-              {/* Header info + set selector */}
-              <ScanHeaderInfo
-                isLorcanaScan={true}
-                verificationStatus={verificationStatus}
-                scannedCardsCount={lorcanaScannedCards.length + scannedCards.length}
-                totalPrice={totalPrice}
-              />
-              <SetSelector selectedSet={selectedSet} onSetSelected={setSelectedSet} />
-              <CardScanner
-                onScan={handleOcrScan}
-                onError={(e) => console.error(e)}
-                isLorcanaScan={true}
-                scannedCards={recentCombined}
-                totalPrice={totalPrice}
-                onCardPress={() => {}}
-                isPaused={isScanningPaused}
-                cardVariations={[]}
-                onVariationSelect={() => {}}
-                selectedVariation={null}
-                onConfirmVariation={() => {}}
-              />
+        <View style={{ flex: 1 }}>
+          {/* Header info + set selector */}
+          <ScanHeaderInfo
+            isLorcanaScan={true}
+            verificationStatus={verificationStatus}
+            scannedCardsCount={lorcanaScannedCards.length}
+            totalPrice={totalPrice}
+          />
+          <SetSelector selectedSet={selectedSet} onSetSelected={setSelectedSet} />
+          <CardScanner
+            onScan={handleOcrScan}
+            onError={(e) => console.error(e)}
+            isLorcanaScan={true}
+            scannedCards={[]}
+            totalPrice={totalPrice}
+            onCardPress={() => {}}
+            isPaused={isScanningPaused}
+            cardVariations={[]}
+            onVariationSelect={() => {}}
+            selectedVariation={null}
+            onConfirmVariation={() => {}}
+          />
 
-              {/* Zoom controls on left */}
-              <ZoomControls />
+          {/* Zoom controls on left */}
+          <ZoomControls />
 
-              {/* Pause / Close controls on right */}
-              <View style={{ position: 'absolute', right: 20, bottom: 80 }}>
-                <CameraControls
-                  isScanningPaused={isScanningPaused}
-                  onPausePress={() => setIsScanningPaused((p) => !p)}
-                  onClosePress={() => setCameraActive(false)}
-                />
-              </View>
-            </View>
-          );
-        })()}
+          {/* Pause / Close controls on right */}
+          <View style={{ position: 'absolute', right: 20, bottom: 80 }}>
+            <CameraControls
+              isScanningPaused={isScanningPaused}
+              onPausePress={() => setIsScanningPaused((p) => !p)}
+              onClosePress={() => setCameraActive(false)}
+            />
+          </View>
+        </View>
       </Modal>
 
       {/* clear */}
-      {(scannedCards.length > 0 || lorcanaScannedCards.length > 0) && (
+      {lorcanaScannedCards.length > 0 && (
         <TouchableOpacity style={styles.clearBtn} onPress={clearScans}>
           <Icon name="delete" size={20} color="#fff" />
           <Text style={styles.clearText}>Clear Scans</Text>

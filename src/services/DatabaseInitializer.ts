@@ -2,7 +2,6 @@ import SQLite from 'react-native-sqlite-storage';
 import RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
 import { Logger } from '../utils/logger';
-import { AllPrintingsJsonDatabase } from './database/AllPrintingsJsonDatabase';
 
 // Enable SQLite debugging in development
 SQLite.DEBUG(true);
@@ -152,30 +151,9 @@ class DatabaseInitializer {
    */
   private static async initializeMTGJsonDatabase(): Promise<void> {
     try {
-      Logger.info('[DatabaseInitializer] Initializing MTGJson database');
-      
-      const allPrintingsDb = AllPrintingsJsonDatabase.getInstance();
-      
-      // Check if database file already exists
-      const exists = await allPrintingsDb.databaseExists();
-      if (exists) {
-        Logger.info('[DatabaseInitializer] MTGJson database already exists');
-        // Initialize and open the database
-        await allPrintingsDb.initialize();
-        Logger.info('[DatabaseInitializer] MTGJson database opened successfully');
-        return;
-      }
-      
-      // Database doesn't exist, attempt to download it
-      Logger.info('[DatabaseInitializer] MTGJson database does not exist, downloading...');
-      const downloadSuccess = await allPrintingsDb.downloadMTGJsonDatabase();
-      
-      if (!downloadSuccess) {
-        Logger.error('[DatabaseInitializer] Failed to download MTGJson database');
-        throw new Error('Failed to download MTGJson database');
-      }
-      
-      Logger.info('[DatabaseInitializer] MTGJson database downloaded and initialized successfully');
+      // MTGJson support was removed in the Lorcana-focused app.
+      // Keep this method as a no-op to preserve startup flow compatibility.
+      Logger.info('[DatabaseInitializer] Skipping MTGJson initialization (deprecated)');
     } catch (error) {
       Logger.error('[DatabaseInitializer] Error initializing MTGJson database', error);
       throw error;

@@ -5,7 +5,6 @@ import SetCompletionScreen from './SetCompletionScreen';
 import CollectionsTab from './CollectionsTab';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
-import DecksScreen from '../decks/DecksScreen';
 import { useTheme } from '../../context/ThemeContext';
 import type { Theme } from '../../context/ThemeContext';
 
@@ -45,13 +44,6 @@ const CollectionScreen: React.FC<CollectionScreenProps> = () => {
                     component={CollectionsTab}
                     options={{
                         tabBarLabel: 'Collections'
-                    }}
-                />
-                <Tab.Screen 
-                    name="Decks" 
-                    component={DecksScreen}
-                    options={{
-                        tabBarLabel: 'Decks'
                     }}
                 />
             </Tab.Navigator>

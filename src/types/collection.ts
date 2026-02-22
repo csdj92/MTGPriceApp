@@ -6,5 +6,5 @@ export interface Collection {
     updatedAt: string;
     totalValue: number;
     cardCount: number;
-    type: 'MTG' | 'Lorcana';
+    type: 'Lorcana';
 } 

@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { databaseService } from '../services/DatabaseService';
 import {
   ScannedCard,
   LorcanaScannedCard,
-  ExtendedCard,
   LorcanaCard,
 } from '../types/card';
 import { LorcanaCard as LorcanaDbCard } from '../types/lorcana';
@@ -15,7 +13,7 @@ interface UseLorcanaScanHistoryReturn {
   totalPrice: number;
   addScannedCard: (card: ScannedCard) => Promise<void>;
   addLorcanaCard: (card: LorcanaDbCard, isFoil?: boolean) => void;
-  removeCard: (id: string, type: 'MTG' | 'Lorcana') => void;
+  removeCard: (id: string, type?: 'MTG' | 'Lorcana') => void;
   clearScans: () => Promise<void>;
   reloadHistory: () => Promise<void>;
   toggleFoil: (id: string) => void;
@@ -34,7 +32,7 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
     useState<LorcanaScannedCard[]>([]);
   const [totalPrice, setTotalPrice] = useState(0);
 
-  const computeTotalPrice = useCallback((cards: ExtendedCard[]) => {
+  const computeTotalPrice = useCallback((cards: ScannedCard[]) => {
     if (!Array.isArray(cards)) return 0;
     return cards.reduce((sum, c) => {
       const price = c.prices?.usd ? Number(c.prices.usd) : 0;
@@ -43,18 +41,11 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
   }, []);
 
   const reloadHistory = useCallback(async () => {
-    try {
-      const history = await databaseService.getScanHistory();
-      if (Array.isArray(history)) {
-        setScannedCards(history.map((c) => ({ ...c, type: 'MTG' })));
-        setTotalPrice(computeTotalPrice(history));
-      }
-    } catch (err) {
-      console.error('[useLorcanaScanHistory] Failed to load history', err);
-      setScannedCards([]);
-      setTotalPrice(0);
-    }
-  }, [computeTotalPrice]);
+    // Since we're Lorcana-only now, we don't have a scan history in the old database
+    // This is handled by lorcanaScannedCards state instead
+    setScannedCards([]);
+    setTotalPrice(0);
+  }, []);
 
   useEffect(() => {
     reloadHistory();
@@ -67,13 +58,6 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
       if (exists) return prev;
       return [card, ...prev];
     });
-
-    // Persist to DB (best-effort)
-    try {
-      await databaseService.addToScanHistory(card as unknown as ExtendedCard);
-    } catch (err) {
-      console.warn('[useLorcanaScanHistory] Failed to persist scan', err);
-    }
 
     setTotalPrice((prev) => prev + (card.prices?.usd ? Number(card.prices.usd) : 0));
   }, []);
@@ -142,12 +126,10 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
   }, []);
 
   const removeCard = useCallback(
-    (id: string, type: 'MTG' | 'Lorcana') => {
-      if (type === 'Lorcana') {
-        setLorcanaScannedCards((prev) => prev.filter((c) => c.id !== id));
-      } else {
-        setScannedCards((prev) => prev.filter((c) => c.uuid !== id));
-      }
+    (id: string, _type?: 'MTG' | 'Lorcana') => {
+      // Remove from both lists (only one will have it)
+      setLorcanaScannedCards((prev) => prev.filter((c) => c.id !== id));
+      setScannedCards((prev) => prev.filter((c) => c.uuid !== id));
     },
     [],
   );
@@ -156,11 +138,6 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
     setScannedCards([]);
     setLorcanaScannedCards([]);
     setTotalPrice(0);
-    try {
-      await databaseService.clearScanHistory();
-    } catch (err) {
-      console.warn('[useLorcanaScanHistory] Failed to clear scan history', err);
-    }
   }, []);
 
   return {

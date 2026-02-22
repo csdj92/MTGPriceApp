@@ -52,50 +52,30 @@ export const useLorcanaCollection = ({ onCardsUpdate }: UseLorcanaCollectionProp
             if (!collectionId) {
                 throw new Error('Failed to find or create collection');
             }
+
+            // Add card to collection with default quantity of 1 (normal, non-foil)
+            // This function handles the transaction and sets quantities properly
+            await addCardToLorcanaCollection(card.Unique_ID, collectionId, false, 1);
             
-            // Use a transaction to ensure all database updates happen atomically
-            await database.transaction(async (tx) => {
-                await addCardToLorcanaCollection(card.Unique_ID, collectionId);
-                
-                await tx.executeSql(
-                    'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
-                    [card.Unique_ID]
-                );
-                
-                const now = new Date().toISOString();
-                await tx.executeSql(
-                    'INSERT OR REPLACE INTO lorcana_collection_cards (collection_id, card_id, added_at) VALUES (?, ?, ?)',
-                    [collectionId, card.Unique_ID, now]
-                );
-            });
-            
-            // Verify the card is now marked as collected
+            // Verify the card was added with quantities
             const [verification] = await database.executeSql(
-                `SELECT 
-                    lc.collected,
-                    CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection
+                `SELECT
+                    lcc.quantity_normal,
+                    lcc.quantity_foil,
+                    lc.collected
                  FROM lorcana_cards lc
                  LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
                  WHERE lc.Unique_ID = ?`,
                 [card.Unique_ID]
             );
-            
+
             if (verification.rows.length > 0) {
                 const verifiedCard = verification.rows.item(0);
-                const isCollected = Boolean(verifiedCard.collected) || Boolean(verifiedCard.in_collection);
-                
-                if (!isCollected) {
-                    console.warn('[useLorcanaCollection] Card not properly marked as collected, fixing...');
-                    await database.executeSql(
-                        'UPDATE lorcana_cards SET collected = 1 WHERE Unique_ID = ?',
-                        [card.Unique_ID]
-                    );
-                    
-                    await database.executeSql(
-                        'INSERT OR REPLACE INTO lorcana_collection_cards (collection_id, card_id, added_at) VALUES (?, ?, ?)',
-                        [collectionId, card.Unique_ID, new Date().toISOString()]
-                    );
-                }
+                console.log('[useLorcanaCollection] Card added with quantities:', {
+                    normal: verifiedCard.quantity_normal,
+                    foil: verifiedCard.quantity_foil,
+                    collected: verifiedCard.collected
+                });
             }
             
             // Success feedback
@@ -120,30 +100,48 @@ export const useLorcanaCollection = ({ onCardsUpdate }: UseLorcanaCollectionProp
             if (cardIds.length === 0) return;
             
             const [results] = await db.executeSql(
-                `SELECT lc.Unique_ID, 
-                        lc.collected, 
-                        CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection
+                `SELECT lc.Unique_ID,
+                        lc.collected,
+                        CASE WHEN lcc.card_id IS NOT NULL THEN 1 ELSE 0 END as in_collection,
+                        COALESCE(lcc.quantity_normal, 0) as quantity_normal,
+                        COALESCE(lcc.quantity_foil, 0) as quantity_foil
                  FROM lorcana_cards lc
                  LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
                  WHERE lc.Unique_ID IN (${cardIds.map(() => '?').join(',')})`,
                 cardIds
             );
-            
-            const collectionStatusMap = new Map();
+
+            const collectionDataMap = new Map();
             for (let i = 0; i < results.rows.length; i++) {
                 const row = results.rows.item(i);
                 const isCollected = Boolean(row.collected) || Boolean(row.in_collection);
-                collectionStatusMap.set(row.Unique_ID, isCollected);
+                collectionDataMap.set(row.Unique_ID, {
+                    collected: isCollected,
+                    quantity_normal: row.quantity_normal || 0,
+                    quantity_foil: row.quantity_foil || 0
+                });
             }
-            
+
             let hasInconsistencies = false;
             const updatedCards = cards.map(card => {
                 if (!card.Unique_ID) return card;
-                
-                const databaseCollected = collectionStatusMap.get(card.Unique_ID);
-                if (databaseCollected !== undefined && databaseCollected !== !!card.collected) {
-                    hasInconsistencies = true;
-                    return { ...card, collected: databaseCollected };
+
+                const dbData = collectionDataMap.get(card.Unique_ID);
+                if (dbData !== undefined) {
+                    const needsUpdate =
+                        dbData.collected !== !!card.collected ||
+                        dbData.quantity_normal !== (card.quantity_normal || 0) ||
+                        dbData.quantity_foil !== (card.quantity_foil || 0);
+
+                    if (needsUpdate) {
+                        hasInconsistencies = true;
+                        return {
+                            ...card,
+                            collected: dbData.collected,
+                            quantity_normal: dbData.quantity_normal,
+                            quantity_foil: dbData.quantity_foil
+                        };
+                    }
                 }
                 return card;
             });

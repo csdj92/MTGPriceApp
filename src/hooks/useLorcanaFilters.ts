@@ -95,8 +95,26 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
                         ? (a.Name || '').localeCompare(b.Name || '')
                         : (b.Name || '').localeCompare(a.Name || '');
                 case 'price':
-                    const priceA = a.prices?.usd ? parseFloat(a.prices.usd) : 0;
-                    const priceB = b.prices?.usd ? parseFloat(b.prices.usd) : 0;
+                    // Parse prices and handle NaN/invalid values
+                    let priceA = 0;
+                    let priceB = 0;
+
+                    if (a.prices?.usd) {
+                        const parsedA = parseFloat(a.prices.usd);
+                        priceA = isNaN(parsedA) ? 0 : parsedA;
+                    } else if ((a as any).price_usd) {
+                        const parsedA = parseFloat((a as any).price_usd);
+                        priceA = isNaN(parsedA) ? 0 : parsedA;
+                    }
+
+                    if (b.prices?.usd) {
+                        const parsedB = parseFloat(b.prices.usd);
+                        priceB = isNaN(parsedB) ? 0 : parsedB;
+                    } else if ((b as any).price_usd) {
+                        const parsedB = parseFloat((b as any).price_usd);
+                        priceB = isNaN(parsedB) ? 0 : parsedB;
+                    }
+
                     return sortDirection === 'asc' ? priceA - priceB : priceB - priceA;
                 case 'number':
                 default:

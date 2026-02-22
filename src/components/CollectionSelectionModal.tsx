@@ -39,7 +39,7 @@ const CollectionSelectionModal: React.FC<CollectionSelectionModalProps> = ({
         try {
             setLoading(true);
             const result = await databaseService.getCollections();
-            setCollections(result.map(collection => ({ ...collection, type: 'MTG' as const })));
+            setCollections(result.map(collection => ({ ...collection, type: 'Lorcana' as const })));
         } catch (error) {
             console.error('Error loading collections:', error);
         } finally {

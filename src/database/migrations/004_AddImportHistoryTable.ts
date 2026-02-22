@@ -5,9 +5,9 @@
  * helping to diagnose issues with card imports.
  */
 
-import { Database } from 'react-native-sqlite-storage';
+import SQLite from 'react-native-sqlite-storage';
 
-export const up = async (db: Database): Promise<void> => {
+export const up = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     console.log('[Migration 004] Creating lorcana_import_history table...');
 
     await db.executeSql(`
@@ -42,7 +42,7 @@ export const up = async (db: Database): Promise<void> => {
     console.log('[Migration 004] ✓ lorcana_import_history table created successfully');
 };
 
-export const down = async (db: Database): Promise<void> => {
+export const down = async (db: SQLite.SQLiteDatabase): Promise<void> => {
     console.log('[Migration 004] Dropping lorcana_import_history table...');
 
     await db.executeSql('DROP INDEX IF EXISTS idx_import_history_set');

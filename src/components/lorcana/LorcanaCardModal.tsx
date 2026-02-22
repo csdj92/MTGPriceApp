@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal } from 'react-native';
 import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -10,6 +10,7 @@ import {
     formatLorcanaRarity,
     getLorcanaRarityColor,
 } from '../../utils/formatters';
+import { updateLorcanaCardQuantity, getLorcanaCardQuantity } from '../../services/LorcanaService';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -44,6 +45,8 @@ interface LorcanaCardModalProps {
     onRemoveFromCollection?: () => void;
     priceData?: any;
     isPriceLoading?: boolean;
+    collectionId?: string;
+    onQuantityChange?: () => void;
 }
 
 interface CardHeaderDisplayProps {
@@ -222,6 +225,140 @@ const CurrentPriceDisplay: React.FC<CurrentPriceDisplayProps> = React.memo(({
     );
 });
 
+interface QuantityControlsProps {
+    card: LorcanaCardWithPrice;
+    theme: ReturnType<typeof useTheme>['theme'];
+    collectionId?: string;
+    onQuantityChange?: () => void;
+}
+
+const QuantityControls: React.FC<QuantityControlsProps> = React.memo(({
+    card,
+    theme,
+    collectionId,
+    onQuantityChange,
+}) => {
+    const [quantityNormal, setQuantityNormal] = useState(card.quantity_normal || 0);
+    const [quantityFoil, setQuantityFoil] = useState(card.quantity_foil || 0);
+    const [updating, setUpdating] = useState(false);
+
+    // Update quantities when card changes
+    useEffect(() => {
+        console.log('[LorcanaCardModal] Loading quantities for card:', card.Name, {
+            normal: card.quantity_normal,
+            foil: card.quantity_foil
+        });
+        setQuantityNormal(card.quantity_normal || 0);
+        setQuantityFoil(card.quantity_foil || 0);
+    }, [card.quantity_normal, card.quantity_foil, card.Name]);
+
+    const handleQuantityChange = async (type: 'normal' | 'foil', delta: number) => {
+        if (!collectionId || updating) return;
+
+        setUpdating(true);
+        try {
+            const newNormal = type === 'normal' ? Math.max(0, quantityNormal + delta) : quantityNormal;
+            const newFoil = type === 'foil' ? Math.max(0, quantityFoil + delta) : quantityFoil;
+
+            // Update database
+            await updateLorcanaCardQuantity(card.Unique_ID, collectionId, newNormal, newFoil);
+
+            // Update local state for immediate UI feedback
+            setQuantityNormal(newNormal);
+            setQuantityFoil(newFoil);
+
+            // Notify parent to refresh card list from database
+            if (onQuantityChange) {
+                await onQuantityChange();
+            }
+
+            console.log('[LorcanaCardModal] Updated quantities:', { normal: newNormal, foil: newFoil });
+        } catch (error) {
+            console.error('Error updating quantity:', error);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
+    if (!card.collected || !collectionId) return null;
+
+    const normalPrice = parseFloat(card.price_usd || card.prices?.usd || '0');
+    const foilPrice = parseFloat(card.price_usd_foil || card.prices?.usd_foil || '0');
+    const normalValue = normalPrice * quantityNormal;
+    const foilValue = foilPrice * quantityFoil;
+    const totalValue = normalValue + foilValue;
+
+    return (
+        <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>Quantity in Collection</Text>
+
+            {/* Normal Cards */}
+            <View style={styles.quantityRow}>
+                <View style={styles.quantityLabel}>
+                    <Icon name="cards" size={18} color={theme.icon || theme.text} />
+                    <Text style={[styles.quantityLabelText, { color: theme.text }]}>Normal:</Text>
+                </View>
+                <View style={styles.quantityControls}>
+                    <TouchableOpacity
+                        style={[styles.quantityButton, { backgroundColor: theme.error || '#dc3545' }]}
+                        onPress={() => handleQuantityChange('normal', -1)}
+                        disabled={quantityNormal === 0 || updating}
+                    >
+                        <Icon name="minus" size={18} color="#ffffff" />
+                    </TouchableOpacity>
+                    <Text style={[styles.quantityValue, { color: theme.text }]}>{quantityNormal}</Text>
+                    <TouchableOpacity
+                        style={[styles.quantityButton, { backgroundColor: theme.success || '#28a745' }]}
+                        onPress={() => handleQuantityChange('normal', 1)}
+                        disabled={updating}
+                    >
+                        <Icon name="plus" size={18} color="#ffffff" />
+                    </TouchableOpacity>
+                </View>
+                <Text style={[styles.quantityPrice, { color: theme.success || theme.primary }]}>
+                    ${normalValue.toFixed(2)}
+                </Text>
+            </View>
+
+            {/* Foil Cards */}
+            <View style={styles.quantityRow}>
+                <View style={styles.quantityLabel}>
+                    <Icon name="cards-diamond" size={18} color={theme.icon || theme.text} />
+                    <Text style={[styles.quantityLabelText, { color: theme.text }]}>Foil:</Text>
+                </View>
+                <View style={styles.quantityControls}>
+                    <TouchableOpacity
+                        style={[styles.quantityButton, { backgroundColor: theme.error || '#dc3545' }]}
+                        onPress={() => handleQuantityChange('foil', -1)}
+                        disabled={quantityFoil === 0 || updating}
+                    >
+                        <Icon name="minus" size={18} color="#ffffff" />
+                    </TouchableOpacity>
+                    <Text style={[styles.quantityValue, { color: theme.text }]}>{quantityFoil}</Text>
+                    <TouchableOpacity
+                        style={[styles.quantityButton, { backgroundColor: theme.success || '#28a745' }]}
+                        onPress={() => handleQuantityChange('foil', 1)}
+                        disabled={updating}
+                    >
+                        <Icon name="plus" size={18} color="#ffffff" />
+                    </TouchableOpacity>
+                </View>
+                <Text style={[styles.quantityPrice, { color: theme.success || theme.primary }]}>
+                    ${foilValue.toFixed(2)}
+                </Text>
+            </View>
+
+            {/* Total Value */}
+            <View style={[styles.totalValueRow, { borderTopColor: theme.border }]}>
+                <Text style={[styles.totalValueLabel, { color: theme.text }]}>Total Value:</Text>
+                <Text style={[styles.totalValueAmount, { color: theme.success || theme.primary }]}>
+                    ${totalValue.toFixed(2)}
+                </Text>
+            </View>
+        </View>
+    );
+});
+
 interface CollectionActionButtonsProps {
     card: LorcanaCardWithPrice;
     theme: ReturnType<typeof useTheme>['theme'];
@@ -268,7 +405,9 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
     onAddToCollection,
     onRemoveFromCollection,
     priceData,
-    isPriceLoading
+    isPriceLoading,
+    collectionId,
+    onQuantityChange
 }) => {
     const { theme } = useTheme();
     if (!card) return null;
@@ -335,10 +474,18 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
                             isFlavor 
                         />
                         
+                        {/* Quantity Controls Section */}
+                        <QuantityControls
+                            card={card}
+                            theme={theme}
+                            collectionId={collectionId}
+                            onQuantityChange={onQuantityChange}
+                        />
+
                         {/* Price Information Section */}
                         <View style={[styles.cardSection, { backgroundColor: theme.card || theme.surface }]}>
                             <Text style={[styles.sectionTitle, { color: theme.text }]}>Price Information</Text>
-                            
+
                             {isPriceLoading ? (
                                 <Text style={[styles.priceValue, { color: theme.textSecondary }]}>Loading...</Text>
                             ) : (
@@ -359,8 +506,11 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
 
                             {/* Price History Section */}
                             {card.Unique_ID && (
-                                <View style={styles.priceHistoryContainer}>
-                                    <LorcanaPriceDetails 
+                                <View
+                                    key={`price-history-${card.Unique_ID}`}
+                                    style={styles.priceHistoryContainer}
+                                >
+                                    <LorcanaPriceDetails
                                         cardId={card.Unique_ID}
                                         cardName={card.Name}
                                         currentPrice={price}
@@ -372,11 +522,11 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
                     </ScrollView>
 
                     {/* Collection management buttons */}
-                    <CollectionActionButtons 
-                        card={card} 
-                        theme={theme} 
-                        onAddToCollection={onAddToCollection} 
-                        onRemoveFromCollection={onRemoveFromCollection} 
+                    <CollectionActionButtons
+                        card={card}
+                        theme={theme}
+                        onAddToCollection={onAddToCollection}
+                        onRemoveFromCollection={onRemoveFromCollection}
                     />
                 </View>
             </View>
@@ -567,6 +717,63 @@ const styles = StyleSheet.create({
         borderTopWidth: 1,
         borderTopColor: 'rgba(0, 0, 0, 0.1)',
         paddingTop: 16,
+    },
+    quantityRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 12,
+    },
+    quantityLabel: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flex: 1,
+    },
+    quantityLabelText: {
+        marginLeft: 8,
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    quantityControls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginHorizontal: 12,
+    },
+    quantityButton: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    quantityValue: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginHorizontal: 16,
+        minWidth: 30,
+        textAlign: 'center',
+    },
+    quantityPrice: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        minWidth: 60,
+        textAlign: 'right',
+    },
+    totalValueRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 12,
+        paddingTop: 12,
+        borderTopWidth: 1,
+    },
+    totalValueLabel: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    totalValueAmount: {
+        fontSize: 18,
+        fontWeight: 'bold',
     },
 });
 

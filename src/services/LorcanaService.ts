@@ -655,8 +655,39 @@ export const getLorcanaCardPrice = async (card: { Name: string; Set_Num?: number
     try {
         // Log the card details we're searching for
         console.log(`[LorcanaService] Fetching price for card: ${card.Name}, Set_Num: ${card.Set_Num}, Card_Num: ${card.Card_Num}, Rarity: ${card.Rarity}, Unique_ID: ${card.Unique_ID}`);
-        
+
         const db = await getDB(); // Fetch DB connection once
+
+        // First, check if we have recent price data in the database (within last 24 hours)
+        if (card.Unique_ID) {
+            try {
+                const [existingPrice] = await db.executeSql(
+                    `SELECT usd, usd_foil, last_updated FROM lorcana_card_prices
+                     WHERE card_id = ? AND last_updated IS NOT NULL`,
+                    [card.Unique_ID]
+                );
+
+                if (existingPrice.rows.length > 0) {
+                    const priceData = existingPrice.rows.item(0);
+                    const lastUpdated = new Date(priceData.last_updated);
+                    const now = new Date();
+                    const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
+
+                    // If price data is less than 24 hours old, return it
+                    if (hoursSinceUpdate < 24) {
+                        console.log(`[LorcanaService] Using cached price data for card ${card.Unique_ID} (${hoursSinceUpdate.toFixed(1)} hours old)`);
+                        return {
+                            usd: priceData.usd,
+                            usd_foil: priceData.usd_foil,
+                            tcgplayer_id: null // We don't store this in the cached version
+                        };
+                    }
+                }
+            } catch (error) {
+                console.log(`[LorcanaService] Error checking cached prices: ${error}`);
+                // Continue to API fetch if database check fails
+            }
+        }
 
         // Check if this is a first scan by looking for existing price history
         let isFirstScan = false;
@@ -1386,41 +1417,50 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
 
         console.log(`[LorcanaService] Found ${existingSetCollections.rows.item(0).cnt} existing Lorcana set collections`);
 
-        if (existingSetCollections.rows.item(0).cnt === 0) {
-            console.log('[LorcanaService] No existing set collections found, creating them from cards...');
+        // Always ensure all sets have collections (not just when count is 0)
+        console.log('[LorcanaService] Checking for sets without collections...');
 
-            // Get distinct sets from cards
-            const [distinctSets] = await db.executeSql(
-                `SELECT DISTINCT Set_ID, Set_Name, Set_Num FROM lorcana_cards
-                 WHERE Set_ID IS NOT NULL AND Set_Name IS NOT NULL
-                 ORDER BY Set_Num ASC`
-            );
+        // Get distinct sets from cards
+        const [distinctSets] = await db.executeSql(
+            `SELECT DISTINCT Set_ID, Set_Name, Set_Num FROM lorcana_cards
+             WHERE Set_ID IS NOT NULL AND Set_Name IS NOT NULL
+             ORDER BY Set_Num ASC`
+        );
 
-            console.log(`[LorcanaService] Found ${distinctSets.rows.length} distinct sets to create collections for`);
+        console.log(`[LorcanaService] Found ${distinctSets.rows.length} distinct sets in database`);
 
-            // Create collections for each set
-            for (let i = 0; i < distinctSets.rows.length; i++) {
-                const row = distinctSets.rows.item(i);
-                const setId = row.Set_ID;
-                const setName = row.Set_Name;
-                const setNum = row.Set_Num;
+        // Create collections for each set that doesn't have one
+        for (let i = 0; i < distinctSets.rows.length; i++) {
+            const row = distinctSets.rows.item(i);
+            const setId = row.Set_ID;
+            const setName = row.Set_Name;
+            const setNum = row.Set_Num;
 
-                try {
-                    // Create collection directly
+            try {
+                // Check if collection already exists for this set
+                const [existingSetCollection] = await db.executeSql(
+                    'SELECT id FROM lorcana_collections WHERE name = ? OR description LIKE ?',
+                    [`Set: ${setName}`, `%${setId})`]
+                );
+
+                if (existingSetCollection.rows.length === 0) {
+                    // Create collection
                     const collectionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
                     const now = new Date().toISOString();
                     const description = `Collection for ${setName} (${setId})`;
 
                     await db.executeSql(
-                        `INSERT OR IGNORE INTO lorcana_collections (id, name, description, created_at, updated_at, set_number)
+                        `INSERT INTO lorcana_collections (id, name, description, created_at, updated_at, set_number)
                          VALUES (?, ?, ?, ?, ?, ?)`,
                         [collectionId, `Set: ${setName}`, description, now, now, setNum]
                     );
 
                     console.log(`[LorcanaService] Created collection for ${setName} (${setId})`);
-                } catch (error) {
-                    console.error(`[LorcanaService] Failed to create collection for ${setName}:`, error);
+                } else {
+                    console.log(`[LorcanaService] Collection already exists for ${setName} (${setId})`);
                 }
+            } catch (error) {
+                console.error(`[LorcanaService] Failed to create collection for ${setName}:`, error);
             }
         }
         // -------------------------------------------------------------------
@@ -1529,45 +1569,30 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                     c.created_at,
                     c.updated_at,
                     COALESCE(cc.collected_count, 0) as collected_cards,
-                    CASE
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'TFC' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '1' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROF' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '2' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'INK' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '3' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'URS' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '4' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'SSK' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '5' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'AZS' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '6' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ARI' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '7' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROJ' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '8' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'FAB' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '9' AND lc.Unique_ID IS NOT NULL
-                        )
-                        WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'WHI' THEN (
-                            SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '10' AND lc.Unique_ID IS NOT NULL
-                        )
-                        ELSE 0
-                    END as total_cards,
+                    (
+                        SELECT COUNT(DISTINCT lc.Unique_ID)
+                        FROM lorcana_cards lc
+                        WHERE lc.Set_ID = RTRIM(SUBSTR(c.description, INSTR(c.description, '(') + 1), ')')
+                        AND lc.Unique_ID IS NOT NULL
+                    ) as total_cards,
                     (
                         SELECT COALESCE(SUM(
-                            CASE
-                                WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
-                                ELSE 0
-                            END
+                            -- Calculate value for normal cards
+                            (COALESCE(lcc.quantity_normal, 0) *
+                                CASE
+                                    WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
+                                    WHEN lc.price_usd_foil IS NOT NULL THEN CAST(lc.price_usd_foil AS FLOAT)
+                                    ELSE 0
+                                END
+                            ) +
+                            -- Calculate value for foil cards
+                            (COALESCE(lcc.quantity_foil, 0) *
+                                CASE
+                                    WHEN lc.price_usd_foil IS NOT NULL THEN CAST(lc.price_usd_foil AS FLOAT)
+                                    WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
+                                    ELSE 0
+                                END
+                            )
                         ), 0)
                         FROM lorcana_cards lc
                         INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
@@ -1611,39 +1636,12 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                 c.created_at,
                 c.updated_at,
                 0 as collected_cards,
-                CASE
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'TFC' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '1' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROF' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '2' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'INK' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '3' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'URS' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '4' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'SSK' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '5' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'AZS' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '6' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ARI' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '7' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'ROJ' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '8' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'FAB' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '9' AND lc.Unique_ID IS NOT NULL
-                    )
-                    WHEN SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1) = 'WHI' THEN (
-                        SELECT COUNT(DISTINCT lc.Unique_ID) FROM lorcana_cards lc WHERE lc.Set_ID = '10' AND lc.Unique_ID IS NOT NULL
-                    )
-                    ELSE 0
-                END as total_cards,
+                (
+                    SELECT COUNT(DISTINCT lc.Unique_ID)
+                    FROM lorcana_cards lc
+                    WHERE lc.Set_ID = RTRIM(SUBSTR(c.description, INSTR(c.description, '(') + 1), ')')
+                    AND lc.Unique_ID IS NOT NULL
+                ) as total_cards,
                 0 as total_value,
                 c.set_number,
                 0 as completion_percentage
@@ -1695,15 +1693,27 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                         (
                             SELECT COUNT(DISTINCT lc.Unique_ID)
                             FROM lorcana_cards lc
-                            WHERE lc.Set_ID = SUBSTR(c.description, INSTR(c.description, '(') + 1, LENGTH(c.description) - INSTR(c.description, '(') - 1)
+                            WHERE lc.Set_ID = RTRIM(SUBSTR(c.description, INSTR(c.description, '(') + 1), ')')
                             AND lc.Unique_ID IS NOT NULL
                         ) as total_cards,
                         (
                             SELECT COALESCE(SUM(
-                                CASE 
-                                    WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
-                                    ELSE 0 
-                                END
+                                -- Calculate value for normal cards
+                                (COALESCE(lcc.quantity_normal, 0) *
+                                    CASE
+                                        WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
+                                        WHEN lc.price_usd_foil IS NOT NULL THEN CAST(lc.price_usd_foil AS FLOAT)
+                                        ELSE 0
+                                    END
+                                ) +
+                                -- Calculate value for foil cards
+                                (COALESCE(lcc.quantity_foil, 0) *
+                                    CASE
+                                        WHEN lc.price_usd_foil IS NOT NULL THEN CAST(lc.price_usd_foil AS FLOAT)
+                                        WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
+                                        ELSE 0
+                                    END
+                                )
                             ), 0)
                             FROM lorcana_cards lc
                             INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
@@ -2134,15 +2144,15 @@ export const getLorcanaSetMissingCards = async (setId: string, collectionId: str
                    CASE
                        WHEN lcc.card_id IS NOT NULL THEN 1
                        ELSE 0
-                   END as collected
+                   END as collected,
+                   COALESCE(lcc.quantity_normal, 0) as quantity_normal,
+                   COALESCE(lcc.quantity_foil, 0) as quantity_foil
             FROM lorcana_cards lc
             LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id AND lcc.collection_id = ?
             WHERE lc.Set_ID = ?
             AND lc.Unique_ID IS NOT NULL
             AND lc.Name IS NOT NULL
-            ORDER BY
-                CASE WHEN lc.Rarity = 'Enchanted' THEN 1 ELSE 0 END DESC,
-                lc.Card_Num ASC;
+            ORDER BY lc.Card_Num ASC;
         `, [collectionId, numericSetId]);
 
         const cards: LorcanaCardWithPrice[] = [];
@@ -2157,7 +2167,9 @@ export const getLorcanaSetMissingCards = async (setId: string, collectionId: str
                         usd_foil: card.price_usd_foil,
                         tcgplayer_id: null
                     },
-                    collected: Boolean(card.collected)
+                    collected: Boolean(card.collected),
+                    quantity_normal: card.quantity_normal || 0,
+                    quantity_foil: card.quantity_foil || 0
                 });
             }
         }
@@ -3499,5 +3511,156 @@ export const setLorcanaCardApiTimestamp = async (cardId: string, timestamp: numb
         );
     } catch (error) {
         console.error('[LorcanaService] Error setting Lorcana card API timestamp:', error);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Quantity Management Helper Functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Updates the quantity of a card in a collection
+ * @param cardId - The unique ID of the card
+ * @param collectionId - The ID of the collection
+ * @param quantityNormal - The new quantity of normal (non-foil) cards
+ * @param quantityFoil - The new quantity of foil cards
+ */
+export const updateLorcanaCardQuantity = async (
+    cardId: string,
+    collectionId: string,
+    quantityNormal: number,
+    quantityFoil: number
+): Promise<void> => {
+    try {
+        const db = await getDB();
+        const now = new Date().toISOString();
+
+        // Ensure quantities are non-negative
+        const normalQty = Math.max(0, quantityNormal);
+        const foilQty = Math.max(0, quantityFoil);
+
+        // If both quantities are 0, remove the card from the collection
+        if (normalQty === 0 && foilQty === 0) {
+            await db.executeSql(
+                'DELETE FROM lorcana_collection_cards WHERE card_id = ? AND collection_id = ?',
+                [cardId, collectionId]
+            );
+
+            // Update collection timestamp
+            await db.executeSql(
+                'UPDATE lorcana_collections SET updated_at = ? WHERE id = ?',
+                [now, collectionId]
+            );
+            return;
+        }
+
+        // Check if the card exists in the collection
+        const [result] = await db.executeSql(
+            'SELECT * FROM lorcana_collection_cards WHERE card_id = ? AND collection_id = ?',
+            [cardId, collectionId]
+        );
+
+        if (result.rows.length > 0) {
+            // Update existing record
+            await db.executeSql(
+                `UPDATE lorcana_collection_cards
+                 SET quantity_normal = ?, quantity_foil = ?, added_at = ?
+                 WHERE card_id = ? AND collection_id = ?`,
+                [normalQty, foilQty, now, cardId, collectionId]
+            );
+        } else {
+            // Insert new record
+            await db.executeSql(
+                `INSERT INTO lorcana_collection_cards (collection_id, card_id, quantity_normal, quantity_foil, added_at)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [collectionId, cardId, normalQty, foilQty, now]
+            );
+        }
+
+        // Update collection timestamp
+        await db.executeSql(
+            'UPDATE lorcana_collections SET updated_at = ? WHERE id = ?',
+            [now, collectionId]
+        );
+
+        console.log(`[LorcanaService] Updated card ${cardId} quantities in collection ${collectionId}: normal=${normalQty}, foil=${foilQty}`);
+    } catch (error) {
+        console.error('[LorcanaService] Error updating card quantity:', error);
+        throw error;
+    }
+};
+
+/**
+ * Decrements the quantity of a card in a collection
+ * @param cardId - The unique ID of the card
+ * @param collectionId - The ID of the collection
+ * @param quantity - The amount to decrement
+ * @param isFoil - Whether to decrement foil or normal quantity
+ */
+export const decrementLorcanaCardQuantity = async (
+    cardId: string,
+    collectionId: string,
+    quantity: number = 1,
+    isFoil: boolean = false
+): Promise<void> => {
+    try {
+        const db = await getDB();
+
+        // Get current quantities
+        const [result] = await db.executeSql(
+            'SELECT quantity_normal, quantity_foil FROM lorcana_collection_cards WHERE card_id = ? AND collection_id = ?',
+            [cardId, collectionId]
+        );
+
+        if (result.rows.length === 0) {
+            console.warn(`[LorcanaService] Card ${cardId} not found in collection ${collectionId}`);
+            return;
+        }
+
+        const currentNormal = result.rows.item(0).quantity_normal || 0;
+        const currentFoil = result.rows.item(0).quantity_foil || 0;
+
+        // Calculate new quantities
+        const newNormal = isFoil ? currentNormal : Math.max(0, currentNormal - quantity);
+        const newFoil = isFoil ? Math.max(0, currentFoil - quantity) : currentFoil;
+
+        // Update the quantities
+        await updateLorcanaCardQuantity(cardId, collectionId, newNormal, newFoil);
+
+        console.log(`[LorcanaService] Decremented ${isFoil ? 'foil' : 'normal'} quantity for card ${cardId} by ${quantity}`);
+    } catch (error) {
+        console.error('[LorcanaService] Error decrementing card quantity:', error);
+        throw error;
+    }
+};
+
+/**
+ * Gets the current quantities of a card in a collection
+ * @param cardId - The unique ID of the card
+ * @param collectionId - The ID of the collection
+ * @returns Object with quantity_normal and quantity_foil, or null if not found
+ */
+export const getLorcanaCardQuantity = async (
+    cardId: string,
+    collectionId: string
+): Promise<{ quantity_normal: number; quantity_foil: number } | null> => {
+    try {
+        const db = await getDB();
+        const [result] = await db.executeSql(
+            'SELECT quantity_normal, quantity_foil FROM lorcana_collection_cards WHERE card_id = ? AND collection_id = ?',
+            [cardId, collectionId]
+        );
+
+        if (result.rows.length === 0) {
+            return null;
+        }
+
+        return {
+            quantity_normal: result.rows.item(0).quantity_normal || 0,
+            quantity_foil: result.rows.item(0).quantity_foil || 0
+        };
+    } catch (error) {
+        console.error('[LorcanaService] Error getting card quantity:', error);
+        throw error;
     }
 };

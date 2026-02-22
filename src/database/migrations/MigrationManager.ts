@@ -5,6 +5,7 @@ import { AddSetNumberToLorcanaCollections } from './002_AddSetNumberToLorcanaCol
 export interface Migration {
     version: number;
     up: (db: SQLite.SQLiteDatabase) => Promise<void>;
+    down?: (db: SQLite.SQLiteDatabase) => Promise<void>;
 }
 
 // Migration manager class

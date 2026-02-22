@@ -17,7 +17,8 @@ import {
   FlatList,
 } from 'react-native';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
-import type { ExtendedCard, OcrResult } from '../types/card';
+import type { OcrResult } from '../types/card';
+import type { LorcanaCard } from '../types/lorcana';
 import { LiveOcrModule } from '../types/NativeModules';
 import { CameraService } from '../services/CameraService';
 import { Logger } from '../utils/logger';
@@ -33,13 +34,13 @@ export type CardScannerProps = {
   onScan: (result: OcrResult) => Promise<void>;
   onError: (error: Error) => void;
   isLorcanaScan: boolean;
-  scannedCards: ExtendedCard[];
+  scannedCards: any[];
   totalPrice: number;
   onCardPress: (card: any) => void;
   isPaused: boolean;
-  cardVariations: ExtendedCard[];
-  onVariationSelect: (card: ExtendedCard) => void;
-  selectedVariation: ExtendedCard | null;
+  cardVariations: LorcanaCard[];
+  onVariationSelect: (card: LorcanaCard) => void;
+  selectedVariation: LorcanaCard | null;
   onConfirmVariation: (isFoil: boolean) => void;
 };
 
@@ -60,7 +61,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
   const [isActive, setIsActive] = useState(false);
   const [aspectRatioStyle, setAspectRatioStyle] = useState({});
   const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
-  const [selectedCard, setSelectedCard] = useState<ExtendedCard | null>(null);
+  const [selectedCard, setSelectedCard] = useState<LorcanaCard | null>(null);
   const [cardModalVisible, setCardModalVisible] = useState(false);
   const [isRecentCardsCollapsed, setIsRecentCardsCollapsed] = useState(false);
   const [showingVariations, setShowingVariations] = useState(false);
@@ -136,9 +137,9 @@ const CardScanner: React.FC<CardScannerProps> = ({
   }, [isPaused, isActive]);
 
   // Handle card press - either use the passed handler or show our own modal
-  const handleCardPress = useCallback((card: ExtendedCard) => {
-    Logger.debug(`Card pressed: ${card.name}`);
-    
+  const handleCardPress = useCallback((card: LorcanaCard) => {
+    Logger.debug(`Card pressed: ${card.Name || card.name}`);
+
     // If parent component provided a handler, use it
     if (onCardPress) {
       onCardPress(card);
@@ -232,18 +233,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
             <ScrollView contentContainerStyle={styles.cardsStrip}>
               {recentCards.map((card, index) => {
                 // Get appropriate image URI using our helper function
-                let imageUri = null;
-                
-                // Check if it's a Lorcana card
-                if (card.type === 'Lorcana') {
-                  // For Lorcana cards, use the imported function without specifying size
-                  imageUri = getLorcanaImageUrl(card);
-                } else {
-                  // For MTG cards - use existing logic
-                  imageUri = card.imageUris?.normal || 
-                             card.imageUris?.small || 
-                             card.imageUrl || null;
-                }
+                const imageUri = getLorcanaImageUrl(card);
                 
                
                   
@@ -267,10 +257,10 @@ const CardScanner: React.FC<CardScannerProps> = ({
                     
                     <View style={styles.cardPreviewInfo}>
                       <Text style={styles.cardPreviewName} numberOfLines={1}>
-                        {card.name}
+                        {card.Name || card.name}
                       </Text>
                       <Text style={styles.cardPreviewPrice}>
-                        ${card.prices?.usd ? parseFloat(card.prices.usd).toFixed(2) : '0.00'}
+                        ${card.price_usd ? parseFloat(card.price_usd.toString()).toFixed(2) : (card.prices?.usd ? parseFloat(card.prices.usd).toFixed(2) : '0.00')}
                       </Text>
                     </View>
                   </TouchableOpacity>
@@ -289,11 +279,11 @@ const CardScanner: React.FC<CardScannerProps> = ({
                   showsHorizontalScrollIndicator={true}
                   keyExtractor={(item, index) => `variation-${item.id || item.name}-${index}`}
                   renderItem={({ item }) => {
-                    const isSelected = selectedVariation?.id === item.id;
+                    const isSelected = selectedVariation?.Unique_ID === item.Unique_ID;
                     const isOriginalScan = item.isOriginalScan;
-                    
-                    // Get appropriate image URI 
-                    const imageUri = item.imageUris?.small || item.imageUrl || null;
+
+                    // Get appropriate image URI
+                    const imageUri = getLorcanaImageUrl(item);
                     
                     return (
                       <TouchableOpacity
@@ -318,10 +308,10 @@ const CardScanner: React.FC<CardScannerProps> = ({
                         </View>
                         <View style={styles.variationDetails}>
                           <Text style={styles.variationSetName} numberOfLines={1}>
-                            {item.setName || 'Unknown Set'}
+                            {item.Set_Name || item.set_name || 'Unknown Set'}
                           </Text>
                           <Text style={styles.variationPrice}>
-                            ${item.prices?.usd ? parseFloat(item.prices.usd).toFixed(2) : '0.00'}
+                            ${item.price_usd ? parseFloat(item.price_usd.toString()).toFixed(2) : (item.prices?.usd ? parseFloat(item.prices.usd).toFixed(2) : '0.00')}
                           </Text>
                         </View>
                       </TouchableOpacity>
@@ -385,7 +375,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
   ]);
 
   // Helper component for card images with error handling
-  const CardImage = useCallback(({ uri, name, previewMode = false }: { uri: string | null, name: string, previewMode?: boolean }) => {
+  const CardImage = useCallback(({ uri, name, previewMode = false }: { uri: string | null, name?: string, previewMode?: boolean }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [hasError, setHasError] = useState(false);
     
@@ -396,27 +386,27 @@ const CardScanner: React.FC<CardScannerProps> = ({
     useEffect(() => {
       // Log URI for debugging in development
       if (__DEV__) {
-        console.log(`[CardImage] ${name} image URI: ${uri || 'none'} (valid: ${Boolean(isValidUri)})`);
+        console.log(`[CardImage] ${(name || 'Unknown')} image URI: ${uri || 'none'} (valid: ${Boolean(isValidUri)})`);
       }
     }, [uri, name, isValidUri]);
     
     const handleLoad = () => {
       setIsLoading(false);
       if (__DEV__) {
-        console.log(`[CardImage] Successfully loaded image for ${name}`);
+        console.log(`[CardImage] Successfully loaded image for ${name || 'Unknown'}`);
       }
       // Record successful load in our tracking system
       if (uri) {
-        handleImageLoadSuccess(uri, { name });
+        handleImageLoadSuccess(uri, { name: name || 'Unknown' });
       }
     };
     
     const handleError = (e: any) => {
       setHasError(true);
       setIsLoading(false);
-      console.error(`[CardImage] Error loading image for ${name}:`, e);
+      console.error(`[CardImage] Error loading image for ${name || 'Unknown'}:`, e);
       if (uri) {
-        handleImageLoadError(uri, name);
+        handleImageLoadError(uri, name || 'Unknown');
       }
     };
     
@@ -449,7 +439,7 @@ const CardScanner: React.FC<CardScannerProps> = ({
         ) : (
           <View style={[imageStyle, styles.placeholderContainer]}>
             <Icon name="image-off" size={24} color="#777" />
-            <Text style={styles.placeholderText}>{name}</Text>
+            <Text style={styles.placeholderText}>{name || 'Unknown'}</Text>
           </View>
         )}
       </View>
@@ -460,28 +450,12 @@ const CardScanner: React.FC<CardScannerProps> = ({
   const renderCardDetailModal = useCallback(() => {
     if (!selectedCard) return null;
 
-    // Determine if it's a Lorcana card based on properties or URL
-    const isLorcanaCard = selectedCard.type === 'Lorcana' || 
-                          (selectedCard.imageUris?.normal && 
-                           (selectedCard.imageUris.normal.includes('lorcana') || 
-                            selectedCard.imageUris.normal.includes('lorcast')));
-
     // Get the appropriate image URL with our helper function
-    let imageUrl = null;
-    
-    if (isLorcanaCard) {
-      // For Lorcana cards, don't explicitly specify size
-      imageUrl = getLorcanaImageUrl(selectedCard);
-    } else {
-      // For MTG cards - use existing logic
-      imageUrl = selectedCard.imageUris?.normal || 
-                 selectedCard.imageUris?.small || 
-                 selectedCard.imageUrl || null;
-    }
-    
+    const imageUrl = getLorcanaImageUrl(selectedCard);
+
     // Log the image URL for debugging
     if (__DEV__) {
-      console.log(`[CardScanner] Modal card (${selectedCard.name}): Using image URL: ${imageUrl || 'none'}`);
+      console.log(`[CardScanner] Modal card (${selectedCard.Name || selectedCard.name}): Using image URL: ${imageUrl || 'none'}`);
     }
 
     return (
@@ -495,83 +469,75 @@ const CardScanner: React.FC<CardScannerProps> = ({
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle} numberOfLines={1}>
-                {selectedCard.name}
+                {selectedCard.Name || selectedCard.name}
               </Text>
               <TouchableOpacity onPress={closeCardModal} style={styles.closeButton}>
                 <Icon name="close" size={24} color="#fff" />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={styles.modalBody}>
               <View style={styles.cardImageContainer}>
-                <CardImage 
-                  uri={imageUrl} 
-                  name={selectedCard.name}
+                <CardImage
+                  uri={imageUrl}
+                  name={selectedCard.Name || selectedCard.name}
                   previewMode={false}
                 />
               </View>
-              
+
               <View style={styles.cardDetailsSection}>
                 <Text style={styles.sectionTitle}>Card Details</Text>
-                
+
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Name:</Text>
-                  <Text style={styles.detailValue}>{selectedCard.name}</Text>
+                  <Text style={styles.detailValue}>{selectedCard.Name || selectedCard.name}</Text>
                 </View>
-                
+
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Set:</Text>
-                  <Text style={styles.detailValue}>{selectedCard.setName}</Text>
+                  <Text style={styles.detailValue}>{selectedCard.Set_Name || selectedCard.set_name}</Text>
                 </View>
-                
+
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Number:</Text>
-                  <Text style={styles.detailValue}>{selectedCard.collectorNumber}</Text>
+                  <Text style={styles.detailValue}>{selectedCard.Card_Num || selectedCard.card_num}</Text>
                 </View>
-                
-                {selectedCard.rarity && (
+
+                {(selectedCard.Rarity || selectedCard.rarity) && (
                   <View style={styles.detailRow}>
                     <Text style={styles.detailLabel}>Rarity:</Text>
-                    <Text style={styles.detailValue}>{selectedCard.rarity}</Text>
+                    <Text style={styles.detailValue}>{selectedCard.Rarity || selectedCard.rarity}</Text>
                   </View>
                 )}
-                
-                {selectedCard.prices && (
-                  <>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Normal Price:</Text>
-                      <Text style={[styles.detailValue, styles.priceText]}>
-                        ${selectedCard.prices.usd ? parseFloat(selectedCard.prices.usd).toFixed(2) : 'N/A'}
-                      </Text>
-                    </View>
-                    
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Foil Price:</Text>
-                      <Text style={[styles.detailValue, styles.priceText]}>
-                        ${selectedCard.prices.usdFoil ? parseFloat(selectedCard.prices.usdFoil).toFixed(2) : 'N/A'}
-                      </Text>
-                    </View>
-                  </>
-                )}
-                
-                {selectedCard.text && (
+
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Normal Price:</Text>
+                  <Text style={[styles.detailValue, styles.priceText]}>
+                    ${selectedCard.price_usd ? parseFloat(selectedCard.price_usd.toString()).toFixed(2) : (selectedCard.prices?.usd ? parseFloat(selectedCard.prices.usd).toFixed(2) : 'N/A')}
+                  </Text>
+                </View>
+
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Foil Price:</Text>
+                  <Text style={[styles.detailValue, styles.priceText]}>
+                    ${selectedCard.price_usd_foil ? parseFloat(selectedCard.price_usd_foil.toString()).toFixed(2) : (selectedCard.prices?.usd_foil ? parseFloat(selectedCard.prices.usd_foil).toFixed(2) : 'N/A')}
+                  </Text>
+                </View>
+
+                {(selectedCard.Body_Text || selectedCard.body_text) && (
                   <View style={styles.cardTextSection}>
                     <Text style={styles.detailLabel}>Card Text:</Text>
-                    <Text style={styles.cardText}>{selectedCard.text}</Text>
+                    <Text style={styles.cardText}>{selectedCard.Body_Text || selectedCard.body_text}</Text>
                   </View>
                 )}
-                
-                {/* Debug section - expanded with more details */}
+
+                {/* Debug section */}
                 {__DEV__ && (
                   <View style={styles.debugSection}>
                     <Text style={styles.debugTitle}>Debug Info:</Text>
                     <Text style={styles.debugText}>
-                      Type: {isLorcanaCard ? 'Lorcana' : 'MTG'}{'\n'}
-                      ID: {selectedCard.id}{'\n'}
+                      ID: {selectedCard.Unique_ID || selectedCard.id}{'\n'}
                       Image URL: {imageUrl || 'None'}{'\n'}
-                      imageUris.normal: {selectedCard.imageUris?.normal || 'None'}{'\n'}
-                      imageUris.small: {selectedCard.imageUris?.small || 'None'}{'\n'}
-                      imageUrl: {selectedCard.imageUrl || 'None'}{'\n'}
                     </Text>
                   </View>
                 )}

@@ -75,7 +75,10 @@ const LorcanaCard: React.FC<LorcanaCardProps> = ({ card, onPress, onLongPress, p
         }
     };
 
-    const price = priceData?.usd ?? card.prices?.usd;
+    // Use normal price if available, otherwise use foil price
+    const normalPrice = priceData?.usd ?? card.prices?.usd;
+    const foilPrice = priceData?.usd_foil ?? card.prices?.usd_foil;
+    const price = normalPrice || foilPrice;
 
     return (
         <TouchableOpacity 

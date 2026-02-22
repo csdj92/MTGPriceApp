@@ -1,18 +1,19 @@
 // LorcanaGridView component
-import React, { useState, useCallback, useEffect, Suspense } from 'react';
-import { View, StyleSheet, FlatList, ActivityIndicator, Text, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import React, { useState, useCallback, useEffect, Suspense, useMemo, useRef } from 'react';
+import { View, StyleSheet, FlatList, ActivityIndicator, Text, TouchableOpacity, Modal, ScrollView, Alert } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import LorcanaCard from './LorcanaCard';
 import LorcanaCardModal from './LorcanaCardModal';
 import LorcanaVersionModal from './LorcanaVersionModal';
 import LorcanaFilters from './LorcanaFilters';
+import QuickQuantityModal from './QuickQuantityModal';
 import { useLorcanaCollection } from '../../hooks/useLorcanaCollection';
 import { useLorcanaPrices } from '../../hooks/useLorcanaPrices';
 import { useLorcanaFilters } from '../../hooks/useLorcanaFilters';
 import SortHeader from '../shared/SortHeader';
-import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess, preloadImages } from '../../utils/imageUtils'; 
-import {  fetchCardVersionsByName } from '../../services/LorcanaService';
+import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess, preloadImages } from '../../utils/imageUtils';
+import {  fetchCardVersionsByName, getDB } from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
 import type { Theme } from '../../context/ThemeContext';
@@ -36,6 +37,7 @@ interface LorcanaGridViewProps {
     cardCount?: number;
     totalValue?: string;
     newToCollectionCards?: Set<string>;
+    collectionId?: string;
 }
 
 const ITEMS_PER_PAGE = 12;
@@ -49,7 +51,8 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     onExportCollection,
     cardCount,
     totalValue,
-    newToCollectionCards = new Set<string>()
+    newToCollectionCards = new Set<string>(),
+    collectionId
 }) => {
     const { theme } = useTheme();
     const styles = useStyles();
@@ -66,10 +69,19 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectedCardIds, setSelectedCardIds] = useState<Set<string>>(new Set());
 
+    // Quick quantity modal state
+    const [showQuickQuantity, setShowQuickQuantity] = useState(false);
+    const [quickQuantityCard, setQuickQuantityCard] = useState<LorcanaCardWithPrice | null>(null);
+
+    // Track processed cards to prevent duplicate processing
+    const processedCardsRef = useRef<Set<string>>(new Set());
+    // Track the last visible cards to prevent unnecessary re-runs
+    const lastVisibleCardsRef = useRef<LorcanaCardWithPrice[]>([]);
+
     // Custom hooks
     const { addToCollection, refreshCollectionStatus } = useLorcanaCollection({ onCardsUpdate });
     const { updatePrices, updatingPrices } = useLorcanaPrices({ cards, onCardsUpdate });
-    const { 
+    const {
         filters,
         sortBy,
         sortDirection,
@@ -79,7 +91,29 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         filteredAndSortedCards,
         setFilteredAndSortedCards
     } = useLorcanaFilters({ cards });
-    const { getPrice, priceCache, isLoading: priceLoading } = useLorcanaPriceCache();
+    const { getPrice, priceCache, setPriceCache, isLoading: priceLoading } = useLorcanaPriceCache();
+
+    // Update selectedCard when cards array changes (to keep modal in sync)
+    useEffect(() => {
+        if (selectedCard) {
+            const updatedCard = cards.find(c => c.Unique_ID === selectedCard.Unique_ID);
+            if (updatedCard && JSON.stringify(updatedCard) !== JSON.stringify(selectedCard)) {
+                console.log('[LorcanaGridView] Updating selectedCard with refreshed data');
+                setSelectedCard(updatedCard);
+            }
+        }
+    }, [cards]);
+
+    // Update quickQuantityCard when cards array changes
+    useEffect(() => {
+        if (quickQuantityCard) {
+            const updatedCard = cards.find(c => c.Unique_ID === quickQuantityCard.Unique_ID);
+            if (updatedCard && JSON.stringify(updatedCard) !== JSON.stringify(quickQuantityCard)) {
+                console.log('[LorcanaGridView] Updating quickQuantityCard with refreshed data');
+                setQuickQuantityCard(updatedCard);
+            }
+        }
+    }, [cards]);
 
     // Preload images for visible cards
     useEffect(() => {
@@ -98,16 +132,72 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         }
     }, [filteredAndSortedCards]);
 
-    // Fetch prices for visible cards
+    // Memoize visible cards to prevent unnecessary re-runs
+    const visibleCards = useMemo(() =>
+        filteredAndSortedCards.slice(0, ITEMS_PER_PAGE),
+        [filteredAndSortedCards]
+    );
+
+    // Load prices for visible cards from database
     useEffect(() => {
-        const visibleCards = filteredAndSortedCards.slice(0, ITEMS_PER_PAGE);
-        visibleCards.forEach(card => {
-            const cardId = card.Unique_ID || card.Name;
-            if (!priceCache[cardId]) {
+        // Check if visible cards have actually changed
+        const visibleCardIds = visibleCards.map(card => card.Unique_ID).join(',');
+        const lastVisibleCardIds = lastVisibleCardsRef.current.map(card => card.Unique_ID).join(',');
+
+        if (visibleCardIds === lastVisibleCardIds) {
+            // Visible cards haven't changed, skip processing
+            return;
+        }
+
+        // Update the ref with current visible cards
+        lastVisibleCardsRef.current = [...visibleCards];
+
+        const loadPricesFromDatabase = async () => {
+            const db = await getDB();
+
+            for (const card of visibleCards) {
+                const cardId = card.Unique_ID || card.Name;
+                // Skip if already processed this card in this session or if we already have it in cache
+                if (processedCardsRef.current.has(cardId) || priceCache[cardId] || !card.Unique_ID) {
+                    continue;
+                }
+
+                processedCardsRef.current.add(cardId);
+
+                try {
+                    const [existingPrice] = await db.executeSql(
+                        `SELECT usd, usd_foil, last_updated FROM lorcana_card_prices
+                         WHERE card_id = ? AND last_updated IS NOT NULL`,
+                        [card.Unique_ID]
+                    );
+
+                    if (existingPrice.rows.length > 0) {
+                        const priceData = existingPrice.rows.item(0);
+                        const lastUpdated = new Date(priceData.last_updated);
+                        const now = new Date();
+                        const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
+
+                        // If price data is less than 24 hours old, cache it
+                        if (hoursSinceUpdate < 24) {
+                            setPriceCache(prev => ({ ...prev, [cardId]: {
+                                usd: priceData.usd,
+                                usd_foil: priceData.usd_foil,
+                                tcgplayer_id: null
+                            }}));
+                            continue; // Don't call getPrice for this card
+                        }
+                    }
+                } catch (error) {
+                    console.log(`[LorcanaGridView] Error checking cached prices for ${cardId}:`, error);
+                }
+
+                // Only call getPrice if we don't have recent database data
                 getPrice(card);
             }
-        });
-    }, [filteredAndSortedCards, priceCache, getPrice]);
+        };
+
+        loadPricesFromDatabase();
+    }, [visibleCards, getPrice]);
 
     // Callbacks
     const handleCardPress = useCallback((card: LorcanaCardWithPrice) => {
@@ -124,12 +214,38 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         if (isSelectionMode) {
             // Already in selection mode, just toggle
             toggleCardSelection(card.Unique_ID);
+        } else if (card.collected && collectionId) {
+            // For collected cards with collectionId, show action menu
+            Alert.alert(
+                card.Name,
+                'Choose an action',
+                [
+                    {
+                        text: 'Adjust Quantity',
+                        onPress: () => {
+                            setQuickQuantityCard(card);
+                            setShowQuickQuantity(true);
+                        }
+                    },
+                    {
+                        text: 'Select Multiple Cards',
+                        onPress: () => {
+                            setIsSelectionMode(true);
+                            setSelectedCardIds(new Set([card.Unique_ID]));
+                        }
+                    },
+                    {
+                        text: 'Cancel',
+                        style: 'cancel'
+                    }
+                ]
+            );
         } else {
-            // Enter selection mode and select this card
+            // For non-collected cards or when no collectionId, enter selection mode
             setIsSelectionMode(true);
             setSelectedCardIds(new Set([card.Unique_ID]));
         }
-    }, [isSelectionMode]);
+    }, [isSelectionMode, collectionId]);
 
     const toggleCardSelection = useCallback((cardId: string) => {
         setSelectedCardIds(prev => {
@@ -259,17 +375,51 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         []
     );
 
-    // When showing version modal, fetch prices for those versions if not cached
+    // When showing version modal, load prices for those versions from database
     useEffect(() => {
-        if (showVersionModal && availableVersions.length > 0) {
-            availableVersions.forEach(card => {
-                const cardId = card.Unique_ID || card.Name;
-                if (!priceCache[cardId]) {
-                    getPrice(card);
+        const loadVersionPricesFromDatabase = async () => {
+            if (showVersionModal && availableVersions.length > 0) {
+                const db = await getDB();
+
+                for (const card of availableVersions) {
+                    const cardId = card.Unique_ID || card.Name;
+                    if (!priceCache[cardId] && card.Unique_ID) {
+                        try {
+                            const [existingPrice] = await db.executeSql(
+                                `SELECT usd, usd_foil, last_updated FROM lorcana_card_prices
+                                 WHERE card_id = ? AND last_updated IS NOT NULL`,
+                                [card.Unique_ID]
+                            );
+
+                            if (existingPrice.rows.length > 0) {
+                                const priceData = existingPrice.rows.item(0);
+                                const lastUpdated = new Date(priceData.last_updated);
+                                const now = new Date();
+                                const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
+
+                                // If price data is less than 24 hours old, cache it
+                                if (hoursSinceUpdate < 24) {
+                                    setPriceCache(prev => ({ ...prev, [cardId]: {
+                                        usd: priceData.usd,
+                                        usd_foil: priceData.usd_foil,
+                                        tcgplayer_id: null
+                                    }}));
+                                    continue; // Don't call getPrice for this card
+                                }
+                            }
+                        } catch (error) {
+                            console.log(`[LorcanaGridView] Error checking cached prices for version ${cardId}:`, error);
+                        }
+
+                        // Only call getPrice if we don't have recent database data
+                        getPrice(card);
+                    }
                 }
-            });
-        }
-    }, [showVersionModal, availableVersions, priceCache, getPrice]);
+            }
+        };
+
+        loadVersionPricesFromDatabase();
+    }, [showVersionModal, availableVersions, getPrice]);
 
     if (isLoading) {
         return (
@@ -347,9 +497,10 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 initialNumToRender={9}
                 maxToRenderPerBatch={4}
                 windowSize={7}
-                removeClippedSubviews={true}
+                removeClippedSubviews={false}
                 updateCellsBatchingPeriod={20}
-                getItemLayout={getItemLayout}
+                key={`flatlist-${filteredAndSortedCards.length}`}
+                extraData={filteredAndSortedCards}
             />
 
             {selectedCard && (
@@ -363,6 +514,14 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                         onDelete={handleDeleteCard}
                         onAddToCollection={!selectedCard.collected ? handleAddToCollection : undefined}
                         onRemoveFromCollection={selectedCard.collected ? handleDeleteCard : undefined}
+                        collectionId={collectionId}
+                        onQuantityChange={async () => {
+                            // Force immediate refresh of card data from database
+                            if (refreshCollectionStatus && cards) {
+                                await refreshCollectionStatus(cards);
+                                console.log('[LorcanaGridView] Card quantities refreshed after modal update');
+                            }
+                        }}
                     />
                 </Suspense>
             )}
@@ -383,6 +542,24 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                     />
                 </Suspense>
             )}
+
+            {/* Quick Quantity Modal */}
+            <QuickQuantityModal
+                card={quickQuantityCard}
+                visible={showQuickQuantity}
+                onClose={() => {
+                    setShowQuickQuantity(false);
+                    setQuickQuantityCard(null);
+                }}
+                collectionId={collectionId}
+                onQuantityChange={async () => {
+                    // Force immediate refresh of card data from database
+                    if (refreshCollectionStatus && cards) {
+                        await refreshCollectionStatus(cards);
+                        console.log('[LorcanaGridView] Card quantities refreshed after update');
+                    }
+                }}
+            />
         </View>
     );
 };

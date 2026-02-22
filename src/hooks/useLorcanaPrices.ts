@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { getDB, getLorcanaCardPrice, debugCardData } from '../services/LorcanaService';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
 
@@ -10,9 +10,24 @@ interface UseLorcanaPricesProps {
 export const useLorcanaPrices = ({ cards, onCardsUpdate }: UseLorcanaPricesProps) => {
     const [updatingPrices, setUpdatingPrices] = useState(false);
     const [failedPriceLookups] = useState<Set<string>>(new Set());
+    const lastCardsSignatureRef = useRef<string>('');
+    const lastUpdateTimeRef = useRef<number>(0);
 
     const updatePrices = useCallback(async () => {
         if (updatingPrices) return;
+        
+        const signature = cards.map(card => card.Unique_ID ?? card.Name ?? '').join('|');
+        const now = Date.now();
+        const signatureUnchanged = signature === lastCardsSignatureRef.current;
+        const recentlyUpdated = now - lastUpdateTimeRef.current < 30_000; // 30 seconds debounce
+
+        if (signatureUnchanged && recentlyUpdated) {
+            return;
+        }
+
+        lastCardsSignatureRef.current = signature;
+        lastUpdateTimeRef.current = now;
+
         setUpdatingPrices(true);
 
         try {

@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   Platform
 } from 'react-native';
-import { ExtendedCard, ScannedCard } from '../../types/card';
+import { ScannedCard } from '../../types/card';
 import { LorcanaCard } from '../../types/lorcana';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Logger } from '../../utils/logger';
@@ -106,38 +106,17 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
 
   // Memoize the renderItem function to prevent rebuilding on each render
   const renderScannedCard = useCallback(({ item }: { item: ScannedCard }) => {
-    // Get appropriate image URI
-    let imageUri = null;
-    
-    // Check if it's a Lorcana card
-    if (item.type === 'Lorcana') {
-      // For Lorcana cards, use helper function - don't specify 'full' size
-      imageUri = getLorcanaImageUrl(item);
-    } else {
-      // For MTG cards - use existing logic
-      imageUri = item.imageUris?.normal || 
-                 item.imageUris?.small || 
-                 item.imageUrl || null;
-    }
+    // Get appropriate image URI - all cards are Lorcana now
+    const imageUri = getLorcanaImageUrl(item);
 
     // Check if the card is new to the collection
     const isNewToCollection = (() => {
-      // For MTG cards
-      if (item.type === 'MTG' && (item.id || item.uuid)) {
-        return newToCollectionCards.has(item.id || item.uuid || '');
-      }
-      
       // For Lorcana cards - first check if Unique_ID exists on the card
-      if (item.type === 'Lorcana') {
-        const uniqueId = (item as any).Unique_ID;
-        if (uniqueId) {
-          return newToCollectionCards.has(uniqueId);
-        }
-        // Fallback to id if Unique_ID doesn't exist
-        return newToCollectionCards.has(item.id || '');
+      const uniqueId = (item as any).Unique_ID;
+      if (uniqueId) {
+        return newToCollectionCards.has(uniqueId);
       }
-      
-      // Default fallback
+      // Fallback to id if Unique_ID doesn't exist
       return newToCollectionCards.has(item.id || item.uuid || '');
     })();
     
@@ -190,11 +169,8 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
         </View>
         
         <View style={styles.cardType}>
-          <Text style={[
-            styles.cardTypeText,
-            item.type === 'Lorcana' ? styles.lorcanaText : styles.mtgText
-          ]}>
-            {item.type}
+          <Text style={[styles.cardTypeText, styles.lorcanaText]}>
+            Lorcana
           </Text>
         </View>
       </TouchableOpacity>
