@@ -1,4 +1,4 @@
-package com.mtgpriceapp.share
+package com.lorcanacollector.share
 
 import android.view.View
 import com.facebook.react.ReactPackage

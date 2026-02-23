@@ -6,6 +6,14 @@ import DatabaseInitializer from './DatabaseInitializer'
 import { Logger } from '../utils/logger'
 import { cardImportService } from './CardImportService'
 import { lorcastAPI } from './LorcastAPIService'
+import {
+    buildLorcanaUniqueId,
+    extractSetIdentifierFromDescription,
+    getCanonicalSetCodeForStorage,
+    getLorcanaSetCodeFromIdentifier,
+    getLorcanaSetNumberFromIdentifier,
+    mapLorcastSetCodeToCanonicalSetCode,
+} from '../utils/lorcanaSetMapping'
 
 // Enable promise support for SQLite
 enablePromise(true)
@@ -162,21 +170,20 @@ const ensureTablesCreated = async () => {
     }
 };
 
-// Add this mapping function
+const extractSetIdentifierFromCollectionDescription = (description?: string | null): string | null => {
+    return extractSetIdentifierFromDescription(description);
+};
+
+const getSetNumberFromIdentifier = (setIdentifier?: string | number | null): number | null => {
+    return getLorcanaSetNumberFromIdentifier(setIdentifier);
+};
+
+const getSetCodeFromIdentifier = (setIdentifier?: string | number | null): string | null => {
+    return getLorcanaSetCodeFromIdentifier(setIdentifier);
+};
+
 const mapLorcastSetCodeToSetId = (setCode: string): string | null => {
-    const setMapping: { [key: string]: string } = {
-        '1': 'TFC',  // The First Chapter
-        '2': 'ROF',  // Rise of the Floodborn
-        '3': 'INK',  // Into the Inklands
-        '4': 'URS',   // Ursula's Return
-        '5': 'SSK',   // Shimmering Skies
-        '6': 'AZS',   // Azurite Sea
-        '7': 'ARI',    // Archazia's Island
-        '8': 'ROJ',    // Reign of Jafar
-        '9': 'FAB',    // Fabled
-        '10': 'WHI',    // Whispers in the Well
-    };
-    return setMapping[setCode] || null;
+    return mapLorcastSetCodeToCanonicalSetCode(setCode);
 };
 
 export const initializeLorcanaDatabase = async (): Promise<boolean> => {
@@ -1221,16 +1228,7 @@ export const getOrCreateLorcanaSetCollection = async (setId: string, setName: st
         const now = new Date().toISOString();
         const description = `Collection for ${setName} (${setId})`;
 
-        // Try to parse numeric component from setId (e.g., 'ROJ' is 8, 'ARI' is 7)
-        let numericSetNum: number | null = null;
-        const numericMatch = setId.match(/^(\d+)$/);
-        if (numericMatch) {
-            numericSetNum = parseInt(numericMatch[1], 10);
-        } else {
-            // fallback lookup via reverse mapping of mapLorcastSetCodeToSetId
-            const reverseMap: { [k: string]: number } = { TFC:1, ROF:2, INK:3, URS:4, SSK:5, AZS:6, ARI:7, ROJ:8, FAB:9, WHI:10 };
-            numericSetNum = reverseMap[setId.toUpperCase()] ?? null;
-        }
+        const numericSetNum = getSetNumberFromIdentifier(setId);
 
         console.log(`[LorcanaService] Inserting collection with:`, {
             id, 
@@ -1388,6 +1386,47 @@ export const addCardToLorcanaCollection = async (
     }
 };
 
+const buildResolvedSetNumberExpression = (collectionAlias: string): string => `
+    COALESCE(
+        NULLIF(${collectionAlias}.set_number, 0),
+        CASE
+            WHEN ${collectionAlias}.description LIKE '%(TFC)' OR ${collectionAlias}.description LIKE '%(1)' THEN 1
+            WHEN ${collectionAlias}.description LIKE '%(ROF)' OR ${collectionAlias}.description LIKE '%(2)' THEN 2
+            WHEN ${collectionAlias}.description LIKE '%(INK)' OR ${collectionAlias}.description LIKE '%(3)' THEN 3
+            WHEN ${collectionAlias}.description LIKE '%(URS)' OR ${collectionAlias}.description LIKE '%(4)' THEN 4
+            WHEN ${collectionAlias}.description LIKE '%(SSK)' OR ${collectionAlias}.description LIKE '%(5)' THEN 5
+            WHEN ${collectionAlias}.description LIKE '%(AZS)' OR ${collectionAlias}.description LIKE '%(6)' THEN 6
+            WHEN ${collectionAlias}.description LIKE '%(ARI)' OR ${collectionAlias}.description LIKE '%(7)' THEN 7
+            WHEN ${collectionAlias}.description LIKE '%(ROJ)' OR ${collectionAlias}.description LIKE '%(8)' THEN 8
+            WHEN ${collectionAlias}.description LIKE '%(FAB)' OR ${collectionAlias}.description LIKE '%(9)' THEN 9
+            WHEN ${collectionAlias}.description LIKE '%(WHI)' OR ${collectionAlias}.description LIKE '%(10)' THEN 10
+            ELSE NULL
+        END,
+        (
+            SELECT MIN(lc.Set_Num)
+            FROM lorcana_cards lc
+            WHERE lc.Set_Name = TRIM(REPLACE(${collectionAlias}.name, 'Set: ', ''))
+            AND lc.Set_Num IS NOT NULL
+        )
+    )
+`;
+
+const buildSetCodeFromSetNumberExpression = (setNumberExpression: string): string => `
+    CASE ${setNumberExpression}
+        WHEN 1 THEN 'TFC'
+        WHEN 2 THEN 'ROF'
+        WHEN 3 THEN 'INK'
+        WHEN 4 THEN 'URS'
+        WHEN 5 THEN 'SSK'
+        WHEN 6 THEN 'AZS'
+        WHEN 7 THEN 'ARI'
+        WHEN 8 THEN 'ROJ'
+        WHEN 9 THEN 'FAB'
+        WHEN 10 THEN 'WHI'
+        ELSE NULL
+    END
+`;
+
 export const getLorcanaSetCollections = async (forceRefresh: boolean = false): Promise<Array<{
     cardCount: number
     id: string;
@@ -1523,28 +1562,79 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
         }
         */
 
-        // Ensure all collections have set_number set for proper ordering
+        // Ensure all collections have set_number set for proper ordering.
+        // This keeps legacy rows compatible with the new completion query path.
         await db.executeSql(`
             UPDATE lorcana_collections
             SET set_number = CASE
-                WHEN description LIKE '%(TFC)' THEN 1
-                WHEN description LIKE '%(ROF)' THEN 2
-                WHEN description LIKE '%(INK)' THEN 3
-                WHEN description LIKE '%(URS)' THEN 4
-                WHEN description LIKE '%(SSK)' THEN 5
-                WHEN description LIKE '%(AZS)' THEN 6
-                WHEN description LIKE '%(ARI)' THEN 7
-                WHEN description LIKE '%(ROJ)' THEN 8
-                WHEN description LIKE '%(FAB)' THEN 9
-                WHEN description LIKE '%(WHI)' THEN 10
+                WHEN description LIKE '%(TFC)' OR description LIKE '%(1)' THEN 1
+                WHEN description LIKE '%(ROF)' OR description LIKE '%(2)' THEN 2
+                WHEN description LIKE '%(INK)' OR description LIKE '%(3)' THEN 3
+                WHEN description LIKE '%(URS)' OR description LIKE '%(4)' THEN 4
+                WHEN description LIKE '%(SSK)' OR description LIKE '%(5)' THEN 5
+                WHEN description LIKE '%(AZS)' OR description LIKE '%(6)' THEN 6
+                WHEN description LIKE '%(ARI)' OR description LIKE '%(7)' THEN 7
+                WHEN description LIKE '%(ROJ)' OR description LIKE '%(8)' THEN 8
+                WHEN description LIKE '%(FAB)' OR description LIKE '%(9)' THEN 9
+                WHEN description LIKE '%(WHI)' OR description LIKE '%(10)' THEN 10
                 ELSE set_number
             END
             WHERE name LIKE 'Set: %' AND (set_number IS NULL OR set_number = 0)
         `);
 
+        const [legacyCollections] = await db.executeSql(`
+            SELECT id, name, description
+            FROM lorcana_collections
+            WHERE name LIKE 'Set: %' AND (set_number IS NULL OR set_number = 0)
+        `);
+
+        let repairedSetNumbers = 0;
+        for (let i = 0; i < legacyCollections.rows.length; i++) {
+            const legacyCollection = legacyCollections.rows.item(i);
+            let resolvedSetNumber = getSetNumberFromIdentifier(
+                extractSetIdentifierFromCollectionDescription(legacyCollection.description)
+            );
+
+            if (!resolvedSetNumber) {
+                const setName = legacyCollection.name.replace(/^Set:\s*/, '').trim();
+                if (setName) {
+                    const [setByNameResult] = await db.executeSql(
+                        `SELECT MIN(Set_Num) as set_num
+                         FROM lorcana_cards
+                         WHERE Set_Name = ? COLLATE NOCASE AND Set_Num IS NOT NULL`,
+                        [setName]
+                    );
+
+                    const setNumByName = Number(setByNameResult.rows.item(0).set_num);
+                    if (!Number.isNaN(setNumByName) && setNumByName > 0) {
+                        resolvedSetNumber = setNumByName;
+                    }
+                }
+            }
+
+            if (resolvedSetNumber) {
+                await db.executeSql(
+                    `UPDATE lorcana_collections
+                     SET set_number = ?, updated_at = ?
+                     WHERE id = ?`,
+                    [resolvedSetNumber, new Date().toISOString(), legacyCollection.id]
+                );
+                repairedSetNumbers++;
+            }
+        }
+
+        const [unresolvedLegacyCollections] = await db.executeSql(`
+            SELECT COUNT(*) as count
+            FROM lorcana_collections
+            WHERE name LIKE 'Set: %' AND (set_number IS NULL OR set_number = 0)
+        `);
+
+        console.log(
+            `[LorcanaService] Legacy set_number repair complete: repaired ${repairedSetNumbers}, unresolved ${unresolvedLegacyCollections.rows.item(0).count}`
+        );
+
         // Get all collections with their updated stats
         console.log('[LorcanaService] Executing main collection stats query...');
-
 
         // First check if lorcana_collection_cards table exists
         let collectionCardsTableExists = false;
@@ -1556,24 +1646,42 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
             console.log('[LorcanaService] lorcana_collection_cards table does not exist, will use simplified query');
         }
 
-        let results;
-        try {
-            if (collectionCardsTableExists) {
-                // Use full query with collection cards - map text codes to numeric IDs
-                const mappedQuery = `
-            WITH CollectionStats AS (
+        const resolvedSetNumberExpr = buildResolvedSetNumberExpression('c');
+        const resolvedSetCodeExpr = buildSetCodeFromSetNumberExpression('rc.resolved_set_number');
+        const mappedQuery = `
+            WITH ResolvedCollections AS (
                 SELECT
                     c.id,
                     c.name,
                     c.description,
                     c.created_at,
                     c.updated_at,
+                    c.set_number,
+                    ${resolvedSetNumberExpr} as resolved_set_number
+                FROM lorcana_collections c
+                WHERE c.name LIKE 'Set: %'
+            ),
+            CollectionStats AS (
+                SELECT
+                    rc.id,
+                    rc.name,
+                    rc.description,
+                    rc.created_at,
+                    rc.updated_at,
                     COALESCE(cc.collected_count, 0) as collected_cards,
                     (
                         SELECT COUNT(DISTINCT lc.Unique_ID)
                         FROM lorcana_cards lc
-                        WHERE lc.Set_ID = RTRIM(SUBSTR(c.description, INSTR(c.description, '(') + 1), ')')
-                        AND lc.Unique_ID IS NOT NULL
+                        WHERE lc.Unique_ID IS NOT NULL
+                        AND (
+                            (rc.resolved_set_number IS NOT NULL AND lc.Set_Num = rc.resolved_set_number)
+                            OR (rc.resolved_set_number IS NOT NULL AND lc.Set_ID = CAST(rc.resolved_set_number AS TEXT))
+                            OR (
+                                rc.resolved_set_number IS NOT NULL
+                                AND ${resolvedSetCodeExpr} IS NOT NULL
+                                AND UPPER(lc.Set_ID) = ${resolvedSetCodeExpr}
+                            )
+                        )
                     ) as total_cards,
                     (
                         SELECT COALESCE(SUM(
@@ -1596,16 +1704,15 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                         ), 0)
                         FROM lorcana_cards lc
                         INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
-                        WHERE lcc.collection_id = c.id
+                        WHERE lcc.collection_id = rc.id
                     ) as total_value,
-                    c.set_number
-                FROM lorcana_collections c
+                    COALESCE(rc.resolved_set_number, rc.set_number) as set_number
+                FROM ResolvedCollections rc
                 LEFT JOIN (
                     SELECT collection_id, COUNT(*) as collected_count
                     FROM lorcana_collection_cards
                     GROUP BY collection_id
-                ) cc ON c.id = cc.collection_id
-                WHERE c.name LIKE 'Set: %'
+                ) cc ON rc.id = cc.collection_id
             )
             SELECT
                 id,
@@ -1622,36 +1729,55 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
                     ELSE 0
                 END as completion_percentage
             FROM CollectionStats
-            ORDER BY set_number ASC
-            `;
+            ORDER BY set_number ASC, name ASC
+        `;
 
-                [results] = await db.executeSql(mappedQuery);
-            } else {
-                // Simplified query without collection cards table - map text codes to numeric IDs
-                const simplifiedQuery = `
+        const simplifiedQuery = `
+            WITH ResolvedCollections AS (
+                SELECT
+                    c.id,
+                    c.name,
+                    c.description,
+                    c.created_at,
+                    c.updated_at,
+                    c.set_number,
+                    ${resolvedSetNumberExpr} as resolved_set_number
+                FROM lorcana_collections c
+                WHERE c.name LIKE 'Set: %'
+            )
             SELECT
-                c.id,
-                c.name,
-                c.description,
-                c.created_at,
-                c.updated_at,
+                rc.id,
+                rc.name,
+                rc.description,
+                rc.created_at,
+                rc.updated_at,
                 0 as collected_cards,
                 (
                     SELECT COUNT(DISTINCT lc.Unique_ID)
                     FROM lorcana_cards lc
-                    WHERE lc.Set_ID = RTRIM(SUBSTR(c.description, INSTR(c.description, '(') + 1), ')')
-                    AND lc.Unique_ID IS NOT NULL
+                    WHERE lc.Unique_ID IS NOT NULL
+                    AND (
+                        (rc.resolved_set_number IS NOT NULL AND lc.Set_Num = rc.resolved_set_number)
+                        OR (rc.resolved_set_number IS NOT NULL AND lc.Set_ID = CAST(rc.resolved_set_number AS TEXT))
+                        OR (
+                            rc.resolved_set_number IS NOT NULL
+                            AND ${resolvedSetCodeExpr} IS NOT NULL
+                            AND UPPER(lc.Set_ID) = ${resolvedSetCodeExpr}
+                        )
+                    )
                 ) as total_cards,
                 0 as total_value,
-                c.set_number,
+                COALESCE(rc.resolved_set_number, rc.set_number) as set_number,
                 0 as completion_percentage
-            FROM lorcana_collections c
-            WHERE c.name LIKE 'Set: %'
-            ORDER BY c.set_number ASC
-            `;
+            FROM ResolvedCollections rc
+            ORDER BY set_number ASC, name ASC
+        `;
 
-                [results] = await db.executeSql(simplifiedQuery);
-            }
+        const collectionStatsQuery = collectionCardsTableExists ? mappedQuery : simplifiedQuery;
+
+        let results;
+        try {
+            [results] = await db.executeSql(collectionStatsQuery);
             console.log(`[LorcanaService] Main query returned ${results.rows.length} rows`);
         } catch (queryError) {
             console.error('[LorcanaService] Main collection stats query failed:', queryError);
@@ -1681,69 +1807,7 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
             }
 
             // Re-run the main query
-            [results] = await db.executeSql(`
-                WITH CollectionStats AS (
-                    SELECT 
-                        c.id,
-                        c.name,
-                        c.description,
-                        c.created_at,
-                        c.updated_at,
-                        COALESCE(cc.collected_count, 0) as collected_cards,
-                        (
-                            SELECT COUNT(DISTINCT lc.Unique_ID)
-                            FROM lorcana_cards lc
-                            WHERE lc.Set_ID = RTRIM(SUBSTR(c.description, INSTR(c.description, '(') + 1), ')')
-                            AND lc.Unique_ID IS NOT NULL
-                        ) as total_cards,
-                        (
-                            SELECT COALESCE(SUM(
-                                -- Calculate value for normal cards
-                                (COALESCE(lcc.quantity_normal, 0) *
-                                    CASE
-                                        WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
-                                        WHEN lc.price_usd_foil IS NOT NULL THEN CAST(lc.price_usd_foil AS FLOAT)
-                                        ELSE 0
-                                    END
-                                ) +
-                                -- Calculate value for foil cards
-                                (COALESCE(lcc.quantity_foil, 0) *
-                                    CASE
-                                        WHEN lc.price_usd_foil IS NOT NULL THEN CAST(lc.price_usd_foil AS FLOAT)
-                                        WHEN lc.price_usd IS NOT NULL THEN CAST(lc.price_usd AS FLOAT)
-                                        ELSE 0
-                                    END
-                                )
-                            ), 0)
-                            FROM lorcana_cards lc
-                            INNER JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id
-                            WHERE lcc.collection_id = c.id
-                        ) as total_value,
-                        c.set_number
-                    FROM lorcana_collections c
-                    LEFT JOIN (
-                        SELECT collection_id, COUNT(*) as collected_count
-                        FROM lorcana_collection_cards
-                        GROUP BY collection_id
-                    ) cc ON c.id = cc.collection_id
-                    WHERE c.name LIKE 'Set: %'
-                )
-                SELECT 
-                    id,
-                    name,
-                    description,
-                    created_at,
-                    updated_at,
-                    collected_cards,
-                    total_cards,
-                    total_value,
-                    set_number,
-                    CASE 
-                        WHEN total_cards > 0 THEN (CAST(collected_cards AS FLOAT) / total_cards) * 100 
-                        ELSE 0 
-                    END as completion_percentage
-                FROM CollectionStats
-            ;`);
+            [results] = await db.executeSql(collectionStatsQuery);
         }
 
         const collections = Array.from({length: results.rows.length}, (_, i) => {
@@ -1751,15 +1815,15 @@ export const getLorcanaSetCollections = async (forceRefresh: boolean = false): P
             return {
                 id: row.id,
                 name: row.name,
-                cardCount: row.total_cards,
+                cardCount: row.total_cards || 0,
                 description: row.description,
                 createdAt: row.created_at,
                 updatedAt: row.updated_at,
-                totalCards: row.total_cards,
-                collectedCards: row.collected_cards,
-                completionPercentage: row.completion_percentage,
+                totalCards: row.total_cards || 0,
+                collectedCards: row.collected_cards || 0,
+                completionPercentage: row.completion_percentage || 0,
                 totalValue: row.total_value || 0,
-                set_number: row.set_number
+                set_number: row.set_number || 0
             };
         });
         console.log(`[LorcanaService] Returning ${collections.length} collections`);
@@ -2116,27 +2180,18 @@ export const deleteLorcanaCardFromCollection = async (cardId: string, collection
 // Add this new function to get missing cards for a set
 // Helper function to convert text set codes to numeric IDs
 const getNumericSetId = (textSetId: string): string => {
-    const mapping: { [key: string]: string } = {
-        'TFC': '1',   // The First Chapter
-        'ROF': '2',   // Rise of the Floodborn
-        'INK': '3',   // Into the Inklands
-        'URS': '4',   // Ursula's Return
-        'SSK': '5',   // Shimmering Skies
-        'AZS': '6',   // Azurite Sea
-        'ARI': '7',   // Archazia's Island
-        'ROJ': '8',   // Reign of Jafar
-        'FAB': '9',   // Fabled
-        'WHI': '10'   // Whispers in the Well
-    };
-    return mapping[textSetId] || textSetId; // Return original if not found
+    const setNumber = getSetNumberFromIdentifier(textSetId);
+    return setNumber !== null ? String(setNumber) : textSetId;
 };
 
 export const getLorcanaSetMissingCards = async (setId: string, collectionId: string): Promise<LorcanaCardWithPrice[]> => {
     try {
         const db = await getDB();
 
-        // Convert text set code to numeric ID for database lookup
+        // Convert set identifier to both numeric and text forms for legacy compatibility.
         const numericSetId = getNumericSetId(setId);
+        const setNumber = getSetNumberFromIdentifier(setId);
+        const setCode = getSetCodeFromIdentifier(setId);
 
         // Get all cards from the set, and check if they are in the specified collection
         const [results] = await db.executeSql(`
@@ -2149,11 +2204,15 @@ export const getLorcanaSetMissingCards = async (setId: string, collectionId: str
                    COALESCE(lcc.quantity_foil, 0) as quantity_foil
             FROM lorcana_cards lc
             LEFT JOIN lorcana_collection_cards lcc ON lc.Unique_ID = lcc.card_id AND lcc.collection_id = ?
-            WHERE lc.Set_ID = ?
+            WHERE (
+                lc.Set_ID = ?
+                OR (? IS NOT NULL AND lc.Set_Num = ?)
+                OR (? IS NOT NULL AND UPPER(lc.Set_ID) = ?)
+            )
             AND lc.Unique_ID IS NOT NULL
             AND lc.Name IS NOT NULL
             ORDER BY lc.Card_Num ASC;
-        `, [collectionId, numericSetId]);
+        `, [collectionId, numericSetId, setNumber, setNumber, setCode, setCode]);
 
         const cards: LorcanaCardWithPrice[] = [];
         for (let i = 0; i < results.rows.length; i++) {
@@ -2223,12 +2282,22 @@ export const fetchAndStoreEnchantedCards = async () => {
                 batch.forEach((card: any) => {
                     if (!card || !card.name || !card.set?.code) return;
 
-                    // Prefer our internal mapping; fall back to API-provided IDs if unknown
-                    const setId = mapLorcastSetCodeToSetId(card.set.code) || card.set.id || card.set.code;
+                    // Prefer canonical set IDs, while remaining forward-compatible with unknown future sets.
+                    const setId =
+                        mapLorcastSetCodeToSetId(card.set.code) ||
+                        getSetCodeFromIdentifier(card.set.id) ||
+                        getCanonicalSetCodeForStorage(card.set.code) ||
+                        null;
                     if (!setId) {
                         console.log('[EnchantedImport] Skipping card (no setId):', card.name, card.set.code);
                         return;
                     }
+
+                    const setNumber =
+                        getSetNumberFromIdentifier(setId) ||
+                        getSetNumberFromIdentifier(card.set.id) ||
+                        getSetNumberFromIdentifier(card.set.code);
+                    const uniqueId = buildLorcanaUniqueId(setId, card.collector_number) || card.id || null;
 
                     console.log(`[EnchantedImport] Inserting card ${card.name} (#${card.collector_number}) into set ${setId}`);
 
@@ -2257,10 +2326,10 @@ export const fetchAndStoreEnchantedCards = async () => {
                             card.rarity || null,
                             setId,
                             card.set.name || null,
-                            parseInt(card.collector_number) || null,
+                            setNumber,
                             card.strength || null,
                             card.type?.join(', ') || null,
-                            card.id || null,
+                            uniqueId,
                             card.willpower || null,
                             0, // collected
                             new Date().toISOString(), // last_updated
@@ -2514,8 +2583,17 @@ export const fetchSpecialIconicCards = async (setNumber: number): Promise<{ adde
 
             // Get the proper set code from our mapping
             const numericSetCode = apiCard.set.code;
-            const properSetCode = mapLorcastSetCodeToSetId(numericSetCode) || apiCard.set.code;
-            const uniqueId = `${properSetCode}-${apiCard.collector_number}`;
+            const properSetCode =
+                mapLorcastSetCodeToSetId(numericSetCode) ||
+                getSetCodeFromIdentifier(numericSetCode) ||
+                getCanonicalSetCodeForStorage(numericSetCode) ||
+                String(numericSetCode).trim().toUpperCase();
+            const uniqueId =
+                buildLorcanaUniqueId(properSetCode, apiCard.collector_number) ||
+                `${properSetCode}-${apiCard.collector_number}`;
+            const resolvedSetNumber =
+                getSetNumberFromIdentifier(properSetCode) ||
+                getSetNumberFromIdentifier(numericSetCode);
             const cardNum = Number(apiCard.collector_number);
 
             // Check if card already exists
@@ -2551,7 +2629,7 @@ export const fetchSpecialIconicCards = async (setNumber: number): Promise<{ adde
                         apiCard.rarity || null,
                         properSetCode,
                         apiCard.set.name || null,
-                        Number(numericSetCode) || null,
+                        resolvedSetNumber,
                         apiCard.strength || null,
                         apiCard.type && apiCard.type.length > 0 ? apiCard.type[0] : null,
                         uniqueId,
@@ -2590,7 +2668,7 @@ export const fetchSpecialIconicCards = async (setNumber: number): Promise<{ adde
                         apiCard.rarity || null,
                         properSetCode,
                         apiCard.set.name || null,
-                        Number(numericSetCode) || null,
+                        resolvedSetNumber,
                         apiCard.strength || null,
                         apiCard.type && apiCard.type.length > 0 ? apiCard.type[0] : null,
                         apiCard.willpower || null,
@@ -3466,12 +3544,71 @@ const createLorcanaCardApiTimestampsTable = async () => {
 // ---------------------------------------------------------------------------
 export const fixJAFtoROJSetIdentifiers = async () => {
   try {
-    const result = await fixCardSetIdentifiers('4'); // numeric code 4 → ROJ
+    const result = await fixCardSetIdentifiers('8'); // numeric code 8 (old JAF/ROJ set) → ROJ
     return result;
   } catch (err) {
     console.error('[LorcanaService] fixJAFtoROJSetIdentifiers error', err);
     return { updated: 0, skipped: 0, message: 'failed' };
   }
+};
+
+export type LorcanaDataIntegrityReport = {
+    numericSetIds: number;
+    prefixedSetIds: number;
+    mismatchedSetNums: number;
+    uniqueIdPrefixMismatches: number;
+    unresolvedSetCollections: number;
+};
+
+export const getLorcanaDataIntegrityReport = async (): Promise<LorcanaDataIntegrityReport> => {
+    const db = await getDB();
+
+    const [numericSetIdsResult] = await db.executeSql(
+        "SELECT COUNT(*) as count FROM lorcana_cards WHERE Set_ID GLOB '[0-9]*'"
+    );
+    const [prefixedSetIdsResult] = await db.executeSql(
+        "SELECT COUNT(*) as count FROM lorcana_cards WHERE Set_ID LIKE 'set_%'"
+    );
+    const [mismatchedSetNumsResult] = await db.executeSql(`
+        SELECT COUNT(*) as count
+        FROM lorcana_cards
+        WHERE Set_Num IS NOT NULL
+          AND UPPER(Set_ID) IN ('TFC','ROF','INK','URS','SSK','AZS','ARI','ROJ','FAB','WHI')
+          AND Set_Num != CASE UPPER(Set_ID)
+              WHEN 'TFC' THEN 1
+              WHEN 'ROF' THEN 2
+              WHEN 'INK' THEN 3
+              WHEN 'URS' THEN 4
+              WHEN 'SSK' THEN 5
+              WHEN 'AZS' THEN 6
+              WHEN 'ARI' THEN 7
+              WHEN 'ROJ' THEN 8
+              WHEN 'FAB' THEN 9
+              WHEN 'WHI' THEN 10
+          END
+    `);
+    const [uniqueIdPrefixMismatchResult] = await db.executeSql(`
+        SELECT COUNT(*) as count
+        FROM lorcana_cards
+        WHERE Unique_ID IS NOT NULL
+          AND Set_ID IS NOT NULL
+          AND INSTR(Unique_ID, '-') > 1
+          AND UPPER(SUBSTR(Unique_ID, 1, INSTR(Unique_ID, '-') - 1)) != UPPER(Set_ID)
+    `);
+    const [unresolvedCollectionsResult] = await db.executeSql(`
+        SELECT COUNT(*) as count
+        FROM lorcana_collections
+        WHERE name LIKE 'Set: %'
+          AND (set_number IS NULL OR set_number = 0)
+    `);
+
+    return {
+        numericSetIds: Number(numericSetIdsResult.rows.item(0).count) || 0,
+        prefixedSetIds: Number(prefixedSetIdsResult.rows.item(0).count) || 0,
+        mismatchedSetNums: Number(mismatchedSetNumsResult.rows.item(0).count) || 0,
+        uniqueIdPrefixMismatches: Number(uniqueIdPrefixMismatchResult.rows.item(0).count) || 0,
+        unresolvedSetCollections: Number(unresolvedCollectionsResult.rows.item(0).count) || 0,
+    };
 };
 
 // ---------------------------------------------------------------------------

@@ -114,6 +114,7 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
       if ('multipleCards' in processed) {
         if (processed.multipleCards.length === 1) {
           const card = processed.multipleCards[0] as LorcanaDbCard;
+          await CardProcessingService.handleLorcanaCollection(card);
           addLorcanaCard(card);
           setNewToCollectionCards((prev)=> new Set(prev).add(card.Unique_ID));
         } else if (processed.multipleCards.length > 1) {
@@ -123,10 +124,26 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
         }
       } else {
         const sc = processed; // ScannedCard
-        if (sc.type === 'Lorcana' && sc.card) {
-          const lcard = sc.card as unknown as LorcanaDbCard;
-          addLorcanaCard(lcard);
-          setNewToCollectionCards((prev)=> new Set(prev).add(lcard.Unique_ID));
+        if (sc.type === 'Lorcana') {
+          const lcard = sc.card as LorcanaDbCard | undefined;
+          if (lcard?.Unique_ID) {
+            addLorcanaCard(lcard);
+            setNewToCollectionCards((prev)=> new Set(prev).add(lcard.Unique_ID));
+          } else {
+            const fallbackId = sc.id || sc.uuid;
+            if (fallbackId) {
+              const fallbackCard = {
+                Unique_ID: fallbackId,
+                Name: sc.name,
+                Set_ID: sc.setCode || '',
+                Set_Name: sc.setName || '',
+                Rarity: sc.rarity || '',
+                Image: sc.imageUrl || sc.imageUris?.normal || '',
+              } as LorcanaDbCard;
+              addLorcanaCard(fallbackCard);
+              setNewToCollectionCards((prev)=> new Set(prev).add(fallbackId));
+            }
+          }
         }
       }
     } catch (err) {
@@ -246,8 +263,10 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
         visible={multiModalVisible}
         onClose={() => setMultiModalVisible(false)}
         cards={multiCards}
-        onSelect={(card: LorcanaDbCard) => {
+        onSelect={async (card: LorcanaDbCard) => {
+          await CardProcessingService.handleLorcanaCollection(card);
           addLorcanaCard(card);
+          setNewToCollectionCards((prev)=> new Set(prev).add(card.Unique_ID));
           setMultiModalVisible(false);
         }}
       />

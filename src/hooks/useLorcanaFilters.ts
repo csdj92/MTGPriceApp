@@ -25,9 +25,10 @@ const defaultFilters: Filters = {
 
 interface UseLorcanaFiltersProps {
     cards: LorcanaCardWithPrice[];
+    priceCache?: Record<string, any>;
 }
 
-export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
+export const useLorcanaFilters = ({ cards, priceCache = {} }: UseLorcanaFiltersProps) => {
     const [filters, setFilters] = useState<Filters>(defaultFilters);
     const [sortBy, setSortBy] = useState<SortOption>('number');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -46,11 +47,21 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
             setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
         } else {
             setSortBy(option);
-            setSortDirection('asc');
+            // Default to descending for price, ascending for others
+            setSortDirection(option === 'price' ? 'desc' : 'asc');
         }
     }, [sortBy]);
 
     useEffect(() => {
+        const getPriceValue = (card: LorcanaCardWithPrice) => {
+            const cardId = card.Unique_ID || card.Name || '';
+            const cachedPrice = priceCache[cardId];
+            const val = cachedPrice?.usd ?? card.prices?.usd ?? (card as any).price_usd;
+            if (val === undefined || val === null || val === '') return 0;
+            const parsed = parseFloat(val);
+            return isNaN(parsed) ? 0 : parsed;
+        };
+
         const filtered = cards.filter(card => {
             // Text search
             if (filters.search && !card.Name?.toLowerCase().includes(filters.search.toLowerCase()) &&
@@ -77,7 +88,8 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
             }
 
             // Price range filter
-            const price = card.prices?.usd ? parseFloat(card.prices.usd) : 0;
+            const price = getPriceValue(card);
+
             if (filters.priceRange.min !== null && price < filters.priceRange.min) {
                 return false;
             }
@@ -95,27 +107,15 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
                         ? (a.Name || '').localeCompare(b.Name || '')
                         : (b.Name || '').localeCompare(a.Name || '');
                 case 'price':
-                    // Parse prices and handle NaN/invalid values
-                    let priceA = 0;
-                    let priceB = 0;
-
-                    if (a.prices?.usd) {
-                        const parsedA = parseFloat(a.prices.usd);
-                        priceA = isNaN(parsedA) ? 0 : parsedA;
-                    } else if ((a as any).price_usd) {
-                        const parsedA = parseFloat((a as any).price_usd);
-                        priceA = isNaN(parsedA) ? 0 : parsedA;
+                    const priceA = getPriceValue(a);
+                    const priceB = getPriceValue(b);
+                    if (priceA !== priceB) {
+                        return sortDirection === 'asc' ? priceA - priceB : priceB - priceA;
                     }
-
-                    if (b.prices?.usd) {
-                        const parsedB = parseFloat(b.prices.usd);
-                        priceB = isNaN(parsedB) ? 0 : parsedB;
-                    } else if ((b as any).price_usd) {
-                        const parsedB = parseFloat((b as any).price_usd);
-                        priceB = isNaN(parsedB) ? 0 : parsedB;
-                    }
-
-                    return sortDirection === 'asc' ? priceA - priceB : priceB - priceA;
+                    // Fallback to card number if prices are equal
+                    const nA = a.Card_Num || 0;
+                    const nB = b.Card_Num || 0;
+                    return nA - nB;
                 case 'number':
                 default:
                     const numA = a.Card_Num || 0;
@@ -125,7 +125,7 @@ export const useLorcanaFilters = ({ cards }: UseLorcanaFiltersProps) => {
         });
 
         setFilteredAndSortedCards(sorted);
-    }, [cards, filters, sortBy, sortDirection]);
+    }, [cards, filters, sortBy, sortDirection, priceCache]);
 
     return {
         filters,

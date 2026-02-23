@@ -30,7 +30,22 @@
       "WebFetch(domain:www.npmjs.com)",
       "Bash(npm outdated:*)",
       "WebFetch(domain:docs.swmansion.com)",
-      "Bash(node --print:*)"
+      "Bash(node --print:*)",
+      "Bash(adb devices:*)",
+      "Bash(mkdir:*)",
+      "Bash(for file in android/app/src/main/java/com/lorcanacollector/ocr/*.kt)",
+      "Bash(do sed -i '1s/package com\\.mtgpriceapp\\.ocr/package com.lorcanacollector.ocr/' \"$file\")",
+      "Bash(done)",
+      "Bash(for file in android/app/src/main/java/com/lorcanacollector/share/*.kt)",
+      "Bash(do sed -i '1s/package com\\.mtgpriceapp\\.share/package com.lorcanacollector.share/' \"$file\")",
+      "Bash(powershell -Command \"$env:JAVA_HOME=''C:\\Program Files\\Eclipse Adoptium\\jdk-21.0.8.9-hotspot''; .\\gradlew.bat assembleDebug\")",
+      "Bash(powershell:*)",
+      "Bash(find:*)",
+      "Bash(xargs ls:*)",
+      "Bash(npx tsc:*)",
+      "SlashCommand(/ralph-wiggum:ralph-loop)",
+      "SlashCommand(/ralph-wiggum:ralph-loop Really look at the flow of the different functions and see how things could be made better. Focus on code architecture, data flow, service design, component structure, and opportunities for improvement in maintainability and performance.)",
+      "SlashCommand(/ralph-wiggum:ralph-loop \"Really look at the flow of the different functions and see how things could be made better. Focus on code architecture, data flow, service design, component structure, and opportunities for improvement in maintainability and performance. When you've completed a comprehensive review and created actionable recommendations, output <promise>ARCHITECTURAL REVIEW COMPLETE</promise>\" --max-iterations 15 --completion-promise \"ARCHITECTURAL REVIEW COMPLETE\")"
     ],
     "deny": [],
     "ask": []

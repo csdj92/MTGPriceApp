@@ -17,7 +17,7 @@ type UnifiedScannedListProps = {
 };
 
 const UnifiedScannedList: React.FC<UnifiedScannedListProps> = ({
-  scannedCards,
+  scannedCards: _scannedCards,
   lorcanaScannedCards,
   onRemoveCard,
   onSelectCard,
@@ -25,19 +25,15 @@ const UnifiedScannedList: React.FC<UnifiedScannedListProps> = ({
   newToCollectionCards = new Set(),
   onToggleFoil,
 }) => {
-  const combinedList: ScannedItem[] = [...lorcanaScannedCards, ...scannedCards].sort((a, b) => {
-    const timeA = a.type === 'MTG' ? a.scannedAt : undefined;
-    const timeB = b.type === 'MTG' ? b.scannedAt : undefined;
-    if (timeA && timeB) {
-      return timeB - timeA;
-    }
-    return 0;
+  const combinedList: ScannedItem[] = [...lorcanaScannedCards].sort((a, b) => {
+    const timeA = a.scannedAt || 0;
+    const timeB = b.scannedAt || 0;
+    return timeB - timeA;
   });
 
   const renderItem = ({ item }: { item: ScannedItem }) => {
-    const isLorcana = item.type === 'Lorcana';
-    const cardId = isLorcana ? item.id : item.uuid;
-    const isNew = newToCollectionCards.has(cardId || '');
+    const cardId = item.id;
+    const isNew = newToCollectionCards.has(cardId);
 
     return (
       <TouchableOpacity style={styles.cardItem} onPress={() => onSelectCard(item)}>
@@ -48,20 +44,18 @@ const UnifiedScannedList: React.FC<UnifiedScannedListProps> = ({
             {item.name}
           </Text>
           <Text style={styles.cardDetails}>
-            {isLorcana ? item.setCode : `${item.setName} • ${item.rarity}`}
+            {item.setCode}
           </Text>
           <Text style={styles.cardPrice}>
-            {isLorcana ? '' : `$${item.prices?.usd || '0.00'}`}
+            {''}
           </Text>
         </View>
-        <TouchableOpacity style={styles.removeButton} onPress={() => onRemoveCard(cardId || '', item.type)}>
+        <TouchableOpacity style={styles.removeButton} onPress={() => onRemoveCard(cardId, 'Lorcana')}>
           <Icon name="close-circle" size={24} color="#C0C0C0" />
         </TouchableOpacity>
-        {isLorcana && (
-          <TouchableOpacity style={styles.foilToggle} onPress={() => onToggleFoil && cardId && onToggleFoil(cardId)}>
-            <Icon name={item.isFoil ? 'star' : 'star-outline'} size={20} color={item.isFoil ? '#fdd835' : '#999'} />
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity style={styles.foilToggle} onPress={() => onToggleFoil && onToggleFoil(cardId)}>
+          <Icon name={item.isFoil ? 'star' : 'star-outline'} size={20} color={item.isFoil ? '#fdd835' : '#999'} />
+        </TouchableOpacity>
       </TouchableOpacity>
     );
   };
@@ -74,7 +68,7 @@ const UnifiedScannedList: React.FC<UnifiedScannedListProps> = ({
     <FlatList
       data={combinedList}
       renderItem={renderItem}
-      keyExtractor={item => (item.type === 'Lorcana' ? item.id : item.uuid) || Math.random().toString()}
+      keyExtractor={item => item.id}
       contentContainerStyle={styles.listContent}
     />
   );

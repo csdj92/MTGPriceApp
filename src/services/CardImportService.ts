@@ -5,6 +5,11 @@
 
 import { lorcastAPI, LorcastCard, LorcastSet } from './LorcastAPIService';
 import { getLorcanaDB } from './DatabaseService';
+import {
+    buildLorcanaUniqueId,
+    getCanonicalSetCodeForStorage,
+    getLorcanaSetNumberFromIdentifier,
+} from '../utils/lorcanaSetMapping';
 
 export interface ImportProgress {
     totalSets: number;
@@ -47,16 +52,26 @@ class CardImportService {
             throw new Error('Card collector number is missing');
         }
 
+        const canonicalSetCode = getCanonicalSetCodeForStorage(card.set.code);
+        if (!canonicalSetCode) {
+            throw new Error(`Unable to resolve canonical set code for "${card.set.code}"`);
+        }
+
+        const uniqueId = buildLorcanaUniqueId(canonicalSetCode, card.collector_number);
+        if (!uniqueId) {
+            throw new Error(`Unable to create Unique_ID for card "${card.name}"`);
+        }
+
         return {
             // Primary identifiers
-            Unique_ID: `${card.set.code}-${card.collector_number}`,
+            Unique_ID: uniqueId,
             Name: card.version ? `${card.name} - ${card.version}` : card.name,
             Card_Num: Number(card.collector_number),
 
             // Set information
-            Set_ID: card.set.code,
+            Set_ID: canonicalSetCode,
             Set_Name: card.set.name,
-            Set_Num: Number(card.set.code),
+            Set_Num: getLorcanaSetNumberFromIdentifier(canonicalSetCode),
 
             // Card properties
             Artist: card.illustrators && Array.isArray(card.illustrators) && card.illustrators.length > 0 ? card.illustrators[0] : null,
@@ -416,17 +431,22 @@ class CardImportService {
     }> {
         try {
             const db = await getLorcanaDB();
+            const canonicalSetCode = getCanonicalSetCodeForStorage(setCode) || setCode.trim().toUpperCase();
 
             // Count cards in database for this set
             const resultSet = await db.executeSql(
                 'SELECT COUNT(*) as count FROM lorcana_cards WHERE Set_ID = ?',
-                [setCode]
+                [canonicalSetCode]
             );
             const totalInDb = resultSet[0].rows.item(0).count;
 
             // Fetch set info from API to get expected count
             const sets = await lorcastAPI.fetchAllSets();
-            const set = sets.find(s => s.code === setCode);
+            const normalizedInput = setCode.trim().toUpperCase();
+            const set = sets.find((s) => {
+                const normalizedSetCode = getCanonicalSetCodeForStorage(s.code) || s.code.toString().trim().toUpperCase();
+                return normalizedSetCode === canonicalSetCode || normalizedSetCode === normalizedInput;
+            });
             const expectedCount = set?.card_count || 0;
 
             return {

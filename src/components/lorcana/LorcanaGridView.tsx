@@ -81,6 +81,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     // Custom hooks
     const { addToCollection, refreshCollectionStatus } = useLorcanaCollection({ onCardsUpdate });
     const { updatePrices, updatingPrices } = useLorcanaPrices({ cards, onCardsUpdate });
+    const { getPrice, priceCache, setPriceCache, isLoading: priceLoading } = useLorcanaPriceCache();
     const {
         filters,
         sortBy,
@@ -90,8 +91,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         toggleSort,
         filteredAndSortedCards,
         setFilteredAndSortedCards
-    } = useLorcanaFilters({ cards });
-    const { getPrice, priceCache, setPriceCache, isLoading: priceLoading } = useLorcanaPriceCache();
+    } = useLorcanaFilters({ cards, priceCache });
 
     // Update selectedCard when cards array changes (to keep modal in sync)
     useEffect(() => {

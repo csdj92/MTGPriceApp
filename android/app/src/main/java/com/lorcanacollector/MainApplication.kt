@@ -1,4 +1,4 @@
-package com.mtgpriceapp
+package com.lorcanacollector
 
 import android.app.Application
 import com.facebook.react.PackageList
@@ -12,8 +12,8 @@ import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
 import com.lorcanacollector.BuildConfig
-import com.mtgpriceapp.ocr.OcrPackage
-import com.mtgpriceapp.share.SharePackage
+import com.lorcanacollector.ocr.OcrPackage
+import com.lorcanacollector.share.SharePackage
 
 class MainApplication : Application(), ReactApplication {
 

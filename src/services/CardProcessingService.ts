@@ -260,6 +260,7 @@ export const CardProcessingService = {
         cmc: 0,
         frameEffects: [],
         isFoil: false,
+        card: cardWithPrice,
       };
 
       // Handle Lorcana card collection addition

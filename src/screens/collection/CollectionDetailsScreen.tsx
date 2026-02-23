@@ -10,6 +10,10 @@ import type { LorcanaCardWithPrice, PartialLorcanaCardWithPrice } from '../../ty
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { Collection } from '../../types/collection';
 import DatabaseInitializer from '../../services/DatabaseInitializer';
+import {
+    extractSetIdentifierFromDescription,
+    getCanonicalSetCodeForStorage,
+} from '../../utils/lorcanaSetMapping';
 
 // Define a screen-specific type that includes isExpanded
 type DisplayLorcanaCard = LorcanaCardWithPrice & { isExpanded?: boolean };
@@ -67,10 +71,18 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                     });
                     navigation.setOptions({ title: lorcanaCollection.name });
 
-                    // Extract set ID from the description (format: "Collection for Set Name (SET_ID)")
-                    const setIdMatch = lorcanaCollection.description?.match(/\((.*?)\)$/);
-                    if (setIdMatch && setIdMatch[1]) {
-                        const setId = setIdMatch[1];
+                    // Resolve set identifier from multiple sources (description, set_number, name).
+                    const descriptionSetId = extractSetIdentifierFromDescription(lorcanaCollection.description);
+                    const collectionSetNumber = (lorcanaCollection as any).set_number;
+                    const fallbackSetFromName = lorcanaCollection.name?.replace(/^Set:\s*/, '').trim() || null;
+                    const setId =
+                        getCanonicalSetCodeForStorage(descriptionSetId) ||
+                        getCanonicalSetCodeForStorage(collectionSetNumber) ||
+                        getCanonicalSetCodeForStorage(fallbackSetFromName) ||
+                        descriptionSetId ||
+                        (collectionSetNumber ? String(collectionSetNumber) : null);
+
+                    if (setId) {
                         try {
                             const allSetCards = await getLorcanaSetMissingCards(setId, collectionId)
                                 .catch(error => {
@@ -84,6 +96,9 @@ const CollectionDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                             console.error(`[CollectionDetailsScreen] Error processing Lorcana set cards for ${setId}:`, error);
                             setLorcanaCards([]);
                         }
+                    } else {
+                        console.warn(`[CollectionDetailsScreen] Unable to resolve set identifier for collection: ${collectionId}`);
+                        setLorcanaCards([]);
                     }
                 } else {
                     // Collection not found

@@ -1,4 +1,4 @@
-package com.mtgpriceapp.ocr
+package com.lorcanacollector.ocr
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -34,7 +34,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-import com.mtgpriceapp.ocr.PreviewModule
+import com.lorcanacollector.ocr.PreviewModule
 
 @ReactModule(name = LiveOcr.NAME)
 class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext), PreviewModule {

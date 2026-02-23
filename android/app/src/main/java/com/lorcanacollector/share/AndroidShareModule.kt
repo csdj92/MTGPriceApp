@@ -1,4 +1,4 @@
-package com.mtgpriceapp.share
+package com.lorcanacollector.share
 
 import android.content.Intent
 import android.net.Uri

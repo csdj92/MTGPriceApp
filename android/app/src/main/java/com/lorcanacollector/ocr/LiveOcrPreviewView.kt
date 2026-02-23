@@ -1,4 +1,4 @@
-package com.mtgpriceapp.ocr
+package com.lorcanacollector.ocr
 
 import android.content.Context
 import android.util.Log

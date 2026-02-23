@@ -1,4 +1,4 @@
-package com.mtgpriceapp.ocr
+package com.lorcanacollector.ocr
 
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.NativeModule

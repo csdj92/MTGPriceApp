@@ -1,4 +1,4 @@
-package com.mtgpriceapp.ocr
+package com.lorcanacollector.ocr
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -25,7 +25,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import com.mtgpriceapp.ocr.ImageClassifier
+import com.lorcanacollector.ocr.ImageClassifier
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
