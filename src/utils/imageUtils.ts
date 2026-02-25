@@ -1,5 +1,6 @@
 import FastImage from '@d11/react-native-fast-image';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
+import { getPreferredLorcastImageUrl, toLorcastLargeJpg } from './lorcastImage';
 
 // Keep track of failed image loading attempts
 const failedImageAttempts: Record<string, { count: number, lastAttempt: number }> = {};
@@ -90,10 +91,13 @@ export const getImageSource = (imageUrl: string | null | undefined) => {
     return null;
   }
 
+  // Normalize Lorcast URLs to fix any malformed URLs (e.g., .jpg.jpg, .avif, etc.)
+  const normalizedUrl = toLorcastLargeJpg(imageUrl);
+
   // Strip query parameters first to get a clean URL for caching
-  let finalUri = imageUrl;
-  if (imageUrl.includes('?')) {
-    finalUri = imageUrl.split('?')[0];
+  let finalUri = normalizedUrl;
+  if (normalizedUrl.includes('?')) {
+    finalUri = normalizedUrl.split('?')[0];
     logDebug(`Stripped query parameters from URL for caching: ${finalUri}`);
   }
 
@@ -269,7 +273,7 @@ export const preloadImages = (imageUrls: string[]) => {
       cache: FastImage.cacheControl.immutable,
       headers: {
         'User-Agent': 'MTGPriceApp/1.0',
-        'Accept': 'image/*,image/jpeg,image/png,image/avif',
+        'Accept': 'image/*,image/jpeg,image/png',
         'Cache-Control': 'max-age=31536000, immutable' // Add explicit cache headers
       }
     };
@@ -366,7 +370,11 @@ export const updateAllImageUrlsInDatabase = async (db: any): Promise<number> => 
                   Image LIKE '%lorcana-api.com%' OR 
                   (Image LIKE '%lorcast.io%' AND Image NOT LIKE '%.jpg%' AND Image NOT LIKE '%.png%') OR
                   (Image LIKE '%cards.lorcast.io%') OR
-                  (Image LIKE '%/normal/%' AND Image NOT LIKE '%/full/%')`;
+                  (Image LIKE '%/normal/%') OR
+                  (Image LIKE '%/small/%') OR
+                  (Image LIKE '%.avif%') OR
+                  (Image LIKE '%.webp%') OR
+                  (Image LIKE '%format=avif%')`;
     const results = await db.executeSql(query);
     
     if (!results || !results[0] || !results[0].rows) {
@@ -425,36 +433,22 @@ export const updateAllImageUrlsInDatabase = async (db: any): Promise<number> => 
  * @returns The URL for the card image
  */
 export const getLorcanaImageUrl = (card: any, size: 'full' | 'small' = 'full'): string => {
-  // Start with null and find the best URL available
-  let imageUrl: string | null = null;
-  
-  // First check if the card has the new image_uris.digital structure
-  if (card.image_uris?.digital) {
-    // Use the appropriate size from the digital collection
-    if (size === 'small' && card.image_uris.digital.small) {
-      return card.image_uris.digital.small;
-    } else if (card.image_uris.digital.normal) {
-      return card.image_uris.digital.normal;
-    } else if (card.image_uris.digital.large) {
-      return card.image_uris.digital.large;
-    }
-  }
-  
-  // If the card already has an image URL, use it
-  if (card.Image && typeof card.Image === 'string') {
-    imageUrl = card.Image;
-  }
-  // If it's a card with imageUris, use those
-  else if (card.imageUris?.normal || card.imageUris?.small) {
-    imageUrl = size === 'full' ? card.imageUris.normal : card.imageUris.small;
-  }
-  // If there's a direct imageUrl, use that
-  else if (card.imageUrl) {
-    imageUrl = card.imageUrl;
+  const preferredUrl = getPreferredLorcastImageUrl(card);
+  if (preferredUrl) {
+    return size === 'small' ? preferredUrl : preferredUrl;
   }
 
-  if (imageUrl) {
-    return imageUrl;
+  let fallback: string | null = null;
+  if (card.imageUris?.normal || card.imageUris?.small) {
+    fallback = size === 'small' ? card.imageUris.small : card.imageUris.normal;
+  } else if (card.imageUrl) {
+    fallback = card.imageUrl;
+  } else if (card.Image && typeof card.Image === 'string') {
+    fallback = card.Image;
+  }
+
+  if (fallback) {
+    return toLorcastLargeJpg(fallback);
   }
 
   // Return a placeholder if no image is available

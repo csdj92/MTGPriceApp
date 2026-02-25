@@ -82,12 +82,12 @@ const ScannedCardsList: React.FC<ScannedCardsListProps> = ({
             uri,
             priority: FastImage.priority.high,
             cache: FastImage.cacheControl.immutable,
-            headers: {
-              'User-Agent': 'MTGPriceApp/1.0',
-              'Accept': 'image/*,image/jpeg,image/png,image/avif',
-              'Cache-Control': 'max-age=31536000, immutable'
-            }
-          }}
+              headers: {
+                'User-Agent': 'MTGPriceApp/1.0',
+                'Accept': 'image/*,image/jpeg,image/png',
+                'Cache-Control': 'max-age=31536000, immutable'
+              }
+            }}
           style={styles.cardImage} 
           resizeMode={FastImage.resizeMode.contain}
           onLoad={handleLoad}

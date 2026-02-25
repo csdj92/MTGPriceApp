@@ -73,6 +73,7 @@ dependencies {
     // React Native dependencies
     implementation("com.facebook.react:react-android")
     implementation(project(":react-native-sqlite-storage"))
+    implementation(project(":react-native-worklets"))
 
     // ML Kit Vision Text Recognition
     implementation "com.google.mlkit:text-recognition:16.0.0"

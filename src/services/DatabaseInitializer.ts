@@ -19,6 +19,7 @@ class DatabaseInitializer {
     [key: string]: {
       db: SQLite.SQLiteDatabase | null;
       lastAccess: number;
+      schemaInitialized?: boolean; // Track if schema is already created
     };
   } = {};
 
@@ -110,6 +111,22 @@ class DatabaseInitializer {
   }
 
   /**
+   * Check if database schema exists by checking for a key table
+   */
+  private static async checkSchemaExists(db: SQLite.SQLiteDatabase, tableName: string): Promise<boolean> {
+    try {
+      const result = await db.executeSql(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        [tableName]
+      );
+      return result && result[0] && result[0].rows && result[0].rows.length > 0;
+    } catch (error) {
+      Logger.error(`[DatabaseInitializer] Error checking schema existence for table ${tableName}`, error);
+      return false;
+    }
+  }
+
+  /**
    * Get the database file path
    */
   private static getDatabasePath(dbName: string): string {
@@ -133,12 +150,27 @@ class DatabaseInitializer {
     try {
       Logger.info('[DatabaseInitializer] Initializing MTG database');
       const db = await this.getDatabase('mtg');
-      
+
       // Enable foreign keys
       await db.executeSql('PRAGMA foreign_keys = ON;');
-      
+
+      // Check if schema is already initialized
+      if (this.databases['mtg']?.schemaInitialized) {
+        Logger.info('[DatabaseInitializer] MTG schema already initialized, skipping table creation');
+        return;
+      }
+
+      // Check if tables exist by querying a simple table
+      const schemaCheck = await this.checkSchemaExists(db, 'collections');
+      if (schemaCheck) {
+        Logger.info('[DatabaseInitializer] MTG tables already exist, skipping creation');
+        this.databases['mtg'].schemaInitialized = true;
+        return;
+      }
+
       // Create all tables for MTG database
       await this.createMTGTables(db);
+      this.databases['mtg'].schemaInitialized = true;
       Logger.info('[DatabaseInitializer] MTG database initialized');
     } catch (error) {
       Logger.error('[DatabaseInitializer] Error initializing MTG database', error);
@@ -167,12 +199,27 @@ class DatabaseInitializer {
     try {
       Logger.info('[DatabaseInitializer] Initializing Lorcana database');
       const db = await this.getDatabase('lorcana');
-      
+
       // Enable foreign keys
       await db.executeSql('PRAGMA foreign_keys = ON;');
-      
+
+      // Check if schema is already initialized
+      if (this.databases['lorcana']?.schemaInitialized) {
+        Logger.info('[DatabaseInitializer] Lorcana schema already initialized, skipping table creation');
+        return;
+      }
+
+      // Check if tables exist by querying a simple table
+      const schemaCheck = await this.checkSchemaExists(db, 'lorcana_cards');
+      if (schemaCheck) {
+        Logger.info('[DatabaseInitializer] Lorcana tables already exist, skipping creation');
+        this.databases['lorcana'].schemaInitialized = true;
+        return;
+      }
+
       // Create all tables for Lorcana database
       await this.createLorcanaTables(db);
+      this.databases['lorcana'].schemaInitialized = true;
       Logger.info('[DatabaseInitializer] Lorcana database initialized');
     } catch (error) {
       Logger.error('[DatabaseInitializer] Error initializing Lorcana database', error);
@@ -185,9 +232,8 @@ class DatabaseInitializer {
    */
   private static async createMTGTables(db: SQLite.SQLiteDatabase): Promise<void> {
     try {
-      await db.transaction(async (tx) => {
-        // Collections table
-        await tx.executeSql(`
+      // Collections table
+      await db.executeSql(`
           CREATE TABLE IF NOT EXISTS collections (
             id TEXT PRIMARY KEY NOT NULL,
             name TEXT NOT NULL,
@@ -197,10 +243,10 @@ class DatabaseInitializer {
             total_value REAL DEFAULT 0,
             card_count INTEGER DEFAULT 0
           );
-        `);
+      `);
 
-        // Cached cards table
-        await tx.executeSql(`
+      // Cached cards table
+      await db.executeSql(`
           CREATE TABLE IF NOT EXISTS cached_cards (
             uuid TEXT PRIMARY KEY NOT NULL,
             name TEXT NOT NULL,
@@ -213,10 +259,10 @@ class DatabaseInitializer {
             price REAL,
             cached_at TEXT NOT NULL
           );
-        `);
+      `);
 
-        // Collection cards table
-        await tx.executeSql(`
+      // Collection cards table
+      await db.executeSql(`
           CREATE TABLE IF NOT EXISTS collection_cards (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             collection_id TEXT NOT NULL,
@@ -226,10 +272,10 @@ class DatabaseInitializer {
             missing INTEGER DEFAULT 0,
             FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
           );
-        `);
+      `);
 
-        // Scan history table
-        await tx.executeSql(`
+      // Scan history table
+      await db.executeSql(`
           CREATE TABLE IF NOT EXISTS scan_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             card_uuid TEXT NOT NULL,
@@ -237,29 +283,29 @@ class DatabaseInitializer {
             added_to_collection INTEGER DEFAULT 0,
             collection_id TEXT
           );
-        `);
+      `);
 
-        // Card hash table
-        await tx.executeSql(`
+      // Card hash table
+      await db.executeSql(`
           CREATE TABLE IF NOT EXISTS card_hashes (
             uuid TEXT NOT NULL,
             hash TEXT NOT NULL PRIMARY KEY
           );
-        `);
+      `);
 
-        // Create price tables
-        await this.createPriceTables(tx);
+      // Create price tables
+      await this.createPriceTables(db);
 
-        // Create deck tables
-        await tx.executeSql(`
+      // Create deck tables
+      await db.executeSql(`
           CREATE TABLE IF NOT EXISTS decks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             created_at TEXT NOT NULL
           );
-        `);
+      `);
 
-        await tx.executeSql(`
+      await db.executeSql(`
           CREATE TABLE IF NOT EXISTS deck_cards (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             deck_id INTEGER NOT NULL,
@@ -267,16 +313,15 @@ class DatabaseInitializer {
             quantity INTEGER DEFAULT 1,
             FOREIGN KEY (deck_id) REFERENCES decks(id) ON DELETE CASCADE
           );
-        `);
+      `);
 
-        // Create indices for better performance
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_collection_cards_collection_id ON collection_cards(collection_id);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_collection_cards_card_uuid ON collection_cards(card_uuid);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_cached_cards_name ON cached_cards(name);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_cached_cards_set_code ON cached_cards(set_code);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_scan_history_card_uuid ON scan_history(card_uuid);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_card_hashes_uuid ON card_hashes(uuid);');
-      });
+      // Create indices for better performance
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_collection_cards_collection_id ON collection_cards(collection_id);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_collection_cards_card_uuid ON collection_cards(card_uuid);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_cached_cards_name ON cached_cards(name);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_cached_cards_set_code ON cached_cards(set_code);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_scan_history_card_uuid ON scan_history(card_uuid);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_card_hashes_uuid ON card_hashes(uuid);');
 
       Logger.info('[DatabaseInitializer] MTG tables created successfully');
     } catch (error) {
@@ -288,9 +333,11 @@ class DatabaseInitializer {
   /**
    * Create price tables
    */
-  public static async createPriceTables(tx: SQLite.Transaction): Promise<void> {
+  public static async createPriceTables(
+    executor: { executeSql: (sqlStatement: string, args?: any[]) => Promise<any> }
+  ): Promise<void> {
     // Current prices table
-    await tx.executeSql(`
+    await executor.executeSql(`
       CREATE TABLE IF NOT EXISTS current_prices (
         uuid TEXT PRIMARY KEY NOT NULL,
         normal_price REAL DEFAULT 0,
@@ -310,7 +357,7 @@ class DatabaseInitializer {
     `);
 
     // Price history table
-    await tx.executeSql(`
+    await executor.executeSql(`
       CREATE TABLE IF NOT EXISTS price_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         uuid TEXT NOT NULL,
@@ -331,7 +378,7 @@ class DatabaseInitializer {
     `);
 
     // Last price update timestamp table
-    await tx.executeSql(`
+    await executor.executeSql(`
       CREATE TABLE IF NOT EXISTS price_update_timestamp (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         last_update INTEGER NOT NULL
@@ -339,8 +386,8 @@ class DatabaseInitializer {
     `);
 
     // Create indices for price tables
-    await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_uuid ON price_history(uuid);');
-    await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);');
+    await executor.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_uuid ON price_history(uuid);');
+    await executor.executeSql('CREATE INDEX IF NOT EXISTS idx_price_history_timestamp ON price_history(timestamp);');
   }
 
   /**
@@ -348,9 +395,8 @@ class DatabaseInitializer {
    */
   private static async createLorcanaTables(db: SQLite.SQLiteDatabase): Promise<void> {
     try {
-      await db.transaction(async (tx) => {
-        // Lorcana cards table
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_cards (
+      // Lorcana cards table
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_cards (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           Artist TEXT, Body_Text TEXT, Card_Num INTEGER, Classifications TEXT,
           Color TEXT, Cost INTEGER, Date_Added TEXT, Date_Modified TEXT,
@@ -361,29 +407,54 @@ class DatabaseInitializer {
           last_updated TEXT, collected INTEGER DEFAULT 0
         );`);
 
-        // Lorcana collections table
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collections (
+      // Lorcana collections table
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collections (
           id TEXT PRIMARY KEY NOT NULL,
           name TEXT NOT NULL,
           description TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           total_value REAL DEFAULT 0,
-          card_count INTEGER DEFAULT 0
+          card_count INTEGER DEFAULT 0,
+          set_number INTEGER
         );`);
 
-        // Lorcana collection cards table
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collection_cards (
+      // Lorcana collection cards table
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_collection_cards (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           collection_id TEXT NOT NULL,
           card_id TEXT NOT NULL,
           quantity INTEGER DEFAULT 1,
+          quantity_normal INTEGER DEFAULT 0,
+          quantity_foil INTEGER DEFAULT 0,
           added_at TEXT NOT NULL,
           FOREIGN KEY (collection_id) REFERENCES lorcana_collections(id) ON DELETE CASCADE
         );`);
 
-        // Lorcana card prices table
-        await tx.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_card_prices (
+      // Backfill schema for existing databases where columns might be missing
+      const [collectionColumns] = await db.executeSql('PRAGMA table_info(lorcana_collections)');
+      const collectionColumnNames = new Set<string>();
+      for (let i = 0; i < collectionColumns.rows.length; i++) {
+        collectionColumnNames.add(collectionColumns.rows.item(i).name);
+      }
+      if (!collectionColumnNames.has('set_number')) {
+        await db.executeSql('ALTER TABLE lorcana_collections ADD COLUMN set_number INTEGER');
+      }
+
+      const [collectionCardColumns] = await db.executeSql('PRAGMA table_info(lorcana_collection_cards)');
+      const collectionCardColumnNames = new Set<string>();
+      for (let i = 0; i < collectionCardColumns.rows.length; i++) {
+        collectionCardColumnNames.add(collectionCardColumns.rows.item(i).name);
+      }
+      if (!collectionCardColumnNames.has('quantity_normal')) {
+        await db.executeSql('ALTER TABLE lorcana_collection_cards ADD COLUMN quantity_normal INTEGER DEFAULT 0');
+      }
+      if (!collectionCardColumnNames.has('quantity_foil')) {
+        await db.executeSql('ALTER TABLE lorcana_collection_cards ADD COLUMN quantity_foil INTEGER DEFAULT 0');
+      }
+
+      // Lorcana card prices table
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_card_prices (
           card_id TEXT PRIMARY KEY NOT NULL,
           usd REAL,
           usd_foil REAL,
@@ -392,13 +463,12 @@ class DatabaseInitializer {
           FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
         );`);
 
-        // Create indices for better performance
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_name ON lorcana_cards(Name);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_unique_id ON lorcana_cards(Unique_ID);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_collection_id ON lorcana_collection_cards(collection_id);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_card_id ON lorcana_collection_cards(card_id);');
-        await tx.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_card_prices_card_id ON lorcana_card_prices(card_id);');
-      });
+      // Create indices for better performance
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_name ON lorcana_cards(Name);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_unique_id ON lorcana_cards(Unique_ID);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_collection_id ON lorcana_collection_cards(collection_id);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_card_id ON lorcana_collection_cards(card_id);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_card_prices_card_id ON lorcana_card_prices(card_id);');
 
       Logger.info('[DatabaseInitializer] Lorcana tables created successfully');
     } catch (error) {

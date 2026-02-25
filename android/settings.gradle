@@ -1,5 +1,9 @@
 pluginManagement {
-    includeBuild("../node_modules/@react-native/gradle-plugin")
+    includeBuild(
+        file("../node_modules/react-native/node_modules/@react-native/gradle-plugin").exists()
+            ? "../node_modules/react-native/node_modules/@react-native/gradle-plugin"
+            : "../node_modules/@react-native/gradle-plugin"
+    )
     repositories {
         google()
         mavenCentral()
@@ -16,7 +20,11 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
 }
 
 rootProject.name = "LorcanaCollector"
-includeBuild("../node_modules/@react-native/gradle-plugin")
+includeBuild(
+    file("../node_modules/react-native/node_modules/@react-native/gradle-plugin").exists()
+        ? "../node_modules/react-native/node_modules/@react-native/gradle-plugin"
+        : "../node_modules/@react-native/gradle-plugin"
+)
 
 include(":app")
 

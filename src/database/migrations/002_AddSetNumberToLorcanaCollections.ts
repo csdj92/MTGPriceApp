@@ -17,8 +17,29 @@ const setCodeToNumber: Record<string, number> = {
 export const AddSetNumberToLorcanaCollections: Migration = {
   version: 2,
   up: async (db: SQLite.SQLiteDatabase) => {
-    // Add the set_number column if it doesn't exist
-    await db.executeSql('ALTER TABLE lorcana_collections ADD COLUMN set_number INTEGER');
+    // Ensure base table exists in case migration runs before table bootstrap
+    await db.executeSql(`
+      CREATE TABLE IF NOT EXISTS lorcana_collections (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        total_value REAL DEFAULT 0,
+        card_count INTEGER DEFAULT 0,
+        set_number INTEGER
+      )
+    `);
+
+    // Add set_number if missing (idempotent)
+    const [columnsInfo] = await db.executeSql('PRAGMA table_info(lorcana_collections)');
+    const existingCols = new Set<string>();
+    for (let i = 0; i < columnsInfo.rows.length; i++) {
+      existingCols.add(columnsInfo.rows.item(i).name);
+    }
+    if (!existingCols.has('set_number')) {
+      await db.executeSql('ALTER TABLE lorcana_collections ADD COLUMN set_number INTEGER');
+    }
 
     // Fetch all collections
     const [results] = await db.executeSql('SELECT id, description FROM lorcana_collections');

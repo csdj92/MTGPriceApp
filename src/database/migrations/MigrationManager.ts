@@ -1,5 +1,4 @@
 import SQLite from 'react-native-sqlite-storage';
-import { AddSetNumberToLorcanaCollections } from './002_AddSetNumberToLorcanaCollections';
 
 // Define the migration interface
 export interface Migration {
@@ -48,10 +47,8 @@ export class MigrationManager {
         for (const migration of pendingMigrations) {
             try {
                 console.log(`[MigrationManager] Running migration to version ${migration.version}`);
-                await this.db.transaction(async (tx) => {
-                    await migration.up(this.db);
-                    await this.setVersion(migration.version);
-                });
+                await migration.up(this.db);
+                await this.setVersion(migration.version);
                 console.log(`[MigrationManager] Successfully migrated to version ${migration.version}`);
             } catch (error) {
                 console.error(`[MigrationManager] Migration to version ${migration.version} failed:`, error);

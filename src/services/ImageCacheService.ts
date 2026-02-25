@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
 import { Image } from 'react-native';
+import { toLorcastLargeJpg } from '../utils/lorcastImage';
 
 export interface ImageCacheConfig {
   maxCacheSize: number; // in MB
@@ -58,10 +59,27 @@ class ImageCacheService {
     return { ...this.config };
   }
 
+  private normalizeImageUrl(imageUrl: string): string {
+    const trimmed = imageUrl.trim();
+    if (!trimmed) {
+      return trimmed;
+    }
+
+    // Normalize known Lorcast URLs to avoid stale ".jpg.jpg" entries.
+    if (trimmed.includes('lorcast.io')) {
+      return toLorcastLargeJpg(trimmed);
+    }
+
+    return trimmed;
+  }
+
   private getImageFileName(imageUrl: string, quality: string = this.config.compressionQuality): string {
-    const urlParts = imageUrl.split('/');
+    const normalizedUrl = this.normalizeImageUrl(imageUrl);
+    const cleanUrl = normalizedUrl.split('?')[0];
+    const urlParts = cleanUrl.split('/');
     const fileName = urlParts[urlParts.length - 1] || 'unknown';
-    const nameWithoutExt = fileName.split('.')[0];
+    const lastDotIndex = fileName.lastIndexOf('.');
+    const nameWithoutExt = lastDotIndex > 0 ? fileName.substring(0, lastDotIndex) : fileName;
     return `${nameWithoutExt}_${quality}.jpg`;
   }
 
@@ -95,7 +113,8 @@ class ImageCacheService {
     onProgress?: (progress: number) => void
   ): Promise<string | null> {
     try {
-      const localPath = await this.getImageLocalPath(imageUrl, quality);
+      const normalizedUrl = this.normalizeImageUrl(imageUrl);
+      const localPath = await this.getImageLocalPath(normalizedUrl, quality);
       
       // Check if already exists
       if (await RNFS.exists(localPath)) {
@@ -104,7 +123,7 @@ class ImageCacheService {
 
       // Download with progress tracking
       const downloadResult = await RNFS.downloadFile({
-        fromUrl: imageUrl,
+        fromUrl: normalizedUrl,
         toFile: localPath,
         progress: (res) => {
           if (onProgress) {
@@ -122,7 +141,7 @@ class ImageCacheService {
         throw new Error(`Download failed with status: ${downloadResult.statusCode}`);
       }
     } catch (error) {
-      console.error('[ImageCacheService] Failed to download image:', imageUrl, error);
+      console.error('[ImageCacheService] Failed to download image:', this.normalizeImageUrl(imageUrl), error);
       return null;
     }
   }

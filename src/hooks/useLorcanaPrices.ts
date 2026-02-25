@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { getDB, getLorcanaCardPrice, debugCardData } from '../services/LorcanaService';
+import { debugCardData } from '../services/LorcanaService';
+import { priceService } from '../services/PriceService';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
 
 interface UseLorcanaPricesProps {
@@ -43,14 +44,13 @@ export const useLorcanaPrices = ({ cards, onCardsUpdate }: UseLorcanaPricesProps
                 return;
             }
 
-            const db = await getDB();
             const updatePromises = cardsNeedingPrices.map(async (card) => {
                 if (card.Name && card.Set_Num && card.Rarity) {
                     try {
                         // Debug the card data integrity
                         debugCardData(card, 'useLorcanaPrices');
                         
-                        const prices = await getLorcanaCardPrice({
+                        const prices = await priceService.getCardPrice({
                             Name: card.Name,
                             Set_Num: card.Set_Num,
                             Card_Num: card.Card_Num,
@@ -62,20 +62,6 @@ export const useLorcanaPrices = ({ cards, onCardsUpdate }: UseLorcanaPricesProps
                             failedPriceLookups.add(card.Unique_ID);
                             return card;
                         }
-
-                        await db.executeSql(
-                            `UPDATE lorcana_cards 
-                             SET price_usd = ?, 
-                                 price_usd_foil = ?, 
-                                 last_updated = ? 
-                             WHERE Unique_ID = ?`,
-                            [
-                                prices.usd,
-                                prices.usd_foil,
-                                new Date().toISOString(),
-                                card.Unique_ID
-                            ]
-                        );
                         
                         return {
                             ...card,

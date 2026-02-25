@@ -4,12 +4,13 @@
  */
 
 import { lorcastAPI, LorcastCard, LorcastSet } from './LorcastAPIService';
-import { getLorcanaDB } from './DatabaseService';
+import { getLorcanaDatabase } from './DatabaseAccess';
 import {
     buildLorcanaUniqueId,
     getCanonicalSetCodeForStorage,
     getLorcanaSetNumberFromIdentifier,
 } from '../utils/lorcanaSetMapping';
+import { getPreferredLorcastImageUrl } from '../utils/lorcastImage';
 
 export interface ImportProgress {
     totalSets: number;
@@ -81,7 +82,7 @@ class CardImportService {
             Cost: card.cost,
             Flavor_Text: card.flavor_text,
             Franchise: '', // Not provided by Lorcast API
-            Image: card.image_uris?.digital?.normal,
+            Image: getPreferredLorcastImageUrl(card),
             Inkable: card.inkwell ? 1 : 0,
             Lore: card.lore,
             Rarity: card.rarity,
@@ -262,7 +263,7 @@ class CardImportService {
             }
 
             console.log(`[CardImport] → Getting database connection...`);
-            const db = await getLorcanaDB();
+            const db = await getLorcanaDatabase();
             console.log(`[CardImport] ✓ Database connection obtained`);
 
             // Skip table verification for now - proceed directly to test INSERT
@@ -430,7 +431,7 @@ class CardImportService {
         complete: boolean;
     }> {
         try {
-            const db = await getLorcanaDB();
+            const db = await getLorcanaDatabase();
             const canonicalSetCode = getCanonicalSetCodeForStorage(setCode) || setCode.trim().toUpperCase();
 
             // Count cards in database for this set

@@ -5,7 +5,7 @@ import AddLorcanaSetsTable from '../database/migrations/003_AddLorcanaSetsTable'
 import AddImportHistoryTable from '../database/migrations/004_AddImportHistoryTable';
 import { AddQuantityColumnsToLorcanaCollectionCards } from '../database/migrations/005_AddQuantityColumnsToLorcanaCollectionCards';
 import { DataMerger } from '../database/DataMerger';
-import DatabaseInitializer from './DatabaseInitializer';
+import { getLorcanaDatabase } from './DatabaseAccess';
 
 SQLite.enablePromise(true);
 SQLite.DEBUG(false);
@@ -121,6 +121,8 @@ export default class DatabaseService {
     private readonly SET_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
     private migrationManager: MigrationManager | null = null;
     private dataMerger: DataMerger | null = null;
+    private initPromise: Promise<void> | null = null;
+    private isInitialized = false;
 
     // Add static properties to the class outside the method
     private static tableCacheTimestamp = 0;
@@ -131,55 +133,74 @@ export default class DatabaseService {
     }
 
     async initDatabase(): Promise<void> {
+        if (this.isInitialized && this.db) {
+            return;
+        }
+
+        if (this.initPromise) {
+            await this.initPromise;
+            return;
+        }
+
+        this.initPromise = (async () => {
+            try {
+                console.log('[DatabaseService] Initializing database...');
+
+                // Initialize database connection
+                if (!this.db) {
+                    this.db = await SQLite.openDatabase({
+                        name: 'lorcana.db',
+                        location: 'default',
+                    });
+                }
+
+                // Initialize migration manager
+                this.migrationManager = new MigrationManager(this.db);
+                this.migrationManager.registerMigration(AddSetNumberToLorcanaCollections);
+                this.migrationManager.registerMigration({ version: 3, up: AddLorcanaSetsTable.up });
+                this.migrationManager.registerMigration({ version: 4, up: AddImportHistoryTable.up });
+                this.migrationManager.registerMigration(AddQuantityColumnsToLorcanaCollectionCards);
+
+                // Run migrations
+                await this.migrationManager.migrateToLatest();
+
+                // Initialize data merger
+                this.dataMerger = new DataMerger(this.db);
+
+                console.log('[DatabaseService] Database initialized successfully');
+
+                // Enable foreign keys
+                await this.db.executeSql('PRAGMA foreign_keys = ON;');
+                console.log('[DatabaseService] Foreign key constraints enabled');
+
+                // Verify and create database structure
+                await this.verifyDatabaseStructure();
+                console.log('[DatabaseService] Database structure verified');
+
+                // Verify the connection is working
+                const [tables] = await this.db.executeSql("SELECT name FROM sqlite_master WHERE type='table'");
+                console.log('[DatabaseService] Existing tables:', tables.rows.raw());
+
+                this.isInitialized = true;
+            } catch (error) {
+                console.error('[DatabaseService] Database initialization error:', error);
+                if (error instanceof Error) {
+                    console.error('[DatabaseService] Error details:', {
+                        message: error.message,
+                        stack: error.stack
+                    });
+                }
+                // Reset the database connection on error
+                this.db = null;
+                this.isInitialized = false;
+                throw error;
+            }
+        })();
+
         try {
-            console.log('[DatabaseService] Initializing database...');
-
-            // Initialize database connection
-            if (!this.db) {
-                this.db = await SQLite.openDatabase({
-                    name: 'lorcana.db',
-                    location: 'default',
-                });
-            }
-
-            // Initialize migration manager
-            this.migrationManager = new MigrationManager(this.db);
-            this.migrationManager.registerMigration(AddSetNumberToLorcanaCollections);
-            this.migrationManager.registerMigration({ version: 3, up: AddLorcanaSetsTable.up });
-            this.migrationManager.registerMigration({ version: 4, up: AddImportHistoryTable.up });
-            this.migrationManager.registerMigration(AddQuantityColumnsToLorcanaCollectionCards);
-
-            // Run migrations
-            await this.migrationManager.migrateToLatest();
-
-            // Initialize data merger
-            this.dataMerger = new DataMerger(this.db);
-
-            console.log('[DatabaseService] Database initialized successfully');
-
-            // Enable foreign keys
-            await this.db.executeSql('PRAGMA foreign_keys = ON;');
-            console.log('[DatabaseService] Foreign key constraints enabled');
-
-            // Verify and create database structure
-            await this.verifyDatabaseStructure();
-            console.log('[DatabaseService] Database structure verified');
-
-            // Verify the connection is working
-            const [tables] = await this.db.executeSql("SELECT name FROM sqlite_master WHERE type='table'");
-            console.log('[DatabaseService] Existing tables:', tables.rows.raw());
-
-        } catch (error) {
-            console.error('[DatabaseService] Database initialization error:', error);
-            if (error instanceof Error) {
-                console.error('[DatabaseService] Error details:', {
-                    message: error.message,
-                    stack: error.stack
-                });
-            }
-            // Reset the database connection on error
-            this.db = null;
-            throw error;
+            await this.initPromise;
+        } finally {
+            this.initPromise = null;
         }
     }
 
@@ -241,20 +262,16 @@ export default class DatabaseService {
     }
 
     async createCollection(name: string, description?: string): Promise<Collection> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
 
         try {
             const id = `collection_${Date.now()}`;
             const now = new Date().toISOString();
 
-            await this.db!.transaction(async (tx) => {
-                await tx.executeSql(
-                    'INSERT INTO collections (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-                    [id, name, description || null, now, now]
-                );
-            });
+            await this.db!.executeSql(
+                'INSERT INTO collections (id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+                [id, name, description || null, now, now]
+            );
 
             return {
                 id,
@@ -272,9 +289,7 @@ export default class DatabaseService {
     }
 
     async getCollections(): Promise<Collection[]> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
 
         try {
             const [result] = await this.db!.executeSql(
@@ -309,12 +324,12 @@ export default class DatabaseService {
             await this.db.close();
             this.db = null;
         }
+        this.isInitialized = false;
+        this.initPromise = null;
     }
 
     async getSetCollections(): Promise<(Collection & SetCollectionStats)[]> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
 
         try {
             // Get all collections that start with "Set: "
@@ -356,9 +371,7 @@ export default class DatabaseService {
     }
 
     async getOrCreateSetCollection(setCode: string, setName: string): Promise<string> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
 
         try {
             const collectionName = `Set: ${setName}`;
@@ -387,18 +400,14 @@ export default class DatabaseService {
     }
 
     async deleteCollection(collectionId: string): Promise<void> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
 
         try {
-            await this.db!.transaction(async (tx) => {
-                // Delete the collection (cascade will handle collection_cards)
-                await tx.executeSql(
-                    'DELETE FROM collections WHERE id = ?',
-                    [collectionId]
-                );
-            });
+            // Delete the collection (cascade will handle collection_cards)
+            await this.db!.executeSql(
+                'DELETE FROM collections WHERE id = ?',
+                [collectionId]
+            );
         } catch (error) {
             console.error('Error deleting collection:', error);
             throw error;
@@ -406,15 +415,11 @@ export default class DatabaseService {
     }
 
     public ensureInitialized = async (): Promise<void> => {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
     };
 
     async removeCardFromCollection(cardUuid: string, collectionId: string): Promise<void> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
 
         try {
             await this.db!.executeSql(
@@ -459,9 +464,7 @@ export default class DatabaseService {
     }
 
     async isCardInSetCollection(cardUuid: string, setCode: string): Promise<{isInCollection: boolean, setName: string}> {
-        if (!this.db) {
-            await this.initDatabase();
-        }
+        await this.initDatabase();
 
         try {
             console.log(`[DatabaseService] Checking if card ${cardUuid} is in set collection ${setCode}`);
@@ -543,16 +546,6 @@ export const getDB = async () => {
     }
 };
 
-export const getLorcanaDB = async () => {
-    try {
-        console.log('[DatabaseService] Getting Lorcana database...');
-        const db = await DatabaseInitializer.getDatabase('lorcana');
-        console.log('[DatabaseService] Lorcana database obtained');
-        return db;
-    } catch (error) {
-        console.error('[DatabaseService] Failed to get Lorcana database:', error);
-        throw error;
-    }
-};
+export const getLorcanaDB = getLorcanaDatabase;
 
 export const databaseService = new DatabaseService();

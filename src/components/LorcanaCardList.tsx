@@ -44,7 +44,7 @@ const LorcanaCardItem = React.memo(({ card, onPress, onAddToCollection, onDelete
     onPress?: () => void;
     onAddToCollection?: (card: LorcanaCardType) => void;
     onDelete?: (card: LorcanaCardType) => void;
-    priceData?: { usd: string | null; usd_foil: string | null; tcgplayer_id?: number };
+    priceData?: { usd: string | null; usd_foil: string | null; tcgplayer_id?: string | number | null };
     isPriceLoading?: boolean;
 }) => {
     const [isExpanded, setIsExpanded] = useState(true);
@@ -222,7 +222,7 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
     onAddToCollection,
     onDeleteCard,
 }) => {
-    const [cardPrices, setCardPrices] = useState<Map<string, { usd: string | null; usd_foil: string | null; tcgplayer_id?: number }>>(new Map());
+    const [cardPrices, setCardPrices] = useState<Map<string, { usd: string | null; usd_foil: string | null; tcgplayer_id?: string | number | null }>>(new Map());
     const [loadingPrices, setLoadingPrices] = useState<Set<string>>(new Set());
 
     // Memoize the card data to prevent re-renders when the reference hasn't changed
@@ -245,7 +245,7 @@ const LorcanaCardList: React.FC<LorcanaCardListProps> = ({
 
                 // Skip if card already has prices from props
                 if (card.price_usd || card.price_usd_foil) {
-                    const tcgId = ('prices' in card && card.prices && typeof card.prices.tcgplayer_id === 'number') 
+                    const tcgId = ('prices' in card && card.prices && (typeof card.prices.tcgplayer_id === 'number' || typeof card.prices.tcgplayer_id === 'string')) 
                                   ? card.prices.tcgplayer_id 
                                   : undefined;
                     newPrices.set(cardId, {

@@ -61,6 +61,10 @@ const AppContent = () => {
     );
   }
 
+  if (isLoading || !isInitialized) {
+    return <LoadingScreen message="Initializing application..." />;
+  }
+
   return (
     <NavigationContainer>
       <StatusBar barStyle={theme.statusBar} />

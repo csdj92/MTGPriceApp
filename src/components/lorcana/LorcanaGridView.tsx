@@ -13,12 +13,13 @@ import { useLorcanaPrices } from '../../hooks/useLorcanaPrices';
 import { useLorcanaFilters } from '../../hooks/useLorcanaFilters';
 import SortHeader from '../shared/SortHeader';
 import { getImageLoadingStats, clearImageCache, getImageSource, handleImageLoadError, handleImageLoadSuccess, preloadImages } from '../../utils/imageUtils';
-import {  fetchCardVersionsByName, getDB } from '../../services/LorcanaService';
+import { fetchCardVersionsByName } from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
 import type { Theme } from '../../context/ThemeContext';
 import { useLorcanaPriceCache } from '../../hooks/useLorcanaPriceCache';
 import { imageCacheService } from '../../services/ImageCacheService';
+import { priceService } from '../../services/PriceService';
 
 // Fix Icon type with proper type assertion
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
@@ -152,51 +153,33 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         // Update the ref with current visible cards
         lastVisibleCardsRef.current = [...visibleCards];
 
-        const loadPricesFromDatabase = async () => {
-            const db = await getDB();
-
-            for (const card of visibleCards) {
-                const cardId = card.Unique_ID || card.Name;
-                // Skip if already processed this card in this session or if we already have it in cache
-                if (processedCardsRef.current.has(cardId) || priceCache[cardId] || !card.Unique_ID) {
-                    continue;
+        const loadPricesFromService = async () => {
+            try {
+                const cachedPrices = await priceService.getRecentPricesForCards(visibleCards);
+                if (Object.keys(cachedPrices).length > 0) {
+                    setPriceCache(prev => ({ ...prev, ...cachedPrices }));
                 }
 
-                processedCardsRef.current.add(cardId);
-
-                try {
-                    const [existingPrice] = await db.executeSql(
-                        `SELECT usd, usd_foil, last_updated FROM lorcana_card_prices
-                         WHERE card_id = ? AND last_updated IS NOT NULL`,
-                        [card.Unique_ID]
-                    );
-
-                    if (existingPrice.rows.length > 0) {
-                        const priceData = existingPrice.rows.item(0);
-                        const lastUpdated = new Date(priceData.last_updated);
-                        const now = new Date();
-                        const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
-
-                        // If price data is less than 24 hours old, cache it
-                        if (hoursSinceUpdate < 24) {
-                            setPriceCache(prev => ({ ...prev, [cardId]: {
-                                usd: priceData.usd,
-                                usd_foil: priceData.usd_foil,
-                                tcgplayer_id: null
-                            }}));
-                            continue; // Don't call getPrice for this card
-                        }
+                for (const card of visibleCards) {
+                    const cardId = card.Unique_ID || card.Name;
+                    if (!cardId) {
+                        continue;
                     }
-                } catch (error) {
-                    console.log(`[LorcanaGridView] Error checking cached prices for ${cardId}:`, error);
-                }
 
-                // Only call getPrice if we don't have recent database data
-                getPrice(card);
+                    // Skip if we already processed this card or cache hit exists.
+                    if (processedCardsRef.current.has(cardId) || priceCache[cardId] || cachedPrices[cardId]) {
+                        continue;
+                    }
+
+                    processedCardsRef.current.add(cardId);
+                    getPrice(card);
+                }
+            } catch (error) {
+                console.log('[LorcanaGridView] Error loading visible card prices:', error);
             }
         };
 
-        loadPricesFromDatabase();
+        loadPricesFromService();
     }, [visibleCards, getPrice]);
 
     // Callbacks
@@ -377,48 +360,31 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
     // When showing version modal, load prices for those versions from database
     useEffect(() => {
-        const loadVersionPricesFromDatabase = async () => {
+        const loadVersionPricesFromService = async () => {
             if (showVersionModal && availableVersions.length > 0) {
-                const db = await getDB();
+                try {
+                    const cachedPrices = await priceService.getRecentPricesForCards(availableVersions);
+                    if (Object.keys(cachedPrices).length > 0) {
+                        setPriceCache(prev => ({ ...prev, ...cachedPrices }));
+                    }
 
-                for (const card of availableVersions) {
-                    const cardId = card.Unique_ID || card.Name;
-                    if (!priceCache[cardId] && card.Unique_ID) {
-                        try {
-                            const [existingPrice] = await db.executeSql(
-                                `SELECT usd, usd_foil, last_updated FROM lorcana_card_prices
-                                 WHERE card_id = ? AND last_updated IS NOT NULL`,
-                                [card.Unique_ID]
-                            );
-
-                            if (existingPrice.rows.length > 0) {
-                                const priceData = existingPrice.rows.item(0);
-                                const lastUpdated = new Date(priceData.last_updated);
-                                const now = new Date();
-                                const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60);
-
-                                // If price data is less than 24 hours old, cache it
-                                if (hoursSinceUpdate < 24) {
-                                    setPriceCache(prev => ({ ...prev, [cardId]: {
-                                        usd: priceData.usd,
-                                        usd_foil: priceData.usd_foil,
-                                        tcgplayer_id: null
-                                    }}));
-                                    continue; // Don't call getPrice for this card
-                                }
-                            }
-                        } catch (error) {
-                            console.log(`[LorcanaGridView] Error checking cached prices for version ${cardId}:`, error);
+                    for (const card of availableVersions) {
+                        const cardId = card.Unique_ID || card.Name;
+                        if (!cardId) {
+                            continue;
                         }
 
-                        // Only call getPrice if we don't have recent database data
-                        getPrice(card);
+                        if (!priceCache[cardId] && !cachedPrices[cardId]) {
+                            getPrice(card);
+                        }
                     }
+                } catch (error) {
+                    console.log('[LorcanaGridView] Error loading version prices:', error);
                 }
             }
         };
 
-        loadVersionPricesFromDatabase();
+        loadVersionPricesFromService();
     }, [showVersionModal, availableVersions, getPrice]);
 
     if (isLoading) {

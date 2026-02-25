@@ -80,3 +80,4 @@ android/app/src/main/assets/AllPrintings.sqlite
 android/app/src/main/assets/mtg_classifier_classes.txt
 android/app/src/main/assets/mtg_classifier.tflite
 .cursor/mcp.json
+android/.gradle-user/

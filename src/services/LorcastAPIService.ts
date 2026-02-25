@@ -36,7 +36,7 @@ export interface LorcastCard {
     cost: number | null;
     inkwell: boolean;
     ink: string | null;
-    inks: string[];
+    inks: string[] | null;
     type: string[];
     classifications: string[];
     text: string | null;
