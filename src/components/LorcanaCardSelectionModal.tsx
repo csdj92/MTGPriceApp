@@ -30,6 +30,9 @@ const CardItem = React.memo(({
     onClose?: () => void;
 }) => {
     const [imageError, setImageError] = useState(false);
+    const normalPrice = Number(item.price_usd ?? item.prices?.usd ?? 0) || 0;
+    const foilPrice = Number(item.price_usd_foil ?? item.prices?.usd_foil ?? item.prices?.usdFoil ?? 0) || 0;
+    const hasFoilPrice = item.price_usd_foil != null || item.prices?.usd_foil != null || item.prices?.usdFoil != null;
     
     const handlePress = () => {
         if (onSelect) {
@@ -81,6 +84,10 @@ const CardItem = React.memo(({
                         {item.Classifications}
                     </Text>
                 )}
+                <Text style={styles.cardPrice}>
+                    ${normalPrice.toFixed(2)}
+                    {hasFoilPrice ? ` • Foil $${foilPrice.toFixed(2)}` : ''}
+                </Text>
             </View>
         </TouchableOpacity>
     );
@@ -197,6 +204,12 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#666',
         marginBottom: 2,
+    },
+    cardPrice: {
+        fontSize: 14,
+        color: '#2E8B57',
+        fontWeight: '600',
+        marginTop: 4,
     },
     closeButton: {
         marginTop: 16,

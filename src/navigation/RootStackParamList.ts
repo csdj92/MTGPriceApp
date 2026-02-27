@@ -3,6 +3,5 @@ export type RootStackParamList = {
   MainTabs: undefined;
   Collection: undefined;
   SetCompletion: undefined;
-  CameraTest: undefined;
   ManualCapture: undefined;
 }; 

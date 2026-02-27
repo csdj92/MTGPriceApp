@@ -32,12 +32,23 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
     useState<LorcanaScannedCard[]>([]);
   const [totalPrice, setTotalPrice] = useState(0);
 
-  const computeTotalPrice = useCallback((cards: ScannedCard[]) => {
-    if (!Array.isArray(cards)) return 0;
-    return cards.reduce((sum, c) => {
-      const price = c.prices?.usd ? Number(c.prices.usd) : 0;
-      return sum + price;
-    }, 0);
+  const computeTotalPrice = useCallback((mtgCards: ScannedCard[], lorcanaCards: LorcanaScannedCard[]) => {
+    const mtgTotal = Array.isArray(mtgCards)
+      ? mtgCards.reduce((sum, c) => {
+          const price = c.prices?.usd ? Number(c.prices.usd) : 0;
+          return sum + price;
+        }, 0)
+      : 0;
+
+    const lorcanaTotal = Array.isArray(lorcanaCards)
+      ? lorcanaCards.reduce((sum, c) => {
+          const normalPrice = Number(c.prices?.usd ?? 0) || 0;
+          const foilPrice = Number(c.prices?.usd_foil ?? c.prices?.usdFoil ?? c.prices?.usd ?? 0) || 0;
+          return sum + (normalPrice * c.normalCount) + (foilPrice * c.foilCount);
+        }, 0)
+      : 0;
+
+    return mtgTotal + lorcanaTotal;
   }, []);
 
   const reloadHistory = useCallback(async () => {
@@ -51,6 +62,10 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
     reloadHistory();
   }, [reloadHistory]);
 
+  useEffect(() => {
+    setTotalPrice(computeTotalPrice(scannedCards, lorcanaScannedCards));
+  }, [computeTotalPrice, scannedCards, lorcanaScannedCards]);
+
   const addScannedCard = useCallback(async (card: ScannedCard) => {
     // Avoid duplicates by uuid
     setScannedCards((prev) => {
@@ -58,8 +73,6 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
       if (exists) return prev;
       return [card, ...prev];
     });
-
-    setTotalPrice((prev) => prev + (card.prices?.usd ? Number(card.prices.usd) : 0));
   }, []);
 
   const addLorcanaCard = useCallback(
@@ -80,6 +93,13 @@ export const useLorcanaScanHistory = (): UseLorcanaScanHistoryReturn => {
           type: 'Lorcana',
           imageUrl: vm.imageUrl || '',
           setCode: vm.setCode || '',
+          setName: card.Set_Name,
+          prices: {
+            usd: card.price_usd ?? null,
+            usd_foil: card.price_usd_foil ?? null,
+            usdFoil: card.price_usd_foil ?? null,
+          },
+          scannedAt: Date.now(),
           card: vm,
           normalCount: isFoil ? 0 : 1,
           foilCount: isFoil ? 1 : 0,

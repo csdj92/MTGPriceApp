@@ -35,6 +35,21 @@ export interface ImportResult {
 }
 
 class CardImportService {
+    private getPrimaryInkColor(card: LorcastCard): string | null {
+        if (Array.isArray(card.inks) && card.inks.length > 0) {
+            const firstInk = card.inks.find(ink => typeof ink === 'string' && ink.trim().length > 0);
+            if (firstInk) {
+                return firstInk.trim();
+            }
+        }
+
+        if (typeof card.ink === 'string' && card.ink.trim().length > 0) {
+            return card.ink.trim();
+        }
+
+        return null;
+    }
+
     /**
      * Map Lorcast card data to database format
      */
@@ -78,7 +93,7 @@ class CardImportService {
             Artist: card.illustrators && Array.isArray(card.illustrators) && card.illustrators.length > 0 ? card.illustrators[0] : null,
             Body_Text: card.text,
             Classifications: card.classifications && Array.isArray(card.classifications) && card.classifications.length > 0 ? card.classifications.join(', ') : null,
-            Color: card.inks && Array.isArray(card.inks) && card.inks.length > 0 ? card.inks[0] : null,
+            Color: this.getPrimaryInkColor(card),
             Cost: card.cost,
             Flavor_Text: card.flavor_text,
             Franchise: '', // Not provided by Lorcast API
@@ -303,35 +318,38 @@ class CardImportService {
 
                 console.log(`[CardImport] → Batch ${batchNum}/${totalBatches}: Processing ${batch.length} cards...`);
 
-                // Process cards WITHOUT transaction for now (to debug)
-                for (const card of batch) {
-                    try {
-                        const result = await this.importCard(db, card);
-                        console.log(`[CardImport]     Result for ${card.name}: ${result}`);
+                await db.transaction(async (tx: any) => {
+                    for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+                        const card = batch[batchIndex];
 
-                        if (result === 'added') added++;
-                        else if (result === 'updated') updated++;
-                        else skipped++;
+                        try {
+                            const result = await this.importCard(tx, card);
+                            console.log(`[CardImport]     Result for ${card.name}: ${result}`);
 
-                        // Report progress
-                        if (onProgress) {
-                            onProgress({
-                                totalSets: 1,
-                                currentSet: 1,
-                                setName: card.set.name,
-                                totalCards: cards.length,
-                                processedCards: i + batch.indexOf(card) + 1,
-                                addedCards: added,
-                                updatedCards: updated,
-                                skippedCards: skipped
-                            });
+                            if (result === 'added') added++;
+                            else if (result === 'updated') updated++;
+                            else skipped++;
+
+                            // Report progress
+                            if (onProgress) {
+                                onProgress({
+                                    totalSets: 1,
+                                    currentSet: 1,
+                                    setName: card.set.name,
+                                    totalCards: cards.length,
+                                    processedCards: i + batchIndex + 1,
+                                    addedCards: added,
+                                    updatedCards: updated,
+                                    skippedCards: skipped
+                                });
+                            }
+                        } catch (error) {
+                            const cardName = card?.name || card?.id || 'Unknown Card';
+                            console.error(`[CardImport] Error importing card ${cardName}:`, error);
+                            skipped++;
                         }
-                    } catch (error) {
-                        const cardName = card?.name || card?.id || 'Unknown Card';
-                        console.error(`[CardImport] Error importing card ${cardName}:`, error);
-                        skipped++;
                     }
-                }
+                });
                 console.log(`[CardImport]   Batch ${batchNum} complete. Running totals - Added: ${added}, Updated: ${updated}, Skipped: ${skipped}`);
             }
 

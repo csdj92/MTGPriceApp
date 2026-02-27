@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,12 @@ import {
   Keyboard,
   Modal,
   BackHandler,
+  Platform,
+  ToastAndroid,
+  Alert,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
 import type { Theme } from '../../context/ThemeContext';
@@ -22,7 +26,9 @@ import UnifiedScannedList from '../../components/price-lookup/UnifiedScannedList
 import { searchLorcanaCards } from '../../services/LorcanaService';
 import SortHeader from '../../components/shared/SortHeader';
 import CardScanner from '../../components/CardScanner';
-import { CardProcessingService, ProcessedOcrResult } from '../../services/CardProcessingService';
+import { OcrService } from '../../services/OcrService';
+import { CardSearchService } from '../../services/CardSearchService';
+import { CollectionService } from '../../services/CollectionService';
 import type { OcrResult } from '../../types/card';
 import { LorcanaCard as LorcanaDbCard } from '../../types/lorcana';
 import LorcanaCardSelectionModal from '../../components/LorcanaCardSelectionModal';
@@ -33,6 +39,7 @@ import ScanHeaderInfo from '../../components/price-lookup/ScanHeaderInfo';
 import RecentScansReview from '../../components/price-lookup/RecentScansReview';
 
 const Icon = MaterialCommunityIcons as any;
+const LORCANA_SET_FILTER_KEY = '@price_lookup_lorcana_set_filter';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'PriceLookup'>;
@@ -59,30 +66,34 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
 
   /* ------------------------- camera / OCR ------------------------- */
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraModalShown, setCameraModalShown] = useState(false);
   // multiple Lorcana matches modal
   const [multiModalVisible, setMultiModalVisible] = useState(false);
   const [multiCards, setMultiCards] = useState<LorcanaDbCard[]>([]);
   // Lorcana set filter (for camera scanning)
   const [selectedSet, setSelectedSet] = useState<string | null>(null);
+  const [setFilterLoaded, setSetFilterLoaded] = useState(false);
   // pause/verification state
   const [isScanningPaused, setIsScanningPaused] = useState(false);
-  const [verificationStatus, setVerificationStatus] = useState<any>(null);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const isVerifyingRef = useRef(false);
   const [reviewVisible, setReviewVisible] = useState(false);
   const [newToCollectionCards, setNewToCollectionCards] = useState<Set<string>>(new Set());
 
-  /* subscribe to verification status */
-  useEffect(() => {
-    const emitter = CardProcessingService.getVerificationEmitter();
-    const listener = (status: any) => setVerificationStatus(status);
-    emitter.on('CardVerificationUpdate', listener);
-    return () => emitter.removeListener('CardVerificationUpdate', listener);
-  }, []);
+  const showScanFeedback = (message: string) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+      return;
+    }
+    Alert.alert('Scanner', message);
+  };
 
   // Back handler to close camera on hardware back press
   useEffect(() => {
     if (!cameraActive) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (cameraActive) {
+        setCameraModalShown(false);
         setCameraActive(false);
         return true; // handled
       }
@@ -90,6 +101,48 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
     });
     return () => sub.remove();
   }, [cameraActive]);
+
+  useEffect(() => {
+    if (!cameraActive) {
+      setCameraModalShown(false);
+    }
+  }, [cameraActive]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadSelectedSet = async () => {
+      try {
+        const savedSet = await AsyncStorage.getItem(LORCANA_SET_FILTER_KEY);
+        if (!mounted) return;
+        setSelectedSet(savedSet || null);
+      } catch (error) {
+        console.error('[PriceLookup] Failed to load set filter', error);
+      } finally {
+        if (mounted) setSetFilterLoaded(true);
+      }
+    };
+    loadSelectedSet();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!setFilterLoaded) return;
+
+    const saveSelectedSet = async () => {
+      try {
+        if (selectedSet) {
+          await AsyncStorage.setItem(LORCANA_SET_FILTER_KEY, selectedSet);
+        } else {
+          await AsyncStorage.removeItem(LORCANA_SET_FILTER_KEY);
+        }
+      } catch (error) {
+        console.error('[PriceLookup] Failed to persist set filter', error);
+      }
+    };
+    saveSelectedSet();
+  }, [selectedSet, setFilterLoaded]);
 
   const handleSearch = async () => {
     const q = search.trim();
@@ -107,47 +160,61 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
   };
 
   const handleOcrScan = async (result: OcrResult) => {
-    try {
-      const processed: ProcessedOcrResult | null = await CardProcessingService.processOcrResult(result, selectedSet);
-      if (!processed) return;
+    if (isVerifyingRef.current || isVerifying) return;
 
-      if ('multipleCards' in processed) {
-        if (processed.multipleCards.length === 1) {
-          const card = processed.multipleCards[0] as LorcanaDbCard;
-          await CardProcessingService.handleLorcanaCollection(card);
+    try {
+      if (!result?.text?.trim()) return;
+
+      const preprocessed = OcrService.preprocessText(result.text);
+      const mainName = result.isLorcana
+        ? OcrService.preprocessText(result.mainName ?? '')
+        : preprocessed;
+
+      if (!mainName) return;
+
+      const duplicateKey = result.cardNumber
+        ? `${result.cardNumber}-${result.setNumber ?? selectedSet ?? ''}`
+        : mainName.toLowerCase().trim();
+      if (OcrService.checkDuplicate(duplicateKey)) return;
+
+      isVerifyingRef.current = true;
+      setIsVerifying(true);
+
+      const found = await CardSearchService.findLorcanaCard(
+        mainName,
+        result.subtype,
+        selectedSet,
+        result.cardNumber,
+        result.setNumber,
+      );
+      if (!found) {
+        showScanFeedback('Card not recognised');
+        return;
+      }
+
+      if (found.kind === 'multiple') {
+        if (found.cards.length === 1) {
+          const card = found.cards[0] as LorcanaDbCard;
+          await CollectionService.addLorcanaCard(card);
           addLorcanaCard(card);
-          setNewToCollectionCards((prev)=> new Set(prev).add(card.Unique_ID));
-        } else if (processed.multipleCards.length > 1) {
-          // Show selection modal to user
-          setMultiCards(processed.multipleCards as LorcanaDbCard[]);
+          setNewToCollectionCards(prev => new Set(prev).add(card.Unique_ID));
+        } else {
+          setMultiCards(found.cards as LorcanaDbCard[]);
           setMultiModalVisible(true);
+          setIsScanningPaused(true);
         }
       } else {
-        const sc = processed; // ScannedCard
-        if (sc.type === 'Lorcana') {
-          const lcard = sc.card as LorcanaDbCard | undefined;
-          if (lcard?.Unique_ID) {
-            addLorcanaCard(lcard);
-            setNewToCollectionCards((prev)=> new Set(prev).add(lcard.Unique_ID));
-          } else {
-            const fallbackId = sc.id || sc.uuid;
-            if (fallbackId) {
-              const fallbackCard = {
-                Unique_ID: fallbackId,
-                Name: sc.name,
-                Set_ID: sc.setCode || '',
-                Set_Name: sc.setName || '',
-                Rarity: sc.rarity || '',
-                Image: sc.imageUrl || sc.imageUris?.normal || '',
-              } as LorcanaDbCard;
-              addLorcanaCard(fallbackCard);
-              setNewToCollectionCards((prev)=> new Set(prev).add(fallbackId));
-            }
-          }
-        }
+        const card = found.card as LorcanaDbCard;
+        await CollectionService.addLorcanaCard(card);
+        addLorcanaCard(card);
+        setNewToCollectionCards(prev => new Set(prev).add(card.Unique_ID));
       }
     } catch (err) {
       console.error('[PriceLookup] OCR processing error', err);
+      showScanFeedback('Scan failed');
+    } finally {
+      isVerifyingRef.current = false;
+      setIsVerifying(false);
     }
   };
 
@@ -190,7 +257,7 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
         <ActivityIndicator style={{ marginTop: 32 }} size="large" />
       ) : (
         <UnifiedScannedList
-          scannedCards={[]}
+          scannedCards={lorcanaScannedCards}
           lorcanaScannedCards={lorcanaScannedCards}
           onRemoveCard={removeCard}
           onSelectCard={() => {}}
@@ -203,7 +270,10 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
       {/* camera FAB */}
       <TouchableOpacity
         style={styles.cameraFab}
-        onPress={() => setCameraActive(true)}
+        onPress={() => {
+          setCameraModalShown(false);
+          setCameraActive(true);
+        }}
       >
         <Icon name="camera" size={26} color="#fff" />
       </TouchableOpacity>
@@ -211,30 +281,50 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
       <Modal
         visible={cameraActive}
         animationType="slide"
-        onRequestClose={() => setCameraActive(false)}
+        hardwareAccelerated
+        statusBarTranslucent
+        onShow={() => setCameraModalShown(true)}
+        onRequestClose={() => {
+          setCameraModalShown(false);
+          setCameraActive(false);
+        }}
       >
         <View style={{ flex: 1 }}>
           {/* Header info + set selector */}
           <ScanHeaderInfo
             isLorcanaScan={true}
-            verificationStatus={verificationStatus}
+            isVerifying={isVerifying}
             scannedCardsCount={lorcanaScannedCards.length}
             totalPrice={totalPrice}
           />
           <SetSelector selectedSet={selectedSet} onSetSelected={setSelectedSet} />
-          <CardScanner
-            onScan={handleOcrScan}
-            onError={(e) => console.error(e)}
-            isLorcanaScan={true}
-            scannedCards={[]}
-            totalPrice={totalPrice}
-            onCardPress={() => {}}
-            isPaused={isScanningPaused}
-            cardVariations={[]}
-            onVariationSelect={() => {}}
-            selectedVariation={null}
-            onConfirmVariation={() => {}}
-          />
+          {cameraModalShown ? (
+            <CardScanner
+              onScan={handleOcrScan}
+              onError={(e) => console.error(e)}
+              isLorcanaScan={true}
+              scannedCards={lorcanaScannedCards}
+              totalPrice={totalPrice}
+              onRemoveCard={(id) => removeCard(id, 'Lorcana')}
+              onToggleFoil={toggleFoil}
+              onIncrementCard={incrementCard}
+              onDecrementCard={decrementCard}
+              isPaused={isScanningPaused || isVerifying}
+              cardVariations={[]}
+              onVariationSelect={() => {}}
+              selectedVariation={null}
+              onConfirmVariation={() => {}}
+            />
+          ) : (
+            <View style={{ flex: 1, backgroundColor: '#000' }} />
+          )}
+
+          {isVerifying && (
+            <View style={styles.verifyingOverlay}>
+              <ActivityIndicator size="large" color="#fff" />
+              <Text style={styles.verifyingText}>Verifying card…</Text>
+            </View>
+          )}
 
           {/* Zoom controls on left */}
           <ZoomControls />
@@ -244,7 +334,10 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
             <CameraControls
               isScanningPaused={isScanningPaused}
               onPausePress={() => setIsScanningPaused((p) => !p)}
-              onClosePress={() => setCameraActive(false)}
+              onClosePress={() => {
+                setCameraModalShown(false);
+                setCameraActive(false);
+              }}
             />
           </View>
         </View>
@@ -261,13 +354,14 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
       {/* Lorcana multiple match modal */}
       <LorcanaCardSelectionModal
         visible={multiModalVisible}
-        onClose={() => setMultiModalVisible(false)}
+        onClose={() => { setMultiModalVisible(false); setIsScanningPaused(false); }}
         cards={multiCards}
         onSelect={async (card: LorcanaDbCard) => {
-          await CardProcessingService.handleLorcanaCollection(card);
+          await CollectionService.addLorcanaCard(card);
           addLorcanaCard(card);
-          setNewToCollectionCards((prev)=> new Set(prev).add(card.Unique_ID));
+          setNewToCollectionCards(prev => new Set(prev).add(card.Unique_ID));
           setMultiModalVisible(false);
+          setIsScanningPaused(false);
         }}
       />
 
@@ -362,5 +456,22 @@ const useStyles = () =>
       alignItems: 'center' as const,
       justifyContent: 'center' as const,
       elevation: 4,
+    },
+    verifyingOverlay: {
+      position: 'absolute' as const,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.35)',
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      zIndex: 20,
+    },
+    verifyingText: {
+      marginTop: 10,
+      fontSize: 16,
+      color: '#fff',
+      fontWeight: '600' as const,
     },
   })); 

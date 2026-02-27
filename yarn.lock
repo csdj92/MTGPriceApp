@@ -1798,10 +1798,10 @@
   resolved "https://registry.npmjs.org/@react-native/eslint-plugin/-/eslint-plugin-0.78.1.tgz"
   integrity sha512-J8tiNhMQi7CQfMLB8bJQEONPc99qmhHyPN/qbukpWrSMHBhBOgYDdOA+BX16bIwZWtShGm38jFS2jPa5U96qtg==
 
-"@react-native/gradle-plugin@^0.84.0":
-  version "0.84.0"
-  resolved "https://registry.npmjs.org/@react-native/gradle-plugin/-/gradle-plugin-0.84.0.tgz"
-  integrity sha512-j8g/I4Z+SAdh2NXOVng4rmfYgPoeJBZwAKoGPpSe/wB/9XDLh9IRGUTg8dGS5BWUy2471xBUoGZPwHb6QMJmVw==
+"@react-native/gradle-plugin@^0.83.0":
+  version "0.83.0"
+  resolved "https://registry.npmjs.org/@react-native/gradle-plugin/-/gradle-plugin-0.83.0.tgz"
+  integrity sha512-BXZRmfsbgPhEPkrRPjk2njA2AzhSelBqhuoklnv3DdLTdxaRjKYW+LW0zpKo1k3qPKj7kG1YGI3miol6l1GB5g==
 
 "@react-native/gradle-plugin@0.83.0":
   version "0.83.0"
@@ -5954,7 +5954,7 @@ react-native-pager-view@^6.7.0, "react-native-pager-view@>= 6.0.0":
   resolved "https://registry.npmjs.org/react-native-pager-view/-/react-native-pager-view-6.9.1.tgz"
   integrity sha512-uUT0MMMbNtoSbxe9pRvdJJKEi9snjuJ3fXlZhG8F2vVMOBJVt/AFtqMPUHu9yMflmqOr08PewKzj9EPl/Yj+Gw==
 
-react-native-reanimated@*, react-native-reanimated@^4.2.0:
+react-native-reanimated@^4.2.0:
   version "4.2.2"
   resolved "https://registry.npmjs.org/react-native-reanimated/-/react-native-reanimated-4.2.2.tgz"
   integrity sha512-o3kKvdD8cVlg12Z4u3jv0MFAt53QV4k7gD9OLwQqU8eZLyd8QvaOjVZIghMZhC2pjP93uUU44PlO5JgF8S4Vxw==
@@ -6004,19 +6004,14 @@ react-native-vector-icons@^10.2.0:
     prop-types "^15.7.2"
     yargs "^16.1.1"
 
-react-native-vision-camera@^4.6.4:
-  version "4.7.3"
-  resolved "https://registry.npmjs.org/react-native-vision-camera/-/react-native-vision-camera-4.7.3.tgz"
-  integrity sha512-g1/neOyjSqn1kaAa2FxI/qp5KzNvPcF0bnQw6NntfbxH6tm0+8WFZszlgb5OV+iYlB6lFUztCbDtyz5IpL47OA==
-
-react-native-worklets-core@*, react-native-worklets-core@^1.6.3:
+react-native-worklets-core@^1.6.3:
   version "1.6.3"
   resolved "https://registry.npmjs.org/react-native-worklets-core/-/react-native-worklets-core-1.6.3.tgz"
   integrity sha512-r3Q40XQBccx/iAI5tlyiua+micvO1UGzzUOskNweZUXyfrrE+rb5aqxqruBPqXf90rO+bBiplylLMEAXCLTyGA==
   dependencies:
     string-hash-64 "^1.0.3"
 
-react-native-worklets@>=0.7.0:
+react-native-worklets@^0.7.4, react-native-worklets@>=0.7.0:
   version "0.7.4"
   resolved "https://registry.npmjs.org/react-native-worklets/-/react-native-worklets-0.7.4.tgz"
   integrity sha512-NYOdM1MwBb3n+AtMqy1tFy3Mn8DliQtd8sbzAVRf9Gc+uvQ0zRfxN7dS8ZzoyX7t6cyQL5THuGhlnX+iFlQTag==

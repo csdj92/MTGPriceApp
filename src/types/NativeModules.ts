@@ -15,6 +15,22 @@ interface LiveOcrType {
   getPreviewSize: () => Promise<{ width: number; height: number }>;
 }
 
+export interface NormalizedRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface LiveOcrFrameEvent {
+  frameWidth: number;
+  frameHeight: number;
+  aoi: NormalizedRect;
+  candidateBox: NormalizedRect | null;
+  confidence: number;
+  state: 'none' | 'searching' | 'locked';
+}
+
 interface LiveOcrNativeModules {
   LiveOcr: LiveOcrType;
 }

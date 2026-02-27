@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 import { Logger } from '../utils/logger';
 
 // Enable SQLite debugging in development
-SQLite.DEBUG(true);
+SQLite.DEBUG(false);
 SQLite.enablePromise(true);
 
 export interface DatabaseConfig {
@@ -206,6 +206,7 @@ class DatabaseInitializer {
       // Check if schema is already initialized
       if (this.databases['lorcana']?.schemaInitialized) {
         Logger.info('[DatabaseInitializer] Lorcana schema already initialized, skipping table creation');
+        await this.ensureLorcanaIndices(db);
         return;
       }
 
@@ -214,6 +215,8 @@ class DatabaseInitializer {
       if (schemaCheck) {
         Logger.info('[DatabaseInitializer] Lorcana tables already exist, skipping creation');
         this.databases['lorcana'].schemaInitialized = true;
+        await this.ensureLorcanaIndices(db);
+        await this.ensureLorcanaDecksSchema(db);
         return;
       }
 
@@ -453,6 +456,22 @@ class DatabaseInitializer {
         await db.executeSql('ALTER TABLE lorcana_collection_cards ADD COLUMN quantity_foil INTEGER DEFAULT 0');
       }
 
+      // Lorcana sets table (set metadata from Lorcast API)
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_sets (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL,
+          set_number INTEGER,
+          released_at TEXT,
+          card_count INTEGER,
+          total_cards_in_db INTEGER DEFAULT 0,
+          last_imported_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );`);
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_sets_code ON lorcana_sets(code);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_sets_number ON lorcana_sets(set_number);');
+
       // Lorcana card prices table
       await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_card_prices (
           card_id TEXT PRIMARY KEY NOT NULL,
@@ -463,18 +482,94 @@ class DatabaseInitializer {
           FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
         );`);
 
+      // Lorcana import history table (audit trail for card imports)
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_import_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          import_type TEXT NOT NULL,
+          set_code TEXT,
+          started_at TEXT NOT NULL,
+          completed_at TEXT,
+          status TEXT NOT NULL,
+          cards_added INTEGER DEFAULT 0,
+          cards_updated INTEGER DEFAULT 0,
+          cards_skipped INTEGER DEFAULT 0,
+          total_cards INTEGER DEFAULT 0,
+          error_message TEXT,
+          created_at TEXT NOT NULL
+        );`);
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_import_history_started ON lorcana_import_history(started_at DESC);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_import_history_set ON lorcana_import_history(set_code);');
+
+      // API fetch timestamp cache
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_card_api_timestamps (
+          card_id TEXT PRIMARY KEY NOT NULL,
+          last_fetched_timestamp INTEGER NOT NULL
+        );`);
+
+      // Decks table
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_decks (
+          id TEXT PRIMARY KEY NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          card_count INTEGER DEFAULT 0,
+          total_value REAL DEFAULT 0
+        );`);
+
+      // Deck cards table
+      await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_deck_cards (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          deck_id TEXT NOT NULL,
+          card_id TEXT NOT NULL,
+          quantity INTEGER DEFAULT 1,
+          added_at TEXT NOT NULL,
+          FOREIGN KEY (deck_id) REFERENCES lorcana_decks(id) ON DELETE CASCADE,
+          FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
+        );`);
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_deck_cards_deck_id ON lorcana_deck_cards(deck_id);');
+      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_deck_cards_card_id ON lorcana_deck_cards(card_id);');
+
       // Create indices for better performance
-      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_name ON lorcana_cards(Name);');
-      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_unique_id ON lorcana_cards(Unique_ID);');
-      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_collection_id ON lorcana_collection_cards(collection_id);');
-      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_card_id ON lorcana_collection_cards(card_id);');
-      await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_card_prices_card_id ON lorcana_card_prices(card_id);');
+      await this.ensureLorcanaIndices(db);
 
       Logger.info('[DatabaseInitializer] Lorcana tables created successfully');
     } catch (error) {
       Logger.error('[DatabaseInitializer] Error creating Lorcana tables', error);
       throw error;
     }
+  }
+
+  private static async ensureLorcanaDecksSchema(db: SQLite.SQLiteDatabase): Promise<void> {
+    await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_decks (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        card_count INTEGER DEFAULT 0,
+        total_value REAL DEFAULT 0
+      );`);
+    await db.executeSql(`CREATE TABLE IF NOT EXISTS lorcana_deck_cards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        deck_id TEXT NOT NULL,
+        card_id TEXT NOT NULL,
+        quantity INTEGER DEFAULT 1,
+        added_at TEXT NOT NULL,
+        FOREIGN KEY (deck_id) REFERENCES lorcana_decks(id) ON DELETE CASCADE,
+        FOREIGN KEY (card_id) REFERENCES lorcana_cards(Unique_ID) ON DELETE CASCADE
+      );`);
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_deck_cards_deck_id ON lorcana_deck_cards(deck_id);');
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_deck_cards_card_id ON lorcana_deck_cards(card_id);');
+  }
+
+  private static async ensureLorcanaIndices(db: SQLite.SQLiteDatabase): Promise<void> {
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_name ON lorcana_cards(Name);');
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_set_id ON lorcana_cards(Set_ID);');
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_unique_id ON lorcana_cards(Unique_ID);');
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_collection_id ON lorcana_collection_cards(collection_id);');
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_collection_cards_card_id ON lorcana_collection_cards(card_id);');
+    await db.executeSql('CREATE INDEX IF NOT EXISTS idx_lorcana_card_prices_card_id ON lorcana_card_prices(card_id);');
   }
 
   /**

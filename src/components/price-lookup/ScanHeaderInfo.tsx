@@ -1,21 +1,20 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import type { VerificationStatus } from '../../services/CardProcessingService';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const Icon = MaterialCommunityIcons as any;
 
 export type ScanHeaderInfoProps = {
   isLorcanaScan: boolean;
-  verificationStatus?: VerificationStatus;
+  isVerifying?: boolean;
   scannedCardsCount?: number;
   totalPrice?: number;
   onClose?: () => void;
 };
 
-const ScanHeaderInfo: React.FC<ScanHeaderInfoProps> = ({ 
-  isLorcanaScan, 
-  verificationStatus,
+const ScanHeaderInfo: React.FC<ScanHeaderInfoProps> = ({
+  isLorcanaScan,
+  isVerifying,
   scannedCardsCount,
   totalPrice,
   onClose
@@ -26,7 +25,7 @@ const ScanHeaderInfo: React.FC<ScanHeaderInfoProps> = ({
         <Text style={styles.text}>
           {isLorcanaScan ? 'Scanning for Lorcana Cards' : 'Scanning for MTG Cards'}
         </Text>
-        {verificationStatus?.isVerifying && (
+        {isVerifying && (
           <Text style={styles.verifyingText}>Verifying card...</Text>
         )}
         {typeof scannedCardsCount === 'number' && (

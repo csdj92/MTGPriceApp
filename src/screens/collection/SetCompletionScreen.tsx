@@ -172,7 +172,6 @@ const SetCompletionScreen: React.FC<SetCompletionScreenProps> = ({ navigation })
                 console.log('[SetCompletionScreen] Lorcana initialized, calling getLorcanaSetCollections...');
                 try {
                     const lorcanaData = await getLorcanaSetCollections(forceRefresh);
-                    console.log('[SetCompletionScreen] ----------------Lorcana data-----------------------:', lorcanaData);
                     const mappedCollections = lorcanaData?.map(c => ({
                         ...c,
                         cardCount: c.collectedCards

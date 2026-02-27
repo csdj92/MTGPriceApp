@@ -3,10 +3,7 @@ import {
   View,
   StyleSheet,
   Text,
-  NativeModules,
-  NativeEventEmitter,
   PermissionsAndroid,
-  Dimensions,
   Platform,
   ToastAndroid,
   TouchableOpacity,
@@ -15,11 +12,12 @@ import {
   SafeAreaView,
   ActivityIndicator,
   FlatList,
+  type LayoutChangeEvent,
 } from 'react-native';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { OcrResult } from '../types/card';
 import type { LorcanaCard } from '../types/lorcana';
-import { LiveOcrModule } from '../types/NativeModules';
+import type { LiveOcrFrameEvent, NormalizedRect } from '../types/NativeModules';
 import { CameraService } from '../services/CameraService';
 import { Logger } from '../utils/logger';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -28,7 +26,7 @@ import FastImage from '@d11/react-native-fast-image';
 
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 
-const liveOcrEmitter = LiveOcrModule ? new NativeEventEmitter(NativeModules.LiveOcr) : null;
+type TrackingState = 'none' | 'searching' | 'locked';
 
 export type CardScannerProps = {
   onScan: (result: OcrResult) => Promise<void>;
@@ -36,7 +34,11 @@ export type CardScannerProps = {
   isLorcanaScan: boolean;
   scannedCards: any[];
   totalPrice: number;
-  onCardPress: (card: any) => void;
+  onCardPress?: (card: any) => void;
+  onRemoveCard?: (id: string) => void;
+  onToggleFoil?: (id: string) => void;
+  onIncrementCard?: (id: string) => void;
+  onDecrementCard?: (id: string) => void;
   isPaused: boolean;
   cardVariations: LorcanaCard[];
   onVariationSelect: (card: LorcanaCard) => void;
@@ -51,6 +53,10 @@ const CardScanner: React.FC<CardScannerProps> = ({
   scannedCards,
   totalPrice,
   onCardPress,
+  onRemoveCard,
+  onToggleFoil,
+  onIncrementCard,
+  onDecrementCard,
   isPaused,
   cardVariations,
   onVariationSelect,
@@ -59,60 +65,152 @@ const CardScanner: React.FC<CardScannerProps> = ({
 }) => {
   const [hasPermission, setHasPermission] = useState(false);
   const [isActive, setIsActive] = useState(false);
-  const [aspectRatioStyle, setAspectRatioStyle] = useState({});
-  const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null);
   const [selectedCard, setSelectedCard] = useState<LorcanaCard | null>(null);
   const [cardModalVisible, setCardModalVisible] = useState(false);
   const [isRecentCardsCollapsed, setIsRecentCardsCollapsed] = useState(false);
   const [showingVariations, setShowingVariations] = useState(false);
   const [isFoilSelected, setIsFoilSelected] = useState(false);
+  const [trackedCardRect, setTrackedCardRect] = useState<NormalizedRect | null>(null);
+  const [trackingState, setTrackingState] = useState<TrackingState>('none');
+  const [trackingConfidence, setTrackingConfidence] = useState(0);
+  const effectivePaused = isPaused || cardModalVisible;
+  const isPausedRef = useRef(isPaused);
+  const onScanRef = useRef(onScan);
+  const isLorcanaScanRef = useRef(isLorcanaScan);
+  const previewLayoutRef = useRef({ width: 0, height: 0 });
 
-  const emitter = liveOcrEmitter;
-  const eventName = 'LiveOcrResult';
+  const sanitizeNormalizedRect = (rect: Partial<NormalizedRect> | null | undefined): NormalizedRect | null => {
+    if (
+      !rect ||
+      typeof rect.x !== 'number' ||
+      typeof rect.y !== 'number' ||
+      typeof rect.w !== 'number' ||
+      typeof rect.h !== 'number'
+    ) {
+      return null;
+    }
+
+    const x = Math.max(0, Math.min(1, rect.x));
+    const y = Math.max(0, Math.min(1, rect.y));
+    const w = Math.max(0, Math.min(1 - x, rect.w));
+    const h = Math.max(0, Math.min(1 - y, rect.h));
+    if (w <= 0 || h <= 0) return null;
+    return { x, y, w, h };
+  };
+
+  const mapRectThroughPreviewCenterCrop = (
+    rect: Partial<NormalizedRect> | null | undefined,
+    frameWidth: number,
+    frameHeight: number
+  ): NormalizedRect | null => {
+    const sanitized = sanitizeNormalizedRect(rect);
+    if (!sanitized) return null;
+
+    const layout = previewLayoutRef.current;
+    if (
+      layout.width <= 0 ||
+      layout.height <= 0 ||
+      !Number.isFinite(frameWidth) ||
+      !Number.isFinite(frameHeight) ||
+      frameWidth <= 0 ||
+      frameHeight <= 0
+    ) {
+      return sanitized;
+    }
+
+    // Camera preview uses center-crop (FILL_CENTER); map sensor-normalized boxes into the cropped viewport.
+    const sourceWidth = Math.min(frameWidth, frameHeight);
+    const sourceHeight = Math.max(frameWidth, frameHeight);
+    const scale = Math.max(layout.width / sourceWidth, layout.height / sourceHeight);
+    const scaledWidth = sourceWidth * scale;
+    const scaledHeight = sourceHeight * scale;
+    const offsetX = (scaledWidth - layout.width) / 2;
+    const offsetY = (scaledHeight - layout.height) / 2;
+
+    return sanitizeNormalizedRect({
+      x: ((sanitized.x * scaledWidth) - offsetX) / layout.width,
+      y: ((sanitized.y * scaledHeight) - offsetY) / layout.height,
+      w: (sanitized.w * scaledWidth) / layout.width,
+      h: (sanitized.h * scaledHeight) / layout.height,
+    });
+  };
+
+  const isVisuallyReliableLock = (rect: NormalizedRect | null, confidence: number): boolean => {
+    if (!rect || confidence < 0.72) return false;
+    const area = rect.w * rect.h;
+    return rect.w >= 0.30 && rect.h >= 0.45 && area >= 0.14;
+  };
+
+  const handlePreviewLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    previewLayoutRef.current = { width, height };
+  }, []);
+
+  useEffect(() => {
+    isPausedRef.current = effectivePaused;
+  }, [effectivePaused]);
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  useEffect(() => {
+    isLorcanaScanRef.current = isLorcanaScan;
+  }, [isLorcanaScan]);
 
   useEffect(() => {
     checkPermission();
 
-    const subscription = emitter?.addListener(eventName, (event: any) => {
-      if (!isPaused) {
+    const subscription = CameraService.addOcrListener((event: any) => {
+      if (!isPausedRef.current) {
         if (event.text) {
           handleTextDetected(event);
         }
       }
     });
 
-    const sizeSubscription = emitter?.addListener('PreviewSize', (event: any) => {
-      const { width, height } = event;
-      setPreviewSize({ width, height });
-      updateAspectRatio(width, height);
+    const sizeSubscription = CameraService.addPreviewSizeListener((event: any) => {
+      // Kept for native->JS synchronization; guide alignment uses frame telemetry + layout.
     });
 
-    const dimensionsListener = Dimensions.addEventListener('change', ({ window }) => {
-      if (previewSize) {
-        updateAspectRatio(previewSize.width, previewSize.height);
-      }
+    const frameSubscription = CameraService.addOcrFrameListener((event: LiveOcrFrameEvent) => {
+      if (!event || isPausedRef.current) return;
+
+      const nextState: TrackingState =
+        event.state === 'locked' || event.state === 'searching' ? event.state : 'none';
+      const nextRect = mapRectThroughPreviewCenterCrop(event.candidateBox, event.frameWidth, event.frameHeight);
+      const nextConfidence =
+        typeof event.confidence === 'number' ? Math.max(0, Math.min(1, event.confidence)) : 0;
+      const downgradedState: TrackingState =
+        nextState === 'locked' && !isVisuallyReliableLock(nextRect, nextConfidence)
+          ? 'searching'
+          : nextState;
+
+      setTrackingState(downgradedState);
+      setTrackingConfidence(nextConfidence);
+      setTrackedCardRect(downgradedState === 'none' ? null : nextRect);
     });
 
     return () => {
       subscription?.remove();
       sizeSubscription?.remove();
-      dimensionsListener.remove();
+      frameSubscription?.remove();
       setIsActive(false);
       stopSession().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPaused]);
+  }, []);
 
   useEffect(() => {
-    if (previewSize) {
-      updateAspectRatio(previewSize.width, previewSize.height);
-    }
-  }, [previewSize]);
+    CameraService.setLorcanaScanMode(isLorcanaScan).catch((error) => {
+      Logger.error('Failed to set Lorcana scan mode:', error);
+    });
+  }, [isLorcanaScan]);
 
   // Add useEffect to handle pause state changes
   useEffect(() => {
     const handlePauseStateChange = async () => {
-      if (isPaused) {
+      if (effectivePaused) {
         // If we're paused and active, temporarily stop processing
         if (isActive) {
           try {
@@ -131,10 +229,10 @@ const CardScanner: React.FC<CardScannerProps> = ({
           showErrorToast('Failed to resume camera');
         }
       }
-    };
+  };
 
     handlePauseStateChange();
-  }, [isPaused, isActive]);
+  }, [effectivePaused, isActive]);
 
   // Handle card press - either use the passed handler or show our own modal
   const handleCardPress = useCallback((card: LorcanaCard) => {
@@ -155,6 +253,31 @@ const CardScanner: React.FC<CardScannerProps> = ({
     setCardModalVisible(false);
     setTimeout(() => setSelectedCard(null), 300); // Clear after animation
   }, []);
+
+  const getCardActionId = useCallback((card: any): string | null => {
+    const rawId =
+      card?.id ??
+      card?.Unique_ID ??
+      card?.uuid ??
+      card?.card?.uuid ??
+      card?.card?.Unique_ID;
+    if (typeof rawId !== 'string') return null;
+    const trimmed = rawId.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }, []);
+
+  useEffect(() => {
+    if (!cardModalVisible || !selectedCard) return;
+    const selectedId = getCardActionId(selectedCard);
+    if (!selectedId) return;
+
+    const latest = scannedCards?.find((item) => getCardActionId(item) === selectedId);
+    if (latest && latest !== selectedCard) {
+      setSelectedCard(latest);
+    } else if (!latest) {
+      closeCardModal();
+    }
+  }, [cardModalVisible, selectedCard, scannedCards, getCardActionId, closeCardModal]);
 
   // Toggle recent cards collapsed state
   const toggleRecentCardsCollapse = useCallback(() => {
@@ -452,6 +575,41 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
     // Get the appropriate image URL with our helper function
     const imageUrl = getLorcanaImageUrl(selectedCard);
+    const cardActionId = getCardActionId(selectedCard);
+    const normalCount = Number.isFinite(Number((selectedCard as any).normalCount))
+      ? Math.max(0, Math.trunc(Number((selectedCard as any).normalCount)))
+      : 0;
+    const foilCount = Number.isFinite(Number((selectedCard as any).foilCount))
+      ? Math.max(0, Math.trunc(Number((selectedCard as any).foilCount)))
+      : 0;
+    const totalCount = normalCount + foilCount;
+    const isFoilActive = Boolean((selectedCard as any).isFoil);
+    const setDisplay =
+      (selectedCard as any).Set_Name ||
+      (selectedCard as any).set_name ||
+      (selectedCard as any).setName ||
+      (selectedCard as any).Set_ID ||
+      (selectedCard as any).set_id ||
+      (selectedCard as any).setCode ||
+      (selectedCard as any).card?.setCode ||
+      'Unknown';
+    const setCodeDisplay =
+      (selectedCard as any).setCode ||
+      (selectedCard as any).Set_ID ||
+      (selectedCard as any).set_id ||
+      (selectedCard as any).card?.setCode ||
+      null;
+    const explicitNumber =
+      (selectedCard as any).Card_Num ??
+      (selectedCard as any).card_num ??
+      (selectedCard as any).collectorNumber ??
+      (selectedCard as any).card?.cardNumber ??
+      null;
+    const parsedCollectorFromId =
+      explicitNumber == null && cardActionId
+        ? cardActionId.match(/-(\d{1,3})$/)?.[1] ?? null
+        : null;
+    const numberDisplay = explicitNumber ?? parsedCollectorFromId ?? 'Unknown';
 
     // Log the image URL for debugging
     if (__DEV__) {
@@ -476,13 +634,20 @@ const CardScanner: React.FC<CardScannerProps> = ({
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
+            <ScrollView
+              style={styles.modalBody}
+              contentContainerStyle={styles.modalBodyContent}
+              showsVerticalScrollIndicator
+              keyboardShouldPersistTaps="handled"
+            >
               <View style={styles.cardImageContainer}>
-                <CardImage
-                  uri={imageUrl}
-                  name={selectedCard.Name || selectedCard.name}
-                  previewMode={false}
-                />
+                <View style={styles.modalCardImageFrame}>
+                  <CardImage
+                    uri={imageUrl}
+                    name={selectedCard.Name || selectedCard.name}
+                    previewMode={false}
+                  />
+                </View>
               </View>
 
               <View style={styles.cardDetailsSection}>
@@ -495,12 +660,15 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Set:</Text>
-                  <Text style={styles.detailValue}>{selectedCard.Set_Name || selectedCard.set_name}</Text>
+                  <Text style={styles.detailValue}>
+                    {setDisplay}
+                    {setCodeDisplay ? ` (${setCodeDisplay})` : ''}
+                  </Text>
                 </View>
 
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Number:</Text>
-                  <Text style={styles.detailValue}>{selectedCard.Card_Num || selectedCard.card_num}</Text>
+                  <Text style={styles.detailValue}>{numberDisplay}</Text>
                 </View>
 
                 {(selectedCard.Rarity || selectedCard.rarity) && (
@@ -522,6 +690,115 @@ const CardScanner: React.FC<CardScannerProps> = ({
                   <Text style={[styles.detailValue, styles.priceText]}>
                     ${selectedCard.price_usd_foil ? parseFloat(selectedCard.price_usd_foil.toString()).toFixed(2) : (selectedCard.prices?.usd_foil ? parseFloat(selectedCard.prices.usd_foil).toFixed(2) : 'N/A')}
                   </Text>
+                </View>
+
+                {totalCount > 0 && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Scanned Qty:</Text>
+                    <Text style={styles.detailValue}>
+                      {totalCount} (Normal {normalCount} / Foil {foilCount})
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.modalActionsSection}>
+                  <View style={styles.modalActionsRow}>
+                    <TouchableOpacity
+                      style={[
+                        styles.modalActionButton,
+                        styles.modalActionSecondary,
+                        (!cardActionId || !onDecrementCard) && styles.modalActionDisabled,
+                      ]}
+                      disabled={!cardActionId || !onDecrementCard}
+                      onPress={() => {
+                        if (cardActionId && onDecrementCard) {
+                          onDecrementCard(cardActionId);
+                          setSelectedCard((prev: any) => {
+                            if (!prev) return prev;
+                            const prevNormal = Number(prev.normalCount) || 0;
+                            return { ...prev, normalCount: Math.max(0, prevNormal - 1) };
+                          });
+                        }
+                      }}
+                    >
+                      <Icon name="minus" size={16} color="#fff" />
+                      <Text style={styles.modalActionText}>-1</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.modalActionButton,
+                        styles.modalActionPrimary,
+                        (!cardActionId || !onIncrementCard) && styles.modalActionDisabled,
+                      ]}
+                      disabled={!cardActionId || !onIncrementCard}
+                      onPress={() => {
+                        if (cardActionId && onIncrementCard) {
+                          onIncrementCard(cardActionId);
+                          setSelectedCard((prev: any) => {
+                            if (!prev) return prev;
+                            const prevNormal = Number(prev.normalCount) || 0;
+                            return { ...prev, normalCount: prevNormal + 1 };
+                          });
+                        }
+                      }}
+                    >
+                      <Icon name="plus" size={16} color="#fff" />
+                      <Text style={styles.modalActionText}>+1</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.modalActionButton,
+                        isFoilActive ? styles.modalActionFoilActive : styles.modalActionFoil,
+                        (!cardActionId || !onToggleFoil) && styles.modalActionDisabled,
+                      ]}
+                      disabled={!cardActionId || !onToggleFoil}
+                      onPress={() => {
+                        if (cardActionId && onToggleFoil) {
+                          onToggleFoil(cardActionId);
+                          setSelectedCard((prev: any) => {
+                            if (!prev) return prev;
+                            const prevNormal = Number(prev.normalCount) || 0;
+                            const prevFoil = Number(prev.foilCount) || 0;
+                            const nextIsFoil = !Boolean(prev.isFoil);
+                            return {
+                              ...prev,
+                              isFoil: nextIsFoil,
+                              normalCount: nextIsFoil ? Math.max(0, prevNormal - 1) : prevNormal + 1,
+                              foilCount: nextIsFoil ? prevFoil + 1 : Math.max(0, prevFoil - 1),
+                            };
+                          });
+                        }
+                      }}
+                    >
+                      <Icon name="star" size={16} color="#fff" />
+                      <Text style={styles.modalActionText}>
+                        {isFoilActive ? 'Foil On' : 'Foil Off'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalActionButton,
+                      styles.modalActionDanger,
+                      styles.modalActionDangerFull,
+                      (!cardActionId || !onRemoveCard) && styles.modalActionDisabled,
+                    ]}
+                    disabled={!cardActionId || !onRemoveCard}
+                    onPress={() => {
+                      if (cardActionId && onRemoveCard) {
+                        onRemoveCard(cardActionId);
+                        closeCardModal();
+                      }
+                    }}
+                  >
+                    <Icon name="trash-can-outline" size={16} color="#fff" />
+                    <Text style={styles.modalActionText}>Remove Card</Text>
+                  </TouchableOpacity>
+                  {!cardActionId && (
+                    <Text style={styles.modalActionHint}>
+                      Actions unavailable: missing card id
+                    </Text>
+                  )}
                 </View>
 
                 {(selectedCard.Body_Text || selectedCard.body_text) && (
@@ -547,47 +824,17 @@ const CardScanner: React.FC<CardScannerProps> = ({
         </SafeAreaView>
       </Modal>
     );
-  }, [selectedCard, cardModalVisible, closeCardModal]);
-
-  const updateAspectRatio = (previewWidth: number, previewHeight: number) => {
-    const screen = Dimensions.get('window');
-    const screenWidth = screen.width;
-    const screenHeight = screen.height;
-
-    const previewAspectRatio = previewWidth / previewHeight;
-    const screenAspectRatio = screenWidth / screenHeight;
-
-    let scale: number;
-    let scaledWidth: number;
-    let scaledHeight: number;
-    let horizontalOffset: number;
-    let verticalOffset: number;
-
-    if (previewAspectRatio > screenAspectRatio) {
-        // Preview is wider than screen
-        scale = screenHeight / previewHeight;
-        scaledWidth = previewWidth * scale;
-        scaledHeight = screenHeight;
-        horizontalOffset = (screenWidth - scaledWidth) / 2;
-        verticalOffset = 0;
-    } else {
-        // Preview is taller or equal to screen
-        scale = screenWidth / previewWidth;
-        scaledWidth = screenWidth;
-        scaledHeight = previewHeight * scale;
-        horizontalOffset = 0;
-        verticalOffset = (screenHeight - scaledHeight) / 2;
-    }
-
-    const newStyle = {
-        position: 'absolute' as const,
-        width: scaledWidth,
-        height: scaledHeight,
-        left: horizontalOffset,
-        top: verticalOffset,
-    };
-    setAspectRatioStyle(newStyle);
-  };
+  }, [
+    selectedCard,
+    cardModalVisible,
+    closeCardModal,
+    getCardActionId,
+    onDecrementCard,
+    onIncrementCard,
+    onToggleFoil,
+    onRemoveCard,
+    scannedCards,
+  ]);
 
   const checkPermission = async () => {
     try {
@@ -618,8 +865,13 @@ const CardScanner: React.FC<CardScannerProps> = ({
     try {
       Logger.debug('CardScanner: Starting camera session');
       await CameraService.startOcrSession();
+      await CameraService.setLorcanaScanMode(isLorcanaScanRef.current);
       const { width, height } = await CameraService.getPreviewSize();
-      updateAspectRatio(width, height);
+      if (width > 0 && height > 0) {
+        Logger.debug(`CardScanner: Preview size available ${width}x${height}`);
+      } else {
+        Logger.debug('CardScanner: Waiting for native preview size event');
+      }
       setIsActive(true);
     } catch (error: any) {
       Logger.error('Failed to start camera session:', error);
@@ -652,11 +904,17 @@ const CardScanner: React.FC<CardScannerProps> = ({
       text: result.text,
       mainName: result.mainName || result.text,
       subtype: result.subtype || '',
-      isLorcana: isLorcanaScan,
+      isLorcana: isLorcanaScanRef.current,
       setCode: result.setCode || null,
-      cardNumber: result.cardNumber || null
+      cardNumber: result.cardNumber || null,
+      setNumber:
+        typeof result.setNumber === 'number'
+          ? result.setNumber
+          : result.setNumber != null
+            ? Number(result.setNumber)
+            : null,
     };
-    onScan(ocrResult);
+    onScanRef.current(ocrResult);
   };
 
   if (!hasPermission) {
@@ -669,17 +927,47 @@ const CardScanner: React.FC<CardScannerProps> = ({
 
   return (
     <View style={styles.container}>
-      <View style={[styles.previewContainer, aspectRatioStyle]}>
+      <View style={styles.previewContainer} onLayout={handlePreviewLayout}>
         <LiveOcrPreviewWithOverlay 
           style={StyleSheet.absoluteFill} 
-          isActive={isActive && !isPaused}
+          isActive={isActive && !effectivePaused}
         />
-        {isPaused && !showingVariations && (
+        {trackedCardRect ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.dynamicGuide,
+              trackingState === 'locked' ? styles.dynamicGuideLocked : styles.dynamicGuideSearching,
+              {
+                left: `${trackedCardRect.x * 100}%`,
+                top: `${trackedCardRect.y * 100}%`,
+                width: `${trackedCardRect.w * 100}%`,
+                height: `${trackedCardRect.h * 100}%`,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.guideBadge,
+                trackingState === 'locked' ? styles.guideBadgeLocked : styles.guideBadgeSearching,
+              ]}
+            >
+              <Text style={styles.guideBadgeText}>
+                {trackingState === 'locked'
+                  ? `Card Locked ${Math.round(trackingConfidence * 100)}%`
+                  : 'Finding card...'}
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View pointerEvents="none" style={styles.staticGuideFallback} />
+        )}
+        {effectivePaused && !showingVariations && (
           <View style={styles.pausedOverlay}>
             <Text style={styles.pausedText}>Camera Paused</Text>
           </View>
         )}
-        {isPaused && showingVariations && (
+        {effectivePaused && showingVariations && (
           <View style={styles.pausedOverlayWithVariations}>
             <Text style={styles.pausedText}>Please select a card version</Text>
             <Icon 
@@ -716,6 +1004,55 @@ const styles = StyleSheet.create({
     color: 'white',
     textAlign: 'center',
     padding: 16,
+  },
+  staticGuideFallback: {
+    position: 'absolute',
+    left: '5%',
+    top: '10%',
+    width: '90%',
+    height: '60%',
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 215, 0, 0.05)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+    zIndex: 4,
+  },
+  dynamicGuide: {
+    position: 'absolute',
+    borderWidth: 2.5,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    zIndex: 6,
+  },
+  dynamicGuideSearching: {
+    borderColor: '#FFC107',
+  },
+  dynamicGuideLocked: {
+    borderColor: '#4CAF50',
+  },
+  guideBadge: {
+    position: 'absolute',
+    top: 6,
+    alignSelf: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  guideBadgeSearching: {
+    backgroundColor: 'rgba(255, 193, 7, 0.9)',
+  },
+  guideBadgeLocked: {
+    backgroundColor: 'rgba(76, 175, 80, 0.92)',
+  },
+  guideBadgeText: {
+    color: '#111',
+    fontSize: 11,
+    fontWeight: '700',
   },
   // Stats bubble styles
   statsBubbleContainer: {
@@ -835,7 +1172,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 5,
+    zIndex: 10,
   },
   pausedOverlayWithVariations: {
     position: 'absolute',
@@ -846,7 +1183,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 5,
+    zIndex: 10,
   },
   pausedText: {
     color: '#fff',
@@ -869,7 +1206,9 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: '90%',
+    height: '90%',
     maxHeight: '90%',
+    minHeight: 520,
     backgroundColor: '#212121',
     borderRadius: 16,
     overflow: 'hidden',
@@ -898,11 +1237,19 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   modalBody: {
+    flex: 1,
+  },
+  modalBodyContent: {
     padding: 16,
+    paddingBottom: 28,
   },
   cardImageContainer: {
     alignItems: 'center',
     marginBottom: 20,
+  },
+  modalCardImageFrame: {
+    width: 240,
+    height: 336,
   },
   cardDetailImage: {
     width: 240,
@@ -959,6 +1306,60 @@ const styles = StyleSheet.create({
   priceText: {
     color: '#4FC3F7',
     fontWeight: 'bold',
+  },
+  modalActionsSection: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  modalActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    flex: 1,
+    marginHorizontal: 3,
+  },
+  modalActionPrimary: {
+    backgroundColor: '#2E7D32',
+  },
+  modalActionSecondary: {
+    backgroundColor: '#546E7A',
+  },
+  modalActionFoil: {
+    backgroundColor: '#6A1B9A',
+  },
+  modalActionFoilActive: {
+    backgroundColor: '#9C27B0',
+  },
+  modalActionDanger: {
+    backgroundColor: '#C62828',
+  },
+  modalActionDangerFull: {
+    width: '100%',
+  },
+  modalActionDisabled: {
+    opacity: 0.45,
+  },
+  modalActionText: {
+    color: '#fff',
+    marginLeft: 6,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  modalActionHint: {
+    color: '#B0BEC5',
+    marginTop: 8,
+    fontSize: 12,
+    textAlign: 'center',
   },
   cardTextSection: {
     marginTop: 12,

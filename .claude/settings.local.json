@@ -48,7 +48,13 @@
       "SlashCommand(/ralph-wiggum:ralph-loop \"Really look at the flow of the different functions and see how things could be made better. Focus on code architecture, data flow, service design, component structure, and opportunities for improvement in maintainability and performance. When you've completed a comprehensive review and created actionable recommendations, output <promise>ARCHITECTURAL REVIEW COMPLETE</promise>\" --max-iterations 15 --completion-promise \"ARCHITECTURAL REVIEW COMPLETE\")",
       "Bash(adb logcat:*)",
       "Bash(adb install:*)",
-      "Bash(adb shell:*)"
+      "Bash(adb shell:*)",
+      "Bash(npx react-native-sqlite-storage --help)",
+      "Bash(claude mcp:*)",
+      "Bash(cd:*)",
+      "mcp__plugin_serena_serena__list_dir",
+      "Bash(node:*)",
+      "Bash(tail:*)"
     ],
     "deny": [],
     "ask": []

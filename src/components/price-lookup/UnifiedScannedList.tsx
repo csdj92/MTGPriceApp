@@ -34,9 +34,13 @@ const UnifiedScannedList: React.FC<UnifiedScannedListProps> = ({
   const renderItem = ({ item }: { item: ScannedItem }) => {
     const cardId = item.id;
     const isNew = newToCollectionCards.has(cardId);
+    const normalPrice = Number(item.prices?.usd ?? 0) || 0;
+    const foilPrice = Number(item.prices?.usd_foil ?? item.prices?.usdFoil ?? item.prices?.usd ?? 0) || 0;
+    const totalCopies = item.normalCount + item.foilCount;
+    const lineTotal = (normalPrice * item.normalCount) + (foilPrice * item.foilCount);
 
     return (
-      <TouchableOpacity style={styles.cardItem} onPress={() => onSelectCard(item)}>
+      <TouchableOpacity style={[styles.cardItem, isNew && styles.newCardItem]} onPress={() => onSelectCard(item)}>
         <Image source={{ uri: item.imageUrl }} style={styles.cardImage} />
         {isNew && <NewToCollectionLabel setCode={item.setCode} />}
         <View style={styles.cardInfo}>
@@ -46,8 +50,11 @@ const UnifiedScannedList: React.FC<UnifiedScannedListProps> = ({
           <Text style={styles.cardDetails}>
             {item.setCode}
           </Text>
+          <Text style={styles.cardDetails}>
+            Normal: {item.normalCount} • Foil: {item.foilCount}
+          </Text>
           <Text style={styles.cardPrice}>
-            {''}
+            ${lineTotal.toFixed(2)} ({totalCopies}x)
           </Text>
         </View>
         <TouchableOpacity style={styles.removeButton} onPress={() => onRemoveCard(cardId, 'Lorcana')}>
@@ -90,6 +97,10 @@ const styles = StyleSheet.create({
         shadowRadius: 4,
         elevation: 3,
         alignItems: 'center',
+      },
+      newCardItem: {
+        borderWidth: 1,
+        borderColor: '#4CAF50',
       },
       cardImage: {
         width: 60,

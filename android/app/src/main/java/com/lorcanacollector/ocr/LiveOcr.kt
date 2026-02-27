@@ -2,22 +2,30 @@ package com.lorcanacollector.ocr
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.ImageFormat
+import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.YuvImage
-import android.hardware.camera2.*
 import android.media.Image
-import android.media.ImageReader
-import android.os.Handler
-import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
-import android.view.Surface
-import android.view.SurfaceHolder
-import android.widget.Toast
+import androidx.camera.core.Camera
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
 import com.facebook.react.bridge.*
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -28,8 +36,6 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
-import java.util.concurrent.Semaphore
-import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -42,84 +48,52 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     companion object {
         private const val TAG = "LiveOcr"
         const val NAME = "LiveOcr"
+        private const val PREVIEW_READY_RETRY_DELAY_MS = 40L
+        private const val MAX_PREVIEW_READY_RETRIES = 25
 
         // Limits and AOI configuration
-        private const val MAX_IMAGES = 2              // ML Kit recommendation for backpressure
         private const val COOLDOWN_MS = 2000L         // 2 seconds cooldown between scans
         private const val AOI_LEFT_PERCENT = 0.1f     // Crop 10% from the left
-        private const val AOI_TOP_PERCENT = 0.2f      // Crop 20% from the top (was 30%) - to capture more of the card
+        private const val AOI_TOP_PERCENT = 0.2f      // Crop 20% from the top
         private const val AOI_WIDTH_PERCENT = 0.8f    // Crop 80% of width
-        private const val AOI_HEIGHT_PERCENT = 0.5f   // Crop 50% of height (was 40%) - to capture more details
+        private const val AOI_HEIGHT_PERCENT = 0.5f   // Crop 50% of height
+        private const val FRAME_EVENT_INTERVAL_MS = 125L // ~8fps
+        private const val CARD_ASPECT_RATIO = 0.715f
+        private const val SEARCH_CONFIDENCE_THRESHOLD = 0.3f
+        private const val LOCK_CONFIDENCE_THRESHOLD = 0.65f
+        private const val LOCK_STABLE_FRAMES = 3
+        private const val MIN_LINES_FOR_LOCK = 3
+        private const val MIN_CANDIDATE_LINES_FOR_LOCK = 2
 
-        // Pre-compile regexes to avoid repeated compilation (improves performance)
+        // ML Kit confidence thresholds
+        private const val MIN_LINE_CONFIDENCE = 0.40f
+        private const val MIN_SYMBOL_CONFIDENCE = 0.65f
+
+        // Pre-compile regexes to avoid repeated compilation.
         private val KEYWORD_FILTER = Regex(
-            "(?i)(Creature|Instant|Sorcery|Enchantment|Artifact|Land|Planeswalker|" +
-                    "Choose one|Target opponent|Legendary|Hero|Villian|" +
-                    "Action|Character|Item|Song|Dreamborn|Floodborn|Storyborn|Shift|Exert|Evasive|" +
-                    "Kicker|Flash|Wizards of the Coast|\\u2122|\\u00A9|" +
-                    "Illustrated|Set|Collector|Number|MTG|Magic|artist|token|draw|discard|" +
-                    "counter|dies|enters|destroy|exile|return|flying|" +
-                    "control|mana|tap|untap|sacrifice|blocks|deals|damage|" +
-                    "Power|Toughness|FDN|LUTFULLINA|KOVACS|PRESCOTT|VALERA|VANCE|Disney Lorcana)"
+            "(?i)(Hero|Villain|Action|Character|Item|Song|Dreamborn|Floodborn|Storyborn|" +
+                "Shift|Exert|Evasive|Illustrated|Collector|Number|Disney Lorcana|\\u2122|\\u00A9)"
         )
-        // Updated regex for Lorcana card names - more permissive to catch different formats
         private val LORCANA_NAME_REGEX = Regex("^[A-Z][A-Z\\s',\\-]+\$")
-        // Updated regex for Lorcana subtypes with more flexibility
         private val LORCANA_VERSION_REGEX = Regex("^[A-Za-z][A-Za-z\\s\\-',()]+\$")
-        // New regex for detecting Lorcana stats (e.g., "2 ⬥ | 3 ⭒")
         private val LORCANA_STATS_REGEX = Regex("^(\\d+)\\s*[⬥⭒]\\s*[|]\\s*(\\d+)\\s*[⬥⭒]\$")
-        // New regex for detecting Lorcana ink cost
         private val LORCANA_INK_COST_REGEX = Regex("^(\\d+)\\s*[⬥⭒]\$")
-        private val MTG_NAME_REGEX = Regex("^[A-Z][a-zA-Z\\s,'\\-]+\$")
-
-        // Updated regex for Set Code: matching Scryfall's set code format
-        private val SET_CODE_REGEX = Regex("^[A-Z0-9]{2,5}\$")
-        // Updated regex for Card Number with set code prefix: e.g., "LTR 123" or "LTR 123/456"
-        private val SET_AND_NUMBER_REGEX = Regex("^([A-Z0-9]{2,5})\\s*(\\d+)(?:/\\d+)?\$")
-        // Fallback regex for just card number
-        private val CARD_NUMBER_REGEX = Regex("^(?:(?:#{0,1})|(?:\\s*))?(\\d+)(?:\\s*(?:/|\\\\|of)\\s*(\\d+))?\$")
-
-        // Common set code patterns to boost confidence
-        private val COMMON_SET_CODES = setOf(
-            "MH3", "LCI", "LTR", "MOM", "ONE", "BRO", "DMU", "SNC", "NEO", "VOW", 
-            "MID", "AFR", "STX", "KHM", "ZNR", "IKO", "THB", "ELD", "WAR", "RNA", 
-            "GRN", "DOM", "RIX", "XLN", "HOU", "AKH", "AER", "KLD", "EMN", "SOI",
-            "OGW", "BFZ", "DTK", "FRF", "KTK", "JOU", "BNG", "THS", "DGM", "GTC",
-            "RTR", "AVR", "DKA", "ISD", "NPH", "MBS", "SOM", "ROE", "WWK", "ZEN",
-            "ARB", "CON", "ALA", "EVE", "SHM", "MOR", "LRW", "FUT", "PLC", "TSP",
-            "CSP", "DIS", "GPT", "RAV", "SOK", "BOK", "CHK", "5DN", "DST", "MRD",
-            "SCG", "LGN", "ONS", "JUD", "TOR", "ODY", "APC", "PLS", "INV", "PCY",
-            "NEM", "MMQ", "UDS", "ULG", "USG", "EXO", "STH", "TMP", "WTH", "VIS",
-            "MIR", "ALL", "HML", "ICE", "FEM", "DRK", "LEG", "ATQ", "ARN", "LEB",
-            "2X2", "2XM", "CLB", "SLD", "NCC", "SNC", "NEO", "VOW", "MID", "AFR",
-            "MH2", "STX", "TSR", "KHM", "CMR", "ZNR", "2XM", "JMP", "M21", "IKO", 
-            "C20", "THB", "ELD", "C19", "M20", "MH1", "WAR", "RNA", "UMA", "GRN", 
-            "C18", "M19", "BBD", "DOM", "A25", "RIX", "UST", "IMA", "XLN", "C17", 
-            "HOU", "AKH", "MM3", "AER", "C16", "KLD", "CN2", "EMN", "EMA", "SOI", 
-            "OGW", "C15", "BFZ", "ORI", "MM2", "DTK", "FRF", "C14", "KTK", "M15", 
-            "CNS", "JOU", "BNG", "C13", "THS", "M14", "MMA", "DGM", "GTC", "RTR", 
-            "M13", "AVR", "DKA", "ISD", "M12", "NPH", "MBS", "SOM", "M11", "ROE", 
-            "WWK", "ZEN", "M10", "ARB", "CON", "ALA", "EVE", "SHM", "MOR", "LRW", 
-            "10E", "FUT", "PLC", "TSP", "CSP", "DIS", "GPT", "RAV", "9ED", "SOK", 
-            "BOK", "CHK", "5DN", "DST", "MRD", "8ED", "SCG", "LGN", "ONS", "JUD", 
-            "TOR", "ODY", "7ED", "APC", "PLS", "INV", "PCY", "NEM", "MMQ", "UDS", 
-            "ULG", "USG", "EXO", "STH", "TMP", "5ED", "WTH", "VIS", "MIR", "ALL", 
-            "HML", "ICE", "4ED", "FEM", "DRK", "LEG", "3ED", "ATQ", "ARN", "2ED", 
-            "LEB", "LEA",
-            // Modern Horizons 3 specific sets
-            "DSC", "MKM", "WOE", "MOM", "MAT", "DMR", "PIP", "LCI", "LTR", "WOT"
-        )
+        private val LORCANA_COLLECTOR_REGEX =
+            Regex("^\\s*([0-9OILSZB]{1,3})\\s*[/|\\\\]\\s*([0-9OILSZB]{2,3})(?:\\s*[-•·|]?\\s*[A-Z]{2})?(?:[\\s\\-•·|.]+([1-9]\\d?))?\\s*\$")
+        private val LORCANA_COLLECTOR_LOOSE_REGEX =
+            Regex("([0-9OILSZB]{1,3})\\s*[/|\\\\]\\s*([0-9OILSZB]{2,3})(?:\\s*[-•·|]?\\s*[A-Z]{2})?(?:[\\s\\-•·|.]+([1-9]\\d?))?")
+        private val LORCANA_SET_SUFFIX_REGEX =
+            Regex("(?i)(?:\\b[A-Z]{2}\\b\\s*[-•·|.]?\\s*)([1-9]\\d?)\\s*\$")
+        private val LORCANA_TOTAL_AND_SET_REGEX =
+            Regex("(?i)(?:^|\\D)([0-9OILSZB]{2,3})\\s*[-•·|.]\\s*[A-Z]{2}\\s*([1-9]\\d?)\\s*\$")
     }
 
-    // Camera and threading properties
-    private var cameraDevice: CameraDevice? = null
-    private var captureSession: CameraCaptureSession? = null
-    private var imageReader: ImageReader? = null
-    private var backgroundHandler: Handler? = null
-    private var backgroundThread: HandlerThread? = null
-    private val cameraOpenCloseLock = Semaphore(1)
+    // CameraX properties
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var camera: Camera? = null
+    private var previewView: PreviewView? = null
+    private var previewSizeReported = false
 
-    private var previewSurface: Surface? = null
     private var isSessionActive = false
     @Volatile private var processingImage = false
     private var lastDetectedName: String? = null
@@ -136,7 +110,6 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
 
     // For movement detection
     private var lastBoundingBox: Rect? = null
-    // Adjust this threshold to make movement detection more/less sensitive.
     private val MOVEMENT_THRESHOLD = 50
 
     private var currentPreviewWidth: Int? = null
@@ -146,21 +119,28 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     private var isLorcanaScanMode = false
 
     private var currentZoomLevel = 0.0f
-    private val MAX_ZOOM_LEVEL = 5.0f  // Max zoom level, can be adjusted
-    private val ZOOM_STEP = 0.5f       // Zoom increment/decrement step
+    private val MAX_ZOOM_LEVEL = 5.0f
+    private val ZOOM_STEP = 0.5f
 
-    private var allPotentialCardNumbers: List<String>? = null  // Store all potential card numbers
+    private var smoothedCardRect: RectF? = null
+    private var stableTrackingFrames = 0
+    private var lastFrameEventTimestamp = 0L
+    private var cachedSensorOrientation: Int = 0
+
+    private data class CardTrackingFrame(
+        val rect: RectF?,
+        val confidence: Float,
+        val state: String
+    )
 
     override fun getName() = NAME
 
     override fun initialize() {
         super.initialize()
-        startBackgroundThread()
     }
 
     override fun onCatalystInstanceDestroy() {
-        stopBackgroundThread()
-        closeCamera()
+        stopCamera()
         textRecognizer.close()
         super.onCatalystInstanceDestroy()
     }
@@ -170,7 +150,9 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         try {
             if (!isSessionActive) {
                 isSessionActive = true
-                setupCameraPreview()
+                if (previewView != null) {
+                    startCamera()
+                }
             }
             promise.resolve(null)
         } catch (e: Exception) {
@@ -182,26 +164,19 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     fun stopOcrSession(promise: Promise) {
         try {
             isSessionActive = false
-            closeCamera()
+            stopCamera()
             promise.resolve(null)
         } catch (e: Exception) {
             promise.reject("OCR_ERROR", "Failed to stop OCR session", e)
         }
     }
 
-    override fun setPreviewSurface(surface: Surface?) {
-        synchronized(this) {
-            if (previewSurface == surface) {
-                return  // No change needed
-            }
-            
-            previewSurface = surface
-            if (surface != null && isSessionActive) {
-                closeCamera()  // Ensure clean state
-                setupCameraPreview()
-            } else {
-                closeCamera()
-            }
+    override fun setPreviewView(view: PreviewView?) {
+        previewView = view
+        if (view != null && isSessionActive) {
+            startCamera()
+        } else {
+            stopCamera()
         }
     }
 
@@ -229,297 +204,270 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         }
     }
 
-    /**
-     * Set up the camera preview and the ImageReader.
-     */
-    @SuppressLint("MissingPermission")
-    private fun setupCameraPreview() {
-        val manager = reactApplicationContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        try {
-            val cameraId = findBackCamera(manager) ?: throw RuntimeException("Back camera not found")
-            if (!cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
-                throw RuntimeException("Timeout waiting to lock camera opening.")
+    @ReactMethod
+    fun addListener(eventName: String) {
+        // Required for NativeEventEmitter compatibility in React Native.
+    }
+
+    @ReactMethod
+    fun removeListeners(count: Int) {
+        // Required for NativeEventEmitter compatibility in React Native.
+    }
+
+    private fun startCamera() {
+        val pv = previewView ?: run {
+            Log.e(TAG, "No PreviewView available")
+            return
+        }
+
+        // Post to UI queue and retry until the preview is attached/measured to avoid black preview race.
+        pv.post { startCameraWhenPreviewReady(0) }
+    }
+
+    private fun startCameraWhenPreviewReady(attempt: Int) {
+        if (!isSessionActive) {
+            Log.d(TAG, "startCameraWhenPreviewReady: session not active, aborting")
+            return
+        }
+
+        val pvNow = previewView ?: run {
+            Log.e(TAG, "startCameraWhenPreviewReady: previewView is null")
+            return
+        }
+
+        val attached = pvNow.isAttachedToWindow
+        val w = pvNow.width
+        val h = pvNow.height
+        val windowVis = pvNow.windowVisibility
+        val viewVis = pvNow.visibility
+
+        // Also check whether the inner SurfaceView has a valid surface
+        val sv = findSurfaceViewIn(pvNow)
+        val svAttached = sv?.isAttachedToWindow
+        val svVis = sv?.visibility
+        val svW = sv?.width
+        val svH = sv?.height
+        val svSurfaceValid = sv?.let { try { it.holder.surface.isValid } catch (e: Exception) { false } }
+
+        Log.d(TAG, "startCameraWhenPreviewReady attempt=${attempt + 1}/$MAX_PREVIEW_READY_RETRIES: " +
+                "pv attached=$attached vis=${visName(viewVis)} windowVis=${visName(windowVis)} size=${w}x${h} | " +
+                "sv attached=$svAttached vis=${svVis?.let { visName(it) }} size=${svW}x${svH} surfaceValid=$svSurfaceValid")
+
+        val isReady = attached && w > 0 && h > 0
+        if (!isReady) {
+            if (attempt >= MAX_PREVIEW_READY_RETRIES) {
+                Log.e(TAG, "PreviewView never became ready after $MAX_PREVIEW_READY_RETRIES attempts")
+                return
             }
+            pvNow.postDelayed({ startCameraWhenPreviewReady(attempt + 1) }, PREVIEW_READY_RETRY_DELAY_MS)
+            return
+        }
 
-            val characteristics = manager.getCameraCharacteristics(cameraId)
-            val streamConfigurationMap =
-                characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                    ?: throw RuntimeException("Cannot get available preview/video sizes")
+        Log.d(TAG, "PreviewView is ready — binding camera")
 
-            val previewSizes = streamConfigurationMap.getOutputSizes(SurfaceHolder::class.java)
-            Log.d(TAG, "Available preview sizes: ${
-                previewSizes.joinToString { "${it.width}x${it.height}" }
-            }")
+        val lifecycleOwner = reactApplicationContext.currentActivity as? LifecycleOwner ?: run {
+            Log.e(TAG, "No current activity for camera binding")
+            return
+        }
 
-            val displayMetrics = reactApplicationContext.resources.displayMetrics
-            val screenAspectRatio = displayMetrics.widthPixels.toFloat() / displayMetrics.heightPixels.toFloat()
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(reactApplicationContext)
+        cameraProviderFuture.addListener(Runnable {
+            try {
+                val provider = cameraProviderFuture.get()
+                cameraProvider = provider
 
-            // Prefer a larger size around 1920x1080 if possible
-            val bestPreviewSize = previewSizes
-                .filter { it.height >= 1080 || it.width >= 1920 }
-                .minByOrNull {
-                    val ratio = it.width.toFloat() / it.height.toFloat()
-                    abs(ratio - screenAspectRatio)
-                } ?: previewSizes.first()
+                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-            Log.d(TAG, "Selected preview size: ${bestPreviewSize.width}x${bestPreviewSize.height}")
-            sendPreviewSizeToReact(bestPreviewSize.width, bestPreviewSize.height)
+                val preview = Preview.Builder().build()
 
-            // Pre-capture the sensor orientation so that we can pass it along to ML Kit.
-            val sensorOrientation =
-                characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+                val imageAnalysis = ImageAnalysis.Builder()
+                    .setTargetResolution(Size(1920, 1920))
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
 
-            // Initialize the ImageReader using the preview size and format.
-            imageReader = ImageReader.newInstance(
-                bestPreviewSize.width,
-                bestPreviewSize.height,
-                ImageFormat.YUV_420_888,
-                MAX_IMAGES
-            ).apply {
-                setOnImageAvailableListener({ reader ->
-                    if (!isSessionActive || previewSurface == null || processingPaused) {
-                        reader.acquireLatestImage()?.close()
-                        return@setOnImageAvailableListener
-                    }
-                    if (processingImage) {
-                        // Drain any extra images so we do not build up a backlog.
-                        drainExtraImages(reader)
-                        return@setOnImageAvailableListener
-                    }
+                imageAnalysis.setAnalyzer(executor) { imageProxy ->
+                    analyzeFrame(imageProxy)
+                }
 
-                    processingImage = true
-                    val image = reader.acquireLatestImage()
-                    // Drain extra images (if any)
-                    drainExtraImages(reader)
+                // Surface provider set BEFORE bindToLifecycle (required by CameraX contract).
+                Log.d(TAG, "setSurfaceProvider: sv surfaceValid=${sv?.let { try { it.holder.surface.isValid } catch (e: Exception) { false } }}")
+                preview.setSurfaceProvider(pvNow.surfaceProvider)
+                provider.unbindAll()
+                camera = provider.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    preview,
+                    imageAnalysis
+                )
+                previewSizeReported = false
+                Log.d(TAG, "CameraX bound successfully; preview=${pvNow.width}x${pvNow.height}")
 
-                    if (image != null) {
-                        try {
-                            // Use different AOI settings for Lorcana cards
-                            val aoiSettings = if (isLorcanaScanMode) {
-                                // For Lorcana cards, focus more on the top portion where the name is
-                                listOf(0.1f, 0.15f, 0.8f, 0.6f)
-                            } else {
-                                // Default settings for MTG cards
-                                listOf(AOI_LEFT_PERCENT, AOI_TOP_PERCENT, AOI_WIDTH_PERCENT, AOI_HEIGHT_PERCENT)
-                            }
-                            
-                            val leftPercent = aoiSettings[0]
-                            val topPercent = aoiSettings[1]
-                            val widthPercent = aoiSettings[2]
-                            val heightPercent = aoiSettings[3]
-                            
-                            val width = image.width
-                            val height = image.height
-                            
-                            val left = (width * leftPercent).toInt()
-                            val top = (height * topPercent).toInt()
-                            val cropWidth = (width * widthPercent).toInt()
-                            val cropHeight = (height * heightPercent).toInt()
-
-                            // Instead of converting the full image, compress only the AOI.
-                            val croppedBitmap = cropImage(image, left, top, cropWidth, cropHeight)
-                            val inputImage = InputImage.fromBitmap(croppedBitmap, sensorOrientation)
-
-                            textRecognizer.process(inputImage)
-                                .addOnSuccessListener(executor) { text ->
-                                    processOcrResult(text)
-                                }
-                                .addOnFailureListener(executor) { e ->
-                                    Log.e(TAG, "OCR failed", e)
-                                }
-                                .addOnCompleteListener(executor) {
-                                    image.close()
-                                    processingImage = false
-                                }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error processing image", e)
-                            image.close()
-                            processingImage = false
-                        }
-                    } else {
-                        processingImage = false
-                    }
-                }, backgroundHandler)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting camera", e)
             }
+        }, ContextCompat.getMainExecutor(reactApplicationContext))
+    }
 
-            manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
-                override fun onOpened(camera: CameraDevice) {
-                    cameraOpenCloseLock.release()
-                    cameraDevice = camera
-                    createCameraPreviewSession()
-                }
+    private fun findSurfaceViewIn(group: android.view.ViewGroup): android.view.SurfaceView? {
+        for (i in 0 until group.childCount) {
+            val child = group.getChildAt(i)
+            if (child is android.view.SurfaceView) return child
+            if (child is android.view.ViewGroup) findSurfaceViewIn(child)?.let { return it }
+        }
+        return null
+    }
 
-                override fun onDisconnected(camera: CameraDevice) {
-                    cameraOpenCloseLock.release()
-                    camera.close()
-                    cameraDevice = null
-                }
+    private fun visName(v: Int) = when (v) {
+        android.view.View.VISIBLE -> "VISIBLE"
+        android.view.View.INVISIBLE -> "INVISIBLE"
+        android.view.View.GONE -> "GONE"
+        else -> "UNKNOWN($v)"
+    }
 
-                override fun onError(camera: CameraDevice, error: Int) {
-                    cameraOpenCloseLock.release()
-                    camera.close()
-                    cameraDevice = null
-                    Log.e(TAG, "Camera device error: $error")
-                }
-            }, backgroundHandler)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error setting up camera preview", e)
-            cameraOpenCloseLock.release()
+    private fun stopCamera() {
+        reactApplicationContext.currentActivity?.runOnUiThread {
+            try {
+                cameraProvider?.unbindAll()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unbinding camera", e)
+            }
+            camera = null
+            processingImage = false
+            previewSizeReported = false
         }
     }
 
-    /**
-     * Create and start the camera preview session.
-     */
-    private fun createCameraPreviewSession() {
+    @OptIn(ExperimentalGetImage::class)
+    private fun analyzeFrame(imageProxy: ImageProxy) {
+        if (!isSessionActive || processingPaused) {
+            imageProxy.close()
+            return
+        }
+        if (processingImage) {
+            imageProxy.close()
+            return
+        }
+
+        val mediaImage = imageProxy.image
+        if (mediaImage == null) {
+            imageProxy.close()
+            return
+        }
+
+        val rotation = imageProxy.imageInfo.rotationDegrees
+        cachedSensorOrientation = rotation
+
+        val width = imageProxy.width
+        val height = imageProxy.height
+
+        if (!previewSizeReported) {
+            previewSizeReported = true
+            sendPreviewSizeToReact(width, height)
+        }
+
+        processingImage = true
+
         try {
-            val surface = previewSurface ?: run {
-                Log.e(TAG, "Preview surface is null")
+            val aoiSettings = if (isLorcanaScanMode) {
+                // Wider/taller AOI improves portrait-card coverage so the bottom collector line
+                // stays in frame when users hold the phone naturally.
+                listOf(0.08f, 0.08f, 0.84f, 0.80f)
+            } else {
+                listOf(AOI_LEFT_PERCENT, AOI_TOP_PERCENT, AOI_WIDTH_PERCENT, AOI_HEIGHT_PERCENT)
+            }
+
+            val left = (width * aoiSettings[0]).toInt()
+            val top = (height * aoiSettings[1]).toInt()
+            val cropWidth = (width * aoiSettings[2]).toInt()
+            val cropHeight = (height * aoiSettings[3]).toInt()
+            val aoiRect = Rect(left, top, left + cropWidth, top + cropHeight)
+
+            val croppedBitmap = cropImage(mediaImage, left, top, cropWidth, cropHeight)
+            val inputImage = InputImage.fromBitmap(croppedBitmap, rotation)
+
+            textRecognizer.process(inputImage)
+                .addOnSuccessListener(executor) { text ->
+                    val primaryDetected = processOcrResult(text, width, height, aoiRect)
+                    val shouldTryRotatedFallback =
+                        !primaryDetected &&
+                            isLorcanaScanMode
+
+                    if (shouldTryRotatedFallback) {
+                        runRotatedFallbackOcr(croppedBitmap, imageProxy)
+                    } else {
+                        completeFrameProcessing(imageProxy, croppedBitmap)
+                    }
+                }
+                .addOnFailureListener(executor) { e ->
+                    Log.e(TAG, "OCR failed", e)
+                    completeFrameProcessing(imageProxy, croppedBitmap)
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing image", e)
+            imageProxy.close()
+            processingImage = false
+        }
+    }
+
+    private fun completeFrameProcessing(imageProxy: ImageProxy, bitmap: Bitmap? = null) {
+        try {
+            bitmap?.recycle()
+        } catch (_: Exception) {
+        }
+        imageProxy.close()
+        processingImage = false
+    }
+
+    private fun runRotatedFallbackOcr(baseBitmap: Bitmap, imageProxy: ImageProxy) {
+        val fallbackAngles = intArrayOf(90, 270)
+
+        fun runAttempt(index: Int) {
+            if (index >= fallbackAngles.size) {
+                completeFrameProcessing(imageProxy, baseBitmap)
                 return
             }
 
-            val previewRequestBuilder = cameraDevice?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                ?: run {
-                    Log.e(TAG, "Camera device is null")
-                    return
-                }
+            val rotatedBitmap = rotateBitmap(baseBitmap, fallbackAngles[index].toFloat())
+            val rotatedImage = InputImage.fromBitmap(rotatedBitmap, 0)
+            val rotatedAoi = Rect(0, 0, rotatedBitmap.width, rotatedBitmap.height)
 
-            previewRequestBuilder.apply {
-                addTarget(surface)
-                imageReader?.surface?.let { addTarget(it) }
-                set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
-                set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON)
-                set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_BARCODE)
-                set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_FAST)
-                set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY)
-            }
-
-            val surfaces = mutableListOf(surface).apply {
-                imageReader?.surface?.let { add(it) }
-            }
-
-            cameraDevice?.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(session: CameraCaptureSession) {
-                    captureSession = session
-                    try {
-                        session.setRepeatingRequest(
-                            previewRequestBuilder.build(),
-                            null,
-                            backgroundHandler
-                        )
-                    } catch (e: CameraAccessException) {
-                        Log.e(TAG, "Failed to start camera preview: ${e.message}")
+            textRecognizer.process(rotatedImage)
+                .addOnSuccessListener(executor) { rotatedText ->
+                    val detected = processOcrResult(
+                        rotatedText,
+                        rotatedBitmap.width,
+                        rotatedBitmap.height,
+                        rotatedAoi
+                    )
+                    rotatedBitmap.recycle()
+                    if (detected) {
+                        completeFrameProcessing(imageProxy, baseBitmap)
+                    } else {
+                        runAttempt(index + 1)
                     }
                 }
-
-                override fun onConfigureFailed(session: CameraCaptureSession) {
-                    Log.e(TAG, "Failed to configure camera session")
+                .addOnFailureListener(executor) { fallbackError ->
+                    Log.d(TAG, "Fallback OCR attempt ${index + 1} failed", fallbackError)
+                    rotatedBitmap.recycle()
+                    runAttempt(index + 1)
                 }
-            }, backgroundHandler)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error creating preview session", e)
         }
+
+        runAttempt(0)
     }
 
-    private fun closePreviewSession() {
-        try {
-            synchronized(this) {
-                if (captureSession != null) {
-                    try {
-                        captureSession?.stopRepeating()
-                        captureSession?.abortCaptures()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error stopping capture session", e)
-                    } finally {
-                        try {
-                            captureSession?.close()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error closing capture session", e)
-                        }
-                        captureSession = null
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in closePreviewSession", e)
-        }
-    }
-
-    private fun closeCamera() {
-        try {
-            cameraOpenCloseLock.acquire()
-            synchronized(this) {
-                processingImage = false
-                closePreviewSession()
-                
-                try {
-                    cameraDevice?.close()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error closing camera device", e)
-                }
-                cameraDevice = null
-                
-                try {
-                    imageReader?.close()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error closing image reader", e)
-                }
-                imageReader = null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in closeCamera", e)
-        } finally {
-            cameraOpenCloseLock.release()
-        }
-    }
-
-    private fun startBackgroundThread() {
-        backgroundThread?.quitSafely()
-        backgroundThread = HandlerThread("CameraBackground").also { it.start() }
-        backgroundHandler = Handler(backgroundThread?.looper
-            ?: throw IllegalStateException("Background thread not initialized"))
-    }
-
-    private fun stopBackgroundThread() {
-        backgroundThread?.quitSafely()
-        try {
-            backgroundThread?.join()
-            backgroundThread = null
-            backgroundHandler = null
-        } catch (e: InterruptedException) {
-            Log.e(TAG, "Error stopping background thread", e)
-        }
-    }
-
-    /**
-     * Find and return the back-facing camera id.
-     */
-    private fun findBackCamera(manager: CameraManager): String? {
-        manager.cameraIdList.forEach { id ->
-            val characteristics = manager.getCameraCharacteristics(id)
-            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-            Log.d(TAG, "Camera $id facing: $facing")
-        }
-        return manager.cameraIdList.find { id ->
-            manager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
-        }?.also { Log.d(TAG, "Selected back camera: $it") }
+    private fun rotateBitmap(source: Bitmap, angle: Float): Bitmap {
+        val matrix = Matrix().apply { postRotate(angle) }
+        return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
 
     /**
      * Compute a score for a candidate name by rewarding typical card title features.
-     * Higher scores indicate more likely card names.
      */
     private fun computeNameScore(name: String): Int {
         var score = 0
         val words = name.split(" ")
-        
-        // Check for proper title case (first letter caps, rest lowercase)
+
         val isProperTitleCase = words.all { word ->
             if (word.isEmpty()) false
             else {
@@ -529,383 +477,144 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                 }
             }
         }
-        
-        // Favor proper title case heavily
+
         if (isProperTitleCase) score += 6
-        
-        // All uppercase is common for Lorcana names (but not as good as proper title case)
         if (name == name.uppercase() && name.length >= 3) score += 4
-        
-        // All lowercase is unlikely to be a card name
         if (name == name.lowercase()) score -= 2
-        
-        // Favor names with 2+ words (common for card names)
         if (words.size >= 2) score += 2
-        
-        // Favor names of reasonable length
         if (name.length in 3..25) score += 2
-        
-        // Penalize very short or very long names
         if (name.length < 3 || name.length > 40) score -= 3
-        
-        // Common characters in fantasy names
         if (name.contains("'")) score += 1
         if (name.contains("-")) score += 1
-        
-        // Penalize names with excessive punctuation (likely not card names)
+
         val punctCount = name.count { it in ",.!?;:()[]{}\"" }
         if (punctCount > 2) score -= punctCount
-        
-        // Penalize names with numbers (uncommon in card titles)
+
         if (name.any { it.isDigit() }) score -= 2
-        
-        // Common patterns in Lorcana card names
         if (name.contains("THE ", ignoreCase = true)) score += 1
         if (name.contains("OF ", ignoreCase = true)) score += 1
-        
-        // Known Lorcana prefixes
+
         val knownPrefixes = listOf("MICKEY", "MINNIE", "DONALD", "GOOFY", "STITCH", "ARIEL", "BELLE", "MULAN", "SIMBA")
         if (knownPrefixes.any { name.uppercase().startsWith(it) }) score += 3
-        
+
         return score
     }
 
+    private fun normalizeCollectorLine(line: String): String {
+        return line
+            .uppercase()
+            .replace('—', '-')
+            .replace('–', '-')
+            .replace('•', '-')
+            .replace('·', '-')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun parseOcrDigits(value: String): Int? {
+        if (value.isBlank()) return null
+
+        val normalized = buildString(value.length) {
+            value.uppercase().forEach { ch ->
+                append(
+                    when (ch) {
+                        'O', 'Q', 'D' -> '0'
+                        'I', 'L', '!' -> '1'
+                        'Z' -> '2'
+                        'S' -> '5'
+                        'B' -> '8'
+                        else -> ch
+                    }
+                )
+            }
+        }.filter { it.isDigit() }
+
+        if (normalized.isEmpty()) return null
+        return normalized.toIntOrNull()
+    }
+
     /**
-     * Enhanced helper function to extract set code and card number from OCR lines
-     * Now includes better pattern matching and confidence scoring
+     * Extract Lorcana collector number when present.
      */
-    private fun extractSetCodeAndCardNumber(allLines: List<String>): Pair<String?, String?> {
-        var bestSetCode: String? = null
-        var bestCardNumber: String? = null
-        var highestConfidence = 0
+    private fun extractSetCodeAndCardNumber(
+        allLines: List<String>,
+        fallbackLines: List<String> = emptyList()
+    ): Triple<String?, String?, Int?> {
+        var cardNumber: String? = null
+        var setNumber: Int? = null
 
-        // Patterns that might contain set codes and numbers
-        val numberPrefixes = setOf("No.", "#", "No", "Number", "Collector", "Card")
-        val potentialSetCodes = mutableListOf<String>()
-        val potentialCardNumbers = mutableListOf<String>()
-        
-        // First pass: collect all potential set codes and card numbers
-        for (line in allLines) {
-            val trimmedLine = line.trim()
-            
-            // Clean up common OCR errors: "O" vs "0", "l" vs "1", etc.
-            val cleanedLine = cleanOcrText(trimmedLine)
-            
-            // Special case for "U 0139" pattern - very common collector number format
-            if (trimmedLine.matches(Regex("[UuO]\\s*\\d{3,4}"))) {
-                val numberStr = trimmedLine.replace(Regex("[^0-9]"), "")
-                if (numberStr.isNotEmpty()) {
-                    potentialCardNumbers.add(numberStr)
-                    
-                    // Assign a high confidence if this appears to be a valid collector number
-                    if (numberStr.length in 2..4) {
-                        val confidence = 15
-                        if (confidence > highestConfidence && (bestSetCode != null || potentialSetCodes.isNotEmpty())) {
-                            bestCardNumber = numberStr
-                            highestConfidence = confidence
-                        }
-                    }
-                }
-            }
-            
-            // Special case for "DSCENN RAVENNA TRAN" format - check for any 3-letter code at start
-            if (trimmedLine.length > 3 && COMMON_SET_CODES.contains(trimmedLine.substring(0, 3))) {
-                val setCode = trimmedLine.substring(0, 3)
-                potentialSetCodes.add(setCode)
-                
-                // High confidence since this appears to be from copyright text
-                val confidence = 18
-                if (confidence > highestConfidence) {
-                    bestSetCode = setCode
-                    highestConfidence = confidence
-                }
-            }
-            
-            // Extract potential set codes (typically 2-5 uppercase letters/numbers)
-            val setCodes = SET_CODE_REGEX.findAll(cleanedLine)
-                .map { it.value }
-                .filter { it.length in 2..5 && it !in listOf("I", "II", "III", "IV", "V") } // Filter out Roman numerals
-            
-            // Add valid set codes to our list, but check if they look like numbers
-            setCodes.forEach { candidate -> 
-                // Check if the candidate looks like a card number (all digits or starts with 0)
-                val isLikelyCardNumber = candidate.all { it.isDigit() } || candidate.startsWith("0")
-                
-                if (isLikelyCardNumber && candidate.length >= 3) {
-                    // This is likely a card number, not a set code
-                    val numberStr = candidate.trimStart('0') // Remove leading zeros
-                    if (numberStr.isNotEmpty()) {
-                        potentialCardNumbers.add(numberStr)
-                        Log.d(TAG, "Reclassified '$candidate' from set code to card number")
-                    }
-                } else {
-                    // This is likely a real set code
-                    val confidence = if (COMMON_SET_CODES.contains(candidate)) 5 else 2
-                    potentialSetCodes.add(candidate)
-                }
-            }
-            
-            // Check for combined set code and number pattern
-            val combinedMatch = SET_AND_NUMBER_REGEX.find(cleanedLine)
-            if (combinedMatch != null) {
-                val (setCode, number) = combinedMatch.destructured
-                
-                // Ensure setCode doesn't look like a number
-                if (!setCode.all { it.isDigit() }) {
-                    // High confidence if we find both together
-                    val confidence = 15 + (if (COMMON_SET_CODES.contains(setCode)) 5 else 0)
-                    if (confidence > highestConfidence) {
-                        bestSetCode = setCode
-                        bestCardNumber = number
-                        highestConfidence = confidence
-                    }
-                } else {
-                    // If the "set code" is all digits, it might actually be part of the card number
-                    val combinedNumber = setCode + number
-                    potentialCardNumbers.add(combinedNumber)
-                    Log.d(TAG, "Combined numeric 'set code' and number into $combinedNumber")
-                }
-                continue
-            }
-            
-            // Try to match common collector number patterns
-            numberPrefixes.forEach { prefix ->
-                val pattern = "$prefix\\s*[:#]?\\s*(\\d+)".toRegex(RegexOption.IGNORE_CASE)
-                val match = pattern.find(cleanedLine)
-                if (match != null) {
-                    potentialCardNumbers.add(match.groupValues[1])
-                }
-            }
-            
-            // Look for number-only patterns that are likely collector numbers
-            val cardNumberMatch = CARD_NUMBER_REGEX.find(cleanedLine)
-            if (cardNumberMatch != null) {
-                val number = cardNumberMatch.groupValues[1]
-                if (number.length in 1..5) {  // Most collector numbers are 1-5 digits
-                    potentialCardNumbers.add(number)
-                }
-            }
-            
-            // Special case for patterns like "O139" which should be "0139" or "139"
-            val oNumberPattern = "[uUoO]\\s*(\\d+)".toRegex()
-            val oNumberMatch = oNumberPattern.find(trimmedLine)
-            if (oNumberMatch != null) {
-                potentialCardNumbers.add(oNumberMatch.groupValues[1])
-                // High confidence for this pattern if it matches a format like O139
-                if (oNumberMatch.groupValues[1].length in 2..4) {
-                    val confidence = 8
-                    if (confidence > highestConfidence) {
-                        bestCardNumber = oNumberMatch.groupValues[1]
-                    }
-                }
-            }
-            
-            // Check for patterns like "DSC 139" or "DSC•139"
-            val setNumberPattern = "([A-Z0-9]{2,5})\\s*[•#:\\s]\\s*(\\d+)".toRegex()
-            val setNumberMatch = setNumberPattern.find(cleanedLine)
-            if (setNumberMatch != null) {
-                val (setCode, number) = setNumberMatch.destructured
-                val confidence = 20  // Highest confidence for this pattern
-                if (confidence > highestConfidence) {
-                    bestSetCode = setCode
-                    bestCardNumber = number
-                    highestConfidence = confidence
-                }
-            }
-            
-            // Look specifically for set codes in copyright lines
-            if (cleanedLine.contains("Wizards") || cleanedLine.contains("EN>") || cleanedLine.contains("TRAN") || cleanedLine.contains("©")) {
-                // Check for set codes before or after copyright text
-                val copyrightSetPattern = "([A-Z0-9]{2,5})\\s*[•]".toRegex()
-                val copyrightMatch = copyrightSetPattern.find(cleanedLine)
-                if (copyrightMatch != null) {
-                    val setCode = copyrightMatch.groupValues[1]
-                    if (COMMON_SET_CODES.contains(setCode)) {
-                        val confidence = 12
-                        if (confidence > highestConfidence) {
-                            bestSetCode = setCode
-                            highestConfidence = confidence
-                        }
-                    }
-                }
-                
-                // Special case for "DSC• EN>INN RAVENNA TRAN" pattern
-                val specificPattern = "([A-Z]{3}).*(?:EN|TRAN)".toRegex()
-                val specificMatch = specificPattern.find(cleanedLine)
-                if (specificMatch != null) {
-                    val setCode = specificMatch.groupValues[1]
-                    val confidence = 25  // Very high confidence for this specific pattern
-                    if (confidence > highestConfidence) {
-                        bestSetCode = setCode
-                        highestConfidence = confidence
-                    }
-                }
-            }
-        }
-        
-        // Second pass: try to find the best set code + number pair if we haven't already
-        if (highestConfidence < 10 && potentialSetCodes.isNotEmpty() && potentialCardNumbers.isNotEmpty()) {
-            // Try each combination and score it
-            for (setCode in potentialSetCodes) {
-                for (cardNumber in potentialCardNumbers) {
-                    var confidence = 5
-                    
-                    // Boost confidence for known set codes
-                    if (COMMON_SET_CODES.contains(setCode)) confidence += 5
-                    
-                    // Boost confidence for reasonable collector numbers (not years, etc.)
-                    val numValue = cardNumber.toIntOrNull() ?: 0
-                    
-                    // FILTER OUT YEARS (2020-2030)
-                    if (numValue in 2020..2030) {
-                        // Likely a copyright year, not a collector number
-                        confidence -= 10
-                    } else if (numValue in 1..999) {
-                        // Reasonable range for collector numbers
-                        confidence += 3
-                    }
-                    
-                    // If this pair is better than what we have, use it
-                    if (confidence > highestConfidence) {
-                        bestSetCode = setCode
-                        bestCardNumber = cardNumber
-                        highestConfidence = confidence
-                    }
-                }
+        val collectorLines = linkedSetOf<String>()
+        (allLines + fallbackLines).forEach { line ->
+            val normalized = normalizeCollectorLine(line)
+            if (normalized.isNotEmpty()) {
+                collectorLines.add(normalized)
             }
         }
 
-        // Special case - if we have a card number but no set code, check if DSC might be in our lines
-        if (bestCardNumber != null && bestSetCode == null) {
-            for (line in allLines) {
-                if (line.contains("DSC")) {
-                    bestSetCode = "DSC"
-                    break
-                }
-            }
-        }
-        
-        // IMPORTANT: Check if bestCardNumber is a year (2020-2030)
-        // If so, look for a better alternative in potentialCardNumbers
-        if (bestCardNumber != null) {
-            val numValue = bestCardNumber.toIntOrNull() ?: 0
-            if (numValue in 2020..2030) {
-                Log.d(TAG, "Detected year instead of collector number: $bestCardNumber")
-                
-                // Look for a better alternative that's not a year
-                val betterNumber = potentialCardNumbers
-                    .filter { it != bestCardNumber }
-                    .filter { 
-                        val value = it.toIntOrNull() ?: 0
-                        value !in 2020..2030 && value in 1..999
-                    }
-                    .maxByOrNull { 
-                        when {
-                            it == "139" -> 100  // Give highest priority to 139 for The Eldest Reborn
-                            it.startsWith("13") -> 90  // Next priority to numbers that start with 13
-                            it.length in 2..3 -> 80    // Favor 2-3 digit numbers
-                            else -> 0
+        for (line in collectorLines) {
+            if (cardNumber == null || setNumber == null) {
+                val collectorMatch = LORCANA_COLLECTOR_REGEX.find(line)
+                    ?: LORCANA_COLLECTOR_LOOSE_REGEX.find(line)
+                if (collectorMatch != null) {
+                    if (cardNumber == null) {
+                        val parsedCardNumber = parseOcrDigits(collectorMatch.groupValues.getOrElse(1) { "" })
+                        if (parsedCardNumber != null && parsedCardNumber in 1..999) {
+                            cardNumber = parsedCardNumber.toString()
                         }
                     }
-                
-                if (betterNumber != null) {
-                    Log.d(TAG, "Found better collector number: $betterNumber instead of year $bestCardNumber")
-                    bestCardNumber = betterNumber
+
+                    if (setNumber == null) {
+                        val parsedSetNumber = collectorMatch.groupValues.getOrNull(3)?.toIntOrNull()
+                        if (parsedSetNumber != null && parsedSetNumber > 0) {
+                            setNumber = parsedSetNumber
+                        }
+                    }
                 }
             }
-        }
-        
-        // Special case for "The Eldest Reborn" - we know it should be 139
-        var foundEldestReborn = false
-        for (line in allLines) {
-            if (line.contains("Eldest") && line.contains("Reborn")) {
-                foundEldestReborn = true
+
+            if (setNumber == null) {
+                val suffixSet = LORCANA_SET_SUFFIX_REGEX
+                    .find(line)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.toIntOrNull()
+                if (suffixSet != null && suffixSet > 0) {
+                    setNumber = suffixSet
+                }
+            }
+
+            if (setNumber == null) {
+                val totalSetMatch = LORCANA_TOTAL_AND_SET_REGEX.find(line)
+                val extractedSetNumber = totalSetMatch?.groupValues?.getOrNull(2)?.toIntOrNull()
+                if (extractedSetNumber != null && extractedSetNumber > 0) {
+                    setNumber = extractedSetNumber
+                }
+            }
+
+            if (cardNumber != null && setNumber != null) {
                 break
             }
         }
-        
-        if (foundEldestReborn && potentialCardNumbers.contains("139") || potentialCardNumbers.contains("0139")) {
-            Log.d(TAG, "Special case: 'The Eldest Reborn' detected, forcing collector number to 139")
-            bestCardNumber = "139"
+
+        val setCode = setNumber?.toString()
+
+        if (cardNumber != null || setNumber != null) {
+            Log.d(TAG, "Collector extracted: card=$cardNumber, setNumber=$setNumber")
         }
 
-        // Store all potential card numbers for later use
-        allPotentialCardNumbers = potentialCardNumbers.toList()
-        
-        // Log the extraction results
-        Log.d(TAG, "Set code extraction: $bestSetCode (confidence: $highestConfidence)")
-        Log.d(TAG, "Card number extraction: $bestCardNumber")
-        
-        // For debugging, also log all potential candidates
-        Log.d(TAG, "Potential set codes: ${potentialSetCodes.joinToString(", ")}")
-        Log.d(TAG, "Potential card numbers: ${potentialCardNumbers.joinToString(", ")}")
-
-        // If we have a setCode but no cardNumber, look for the best card number candidate
-        if (bestSetCode != null && bestCardNumber == null && potentialCardNumbers.isNotEmpty()) {
-            // Prefer longer numbers (3-4 digits) that are likely real collector numbers
-            val bestCandidate = potentialCardNumbers
-                .filter { it.length in 2..4 && it.toIntOrNull() != null } // Filter to valid number formats
-                .maxByOrNull { 
-                    when {
-                        it.length == 3 -> 10  // 3-digit numbers are very common
-                        it.length == 4 -> 8   // 4-digit numbers are also common
-                        else -> 5              // 2-digit numbers are less common but still valid
-                    }
-                }
-            
-            if (bestCandidate != null) {
-                Log.d(TAG, "Selected best card number candidate: $bestCandidate from available options")
-                bestCardNumber = bestCandidate
-            }
-        }
-
-        // Last sanity check - make sure DSC card numbers are validated appropriately
-        if (bestSetCode == "DSC" && bestCardNumber == null && potentialCardNumbers.any { it.contains("149") }) {
-            // If we detected "Nightmare Shepherd" and DSC, card number should be 149
-            val numberWith149 = potentialCardNumbers.find { it.contains("149") }
-            if (numberWith149 != null) {
-                Log.d(TAG, "Forced card number selection for DSC Nightmare Shepherd: $numberWith149")
-                bestCardNumber = "149"
-            }
-        }
-
-        return Pair(bestSetCode, bestCardNumber)
-    }
-    
-    /**
-     * Clean up common OCR errors in detected text
-     */
-    private fun cleanOcrText(text: String): String {
-        var cleaned = text
-        
-        // Replace common OCR mistakes
-        val replacements = mapOf(
-            "O" to "0",  // Letter O to number 0
-            "o" to "0",  // Lowercase o to number 0
-            "l" to "1",  // Lowercase L to number 1
-            "I" to "1",  // Capital I to number 1
-            "S" to "5",  // Capital S to number 5
-            "B" to "8"   // Capital B to number 8
-        )
-        
-        // Only replace digits when they appear in a sequence that looks like a number
-        val potentialNumberPattern = "([a-zA-Z])+(\\d+)".toRegex()
-        val matches = potentialNumberPattern.findAll(cleaned)
-        
-        matches.forEach { match ->
-            val prefix = match.groupValues[1]
-            val updatedPrefix = prefix.map { char -> replacements[char.toString()] ?: char.toString() }.joinToString("")
-            cleaned = cleaned.replace(match.value, updatedPrefix + match.groupValues[2])
-        }
-        
-        return cleaned
+        return Triple(setCode, cardNumber, setNumber)
     }
 
     /**
      * Process OCR results: filter, score, and select the best candidate.
      */
-    private fun processOcrResult(text: com.google.mlkit.vision.text.Text) {
-        if (!isSessionActive || previewSurface == null) return
+    private fun processOcrResult(
+        text: com.google.mlkit.vision.text.Text,
+        frameWidth: Int,
+        frameHeight: Int,
+        aoiRect: Rect
+    ): Boolean {
+        if (!isSessionActive) return false
 
         text.textBlocks.forEachIndexed { blockIndex, block ->
             Log.d(TAG, "Block $blockIndex: '${block.text}'")
@@ -914,83 +623,378 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
             }
         }
 
-        // Collect all lines from all text blocks
-        val allLines = text.textBlocks.flatMap { block ->
+        val rawLines = text.textBlocks.flatMap { block ->
             block.lines.map { it.text.trim() }
+        }.filter { it.isNotEmpty() }
+
+        val allLines = text.textBlocks.flatMap { block ->
+            block.lines
+                .filter { line -> (line.confidence ?: 1f) >= MIN_LINE_CONFIDENCE }
+                .map { it.text.trim() }
         }.filter { it.isNotEmpty() }
         Log.d(TAG, "Flattened lines:\n${allLines.joinToString("\n")}")
 
-        // Only proceed if we have a reasonable number of text blocks
-        // This helps ensure we've captured enough of the card
+        val tracking = buildCardTrackingFrame(text, allLines.size, frameWidth, frameHeight, aoiRect)
+        emitFrameTelemetry(frameWidth, frameHeight, aoiRect, tracking)
+
         if (allLines.size < 2) {
             Log.d(TAG, "Not enough text lines detected - waiting for more complete OCR")
-            return
+            return false
         }
 
-        // First find candidate name - this gives us the card identity
-        val candidate = findCandidate(allLines)
+        val candidate = findCandidate(allLines, text)
         Log.d(TAG, "Candidate found: $candidate")
-        
-        // Only proceed with extraction if we have a valid candidate
+
         if (candidate != null) {
             val (name, subtype, isLorcana) = candidate
-            
-            // Now extract set code and card number
-            // We do this after finding the candidate to ensure we have enough OCR text
-            val (setCode, cardNumber) = extractSetCodeAndCardNumber(allLines)
-            Log.d(TAG, "Extracted setCode: $setCode, cardNumber: $cardNumber")
-            
-            val fullName = when {
-                isLorcana && subtype != null -> "$name - $subtype"
-                !isLorcana && subtype != null -> "$name ($subtype)"
-                else -> name
-            }
+
+            val (setCode, cardNumber, setNumber) = extractSetCodeAndCardNumber(allLines, rawLines)
+            Log.d(TAG, "Extracted setCode: $setCode, cardNumber: $cardNumber, setNumber: $setNumber")
+
+            val fullName = if (subtype != null) "$name - $subtype" else name
             val boundingBox = text.textBlocks.firstOrNull()?.boundingBox
 
             if (fullName != lastDetectedName) {
-                sendOcrResult(fullName, name, subtype, isLorcana, boundingBox, setCode, cardNumber)
+                sendOcrResult(fullName, name, subtype, isLorcana, boundingBox, setCode, cardNumber, setNumber)
                 lastDetectedName = fullName
             }
+            return true
+        }
+
+        return false
+    }
+
+    private fun buildCardTrackingFrame(
+        text: com.google.mlkit.vision.text.Text,
+        detectedLineCount: Int,
+        frameWidth: Int,
+        frameHeight: Int,
+        aoiRect: Rect
+    ): CardTrackingFrame {
+        val candidateLineBoxes = mutableListOf<Rect>()
+
+        text.textBlocks.forEach { block ->
+            block.lines.forEach { line ->
+                val lineText = line.text.trim()
+                val box = line.boundingBox ?: return@forEach
+                val isCandidate = (
+                    LORCANA_NAME_REGEX.matches(lineText) ||
+                        LORCANA_VERSION_REGEX.matches(lineText) ||
+                        LORCANA_STATS_REGEX.matches(lineText) ||
+                        LORCANA_INK_COST_REGEX.matches(lineText) ||
+                        (!KEYWORD_FILTER.containsMatchIn(lineText) && lineText.length in 3..36)
+                    )
+                if (isCandidate) {
+                    candidateLineBoxes.add(Rect(
+                        box.left  + aoiRect.left,
+                        box.top   + aoiRect.top,
+                        box.right + aoiRect.left,
+                        box.bottom + aoiRect.top
+                    ))
+                }
+            }
+        }
+
+        val sourceBoxes = if (candidateLineBoxes.isNotEmpty()) {
+            candidateLineBoxes
+        } else {
+            text.textBlocks.mapNotNull { block ->
+                block.boundingBox?.let { box ->
+                    Rect(
+                        box.left  + aoiRect.left,
+                        box.top   + aoiRect.top,
+                        box.right + aoiRect.left,
+                        box.bottom + aoiRect.top
+                    )
+                }
+            }
+        }
+
+        if (sourceBoxes.isEmpty()) {
+            smoothedCardRect = null
+            stableTrackingFrames = 0
+            return CardTrackingFrame(rect = null, confidence = 0f, state = "none")
+        }
+
+        val union = unionRects(sourceBoxes)
+        val centerX = union.centerX().toFloat()
+        val centerY = union.centerY().toFloat()
+
+        // For 90°/270° sensors the card appears landscape in the sensor frame, so the sensor-space
+        // aspect ratio (width/height) is the reciprocal of the display-space portrait ratio.
+        val sensorCardAspect = if (cachedSensorOrientation == 90 || cachedSensorOrientation == 270) {
+            1f / CARD_ASPECT_RATIO
+        } else {
+            CARD_ASPECT_RATIO
+        }
+
+        val expandedWidth = union.width() * 1.4f
+        var expandedHeight = union.height() * 2.2f
+        val minHeightForAspect = expandedWidth / sensorCardAspect
+        if (expandedHeight < minHeightForAspect) {
+            expandedHeight = minHeightForAspect
+        }
+
+        var targetWidth = expandedHeight * sensorCardAspect
+        targetWidth = targetWidth.coerceIn(aoiRect.width() * 0.45f, min(frameWidth * 0.96f, aoiRect.width() * 1.05f))
+        var targetHeight = targetWidth / sensorCardAspect
+        targetHeight = targetHeight.coerceIn(aoiRect.height() * 0.6f, frameHeight * 0.96f)
+
+        var candidateRect = RectF(
+            centerX - (targetWidth / 2f),
+            centerY - (targetHeight / 2f),
+            centerX + (targetWidth / 2f),
+            centerY + (targetHeight / 2f)
+        )
+        candidateRect = clampRectToBounds(candidateRect, frameWidth.toFloat(), frameHeight.toFloat())
+
+        val previous = smoothedCardRect
+        val lineScore = min(1f, detectedLineCount / 8f)
+        val areaRatio = ((candidateRect.width() * candidateRect.height()) / (frameWidth.toFloat() * frameHeight.toFloat())).coerceIn(0f, 1f)
+        val areaScore = when {
+            areaRatio < 0.08f -> areaRatio / 0.08f
+            areaRatio > 0.90f -> max(0f, 1f - ((areaRatio - 0.90f) / 0.20f))
+            else -> 1f
+        }
+        val aspectRatio = candidateRect.width() / max(1f, candidateRect.height())
+        val aspectScore = (1f - min(1f, abs(aspectRatio - sensorCardAspect) / 0.35f)).coerceIn(0f, 1f)
+        val stabilityScore = if (previous == null) {
+            0.6f
+        } else {
+            val dx = abs(candidateRect.centerX() - previous.centerX()) / frameWidth.toFloat()
+            val dy = abs(candidateRect.centerY() - previous.centerY()) / frameHeight.toFloat()
+            val dw = abs(candidateRect.width() - previous.width()) / frameWidth.toFloat()
+            val dh = abs(candidateRect.height() - previous.height()) / frameHeight.toFloat()
+            (1f - (dx + dy + dw + dh)).coerceIn(0f, 1f)
+        }
+
+        val confidence = clampFloat(
+            (lineScore * 0.35f) + (aspectScore * 0.30f) + (areaScore * 0.20f) + (stabilityScore * 0.15f),
+            0f,
+            1f
+        )
+
+        val alpha = if (confidence >= LOCK_CONFIDENCE_THRESHOLD) 0.35f else 0.20f
+        val smoothed = if (previous == null) {
+            RectF(candidateRect)
+        } else {
+            RectF(
+                previous.left + (candidateRect.left - previous.left) * alpha,
+                previous.top + (candidateRect.top - previous.top) * alpha,
+                previous.right + (candidateRect.right - previous.right) * alpha,
+                previous.bottom + (candidateRect.bottom - previous.bottom) * alpha
+            )
+        }
+        smoothedCardRect = clampRectToBounds(smoothed, frameWidth.toFloat(), frameHeight.toFloat())
+
+        val hasStrongLockEvidence =
+            detectedLineCount >= MIN_LINES_FOR_LOCK &&
+                candidateLineBoxes.size >= MIN_CANDIDATE_LINES_FOR_LOCK
+
+        if (confidence >= LOCK_CONFIDENCE_THRESHOLD && hasStrongLockEvidence) {
+            stableTrackingFrames = min(stableTrackingFrames + 1, LOCK_STABLE_FRAMES + 5)
+        } else {
+            stableTrackingFrames = max(0, stableTrackingFrames - 1)
+        }
+
+        val state = when {
+            confidence < SEARCH_CONFIDENCE_THRESHOLD -> "none"
+            !hasStrongLockEvidence -> "searching"
+            stableTrackingFrames >= LOCK_STABLE_FRAMES -> "locked"
+            else -> "searching"
+        }
+
+        return if (state == "none") {
+            CardTrackingFrame(rect = null, confidence = confidence, state = state)
+        } else {
+            CardTrackingFrame(rect = smoothedCardRect?.let { RectF(it) }, confidence = confidence, state = state)
         }
     }
 
+    private fun emitFrameTelemetry(
+        frameWidth: Int,
+        frameHeight: Int,
+        aoiRect: Rect,
+        tracking: CardTrackingFrame
+    ) {
+        val now = System.currentTimeMillis()
+        if (now - lastFrameEventTimestamp < FRAME_EVENT_INTERVAL_MS) return
+        lastFrameEventTimestamp = now
+
+        val params = Arguments.createMap().apply {
+            putInt("frameWidth", frameWidth)
+            putInt("frameHeight", frameHeight)
+            putMap("aoi", normalizedRectMap(RectF(aoiRect), frameWidth, frameHeight))
+            if (tracking.rect != null) {
+                putMap("candidateBox", normalizedRectMap(tracking.rect, frameWidth, frameHeight))
+            } else {
+                putNull("candidateBox")
+            }
+            putDouble("confidence", tracking.confidence.toDouble())
+            putString("state", tracking.state)
+        }
+
+        reactApplicationContext
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("LiveOcrFrame", params)
+    }
+
+    private fun normalizedRectMap(rect: RectF, frameWidth: Int, frameHeight: Int): WritableMap {
+        val fw = max(1f, frameWidth.toFloat())
+        val fh = max(1f, frameHeight.toFloat())
+
+        val x: Float
+        val y: Float
+        val w: Float
+        val h: Float
+
+        // ML Kit bounding boxes are in the raw sensor frame's coordinate space.
+        // Apply the inverse of the sensor rotation to map them to display (portrait) space.
+        when (cachedSensorOrientation) {
+            90 -> {
+                // Sensor is 90° CW from portrait. 90° CW rotation: new point = (H-1-py, px).
+                // For a rect (L,T,R,B) in sensor space -> display rect:
+                //   display_x = 1 - B/fh,  display_y = L/fw
+                //   display_w = (B-T)/fh,   display_h = (R-L)/fw
+                x = clampFloat(1f - rect.bottom / fh, 0f, 1f)
+                y = clampFloat(rect.left / fw, 0f, 1f)
+                w = clampFloat(rect.height() / fh, 0f, 1f)
+                h = clampFloat(rect.width() / fw, 0f, 1f)
+            }
+            270 -> {
+                // Sensor is 270° CW (= 90° CCW) from portrait.
+                x = clampFloat(rect.top / fh, 0f, 1f)
+                y = clampFloat(1f - rect.right / fw, 0f, 1f)
+                w = clampFloat(rect.height() / fh, 0f, 1f)
+                h = clampFloat(rect.width() / fw, 0f, 1f)
+            }
+            else -> {
+                // 0° or 180° — no axis swap needed.
+                x = clampFloat(rect.left / fw, 0f, 1f)
+                y = clampFloat(rect.top / fh, 0f, 1f)
+                w = clampFloat(rect.width() / fw, 0f, 1f)
+                h = clampFloat(rect.height() / fh, 0f, 1f)
+            }
+        }
+
+        return Arguments.createMap().apply {
+            putDouble("x", x.toDouble())
+            putDouble("y", y.toDouble())
+            putDouble("w", w.toDouble())
+            putDouble("h", h.toDouble())
+        }
+    }
+
+    private fun unionRects(rects: List<Rect>): Rect {
+        val union = Rect(rects.first())
+        for (i in 1 until rects.size) {
+            union.union(rects[i])
+        }
+        return union
+    }
+
+    private fun clampRectToBounds(rect: RectF, maxWidth: Float, maxHeight: Float): RectF {
+        val width = min(rect.width(), maxWidth)
+        val height = min(rect.height(), maxHeight)
+
+        var left = rect.left
+        var top = rect.top
+        var right = left + width
+        var bottom = top + height
+
+        if (left < 0f) {
+            left = 0f
+            right = width
+        }
+        if (top < 0f) {
+            top = 0f
+            bottom = height
+        }
+        if (right > maxWidth) {
+            right = maxWidth
+            left = max(0f, right - width)
+        }
+        if (bottom > maxHeight) {
+            bottom = maxHeight
+            top = max(0f, bottom - height)
+        }
+
+        return RectF(left, top, right, bottom)
+    }
+
+    private fun clampFloat(value: Float, minValue: Float, maxValue: Float): Float {
+        return max(minValue, min(value, maxValue))
+    }
+
     /**
-     * Given a list of lines, return a candidate card name.
-     *
-     * This method uses the pre-compiled regexes to first look for a Lorcana candidate (name + version)
-     * and then for an MTG candidate if no Lorcana candidate is found. In case of multiple candidates,
-     * the one with the highest score is returned.
+     * Given a list of lines and the raw ML Kit Text result, return a candidate card name.
      */
-    private fun findCandidate(allLines: List<String>): Triple<String, String?, Boolean>? {
+    private fun findCandidate(
+        allLines: List<String>,
+        ocrText: com.google.mlkit.vision.text.Text? = null
+    ): Triple<String, String?, Boolean>? {
+
+        data class LineInfo(val confidence: Float, val line: com.google.mlkit.vision.text.Text.Line)
+        val lineInfoMap: Map<String, LineInfo> = ocrText?.textBlocks
+            ?.flatMap { it.lines }
+            ?.associate { it.text.trim() to LineInfo(it.confidence ?: 0.8f, it) }
+            ?: emptyMap()
+
         val candidates = mutableListOf<Triple<String, String?, Boolean>>()
-        
-        // Temporary storage for potential Lorcana card data
+
         data class LorcanaCardData(
-            val nameIndex: Int, 
-            val name: String, 
+            val nameIndex: Int,
+            val name: String,
+            val cleanName: String,
             var subtype: String? = null,
             var inkCost: String? = null,
             var stats: String? = null,
             var confidence: Int = 1
         )
-        
+
         val lorcanaCardData = mutableListOf<LorcanaCardData>()
-        
-        // First pass: identify potential Lorcana card names and gather related data
+
         for (i in allLines.indices) {
             val line = allLines[i]
-            
-            // Check for Lorcana card name
-            if (LORCANA_NAME_REGEX.matches(line) && !KEYWORD_FILTER.containsMatchIn(line)) {
-                lorcanaCardData.add(LorcanaCardData(i, line))
+            if (!LORCANA_NAME_REGEX.matches(line) || KEYWORD_FILTER.containsMatchIn(line)) continue
+
+            val info = lineInfoMap[line]
+            val cleanName = if (info != null) {
+                val rebuilt = info.line.elements.joinToString(" ") { element ->
+                    element.symbols
+                        .filter { sym -> (sym.confidence ?: 1f) >= MIN_SYMBOL_CONFIDENCE }
+                        .joinToString("") { it.text }
+                }.trim()
+                val originalLength = line.replace(" ", "").length
+                val rebuiltLength = rebuilt.replace(" ", "").length
+                val preservedRatio = if (originalLength > 0) {
+                    rebuiltLength.toFloat() / originalLength.toFloat()
+                } else {
+                    0f
+                }
+                val shouldUseRebuilt =
+                    rebuilt.isNotEmpty() &&
+                        LORCANA_NAME_REGEX.matches(rebuilt) &&
+                        !KEYWORD_FILTER.containsMatchIn(rebuilt) &&
+                        (rebuiltLength >= originalLength - 1 || preservedRatio >= 0.8f)
+
+                if (shouldUseRebuilt) rebuilt else line
+            } else line
+
+            val mlConf = info?.confidence ?: 0.8f
+            val confBonus = when {
+                mlConf >= 0.90f -> 4
+                mlConf >= 0.75f -> 3
+                mlConf >= 0.60f -> 2
+                mlConf >= 0.45f -> 1
+                else            -> 0
             }
+            lorcanaCardData.add(LorcanaCardData(i, line, cleanName, confidence = 1 + confBonus))
         }
-        
-        // Second pass: look for associated information for each potential card
+
         for (cardData in lorcanaCardData) {
             val nameIndex = cardData.nameIndex
-            
-            // Look for subtype in the next line
+
             if (nameIndex + 1 < allLines.size) {
                 val nextLine = allLines[nameIndex + 1]
                 if (LORCANA_VERSION_REGEX.matches(nextLine) && !KEYWORD_FILTER.containsMatchIn(nextLine)) {
@@ -998,46 +1002,34 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                     cardData.confidence += 3
                 }
             }
-            
-            // Look for ink cost and stats in nearby lines (within 3 lines)
+
             val searchRange = maxOf(0, nameIndex - 2)..minOf(allLines.size - 1, nameIndex + 3)
             for (j in searchRange) {
                 val nearbyLine = allLines[j]
-                
-                // Check for ink cost
                 if (cardData.inkCost == null && LORCANA_INK_COST_REGEX.matches(nearbyLine)) {
                     cardData.inkCost = nearbyLine
                     cardData.confidence += 1
                 }
-                
-                // Check for stats
                 if (cardData.stats == null && LORCANA_STATS_REGEX.matches(nearbyLine)) {
                     cardData.stats = nearbyLine
                     cardData.confidence += 2
                 }
             }
-            
-            // Add as a candidate if we have at least a name and one other piece of information
+
             if (cardData.subtype != null || cardData.inkCost != null || cardData.stats != null) {
-                candidates.add(Triple(cardData.name, cardData.subtype, true))
+                candidates.add(Triple(cardData.cleanName, cardData.subtype, true))
             }
         }
-        
-        // Fall back to looking for MTG cards if no Lorcana candidates were found
-        if (candidates.isEmpty()) {
-            for (line in allLines) {
-                if (MTG_NAME_REGEX.matches(line) && !KEYWORD_FILTER.containsMatchIn(line)) {
-                    candidates.add(Triple(line, null, false))
-                }
+
+        if (candidates.isEmpty() && lorcanaCardData.isNotEmpty()) {
+            val fallback = lorcanaCardData.maxByOrNull { computeNameScore(it.cleanName) + it.confidence }
+            if (fallback != null) {
+                candidates.add(Triple(fallback.cleanName, fallback.subtype, true))
             }
         }
-        
-        // Return the candidate with the highest computed score.
-        return candidates.maxByOrNull { 
-            val baseScore = computeNameScore(it.first)
-            // Give Lorcana cards a slight boost if that's what we're looking for
-            val lorcanaBoost = if (it.third) 2 else 0
-            baseScore + lorcanaBoost
+
+        return candidates.maxByOrNull {
+            computeNameScore(it.first) + (if (it.third) 2 else 0)
         }
     }
 
@@ -1051,10 +1043,10 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         isLorcana: Boolean,
         boundingBox: Rect?,
         setCode: String?,
-        cardNumber: String?
+        cardNumber: String?,
+        setNumber: Int?
     ) {
         val currentTime = System.currentTimeMillis()
-        // Purge old scans
         recentScans.removeAll { currentTime - it.second > COOLDOWN_MS }
 
         if (recentScans.any { it.first.equals(fullName, ignoreCase = true) }) {
@@ -1062,7 +1054,6 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
             return
         }
 
-        // Check for sufficient movement if a previous bounding box exists.
         if (boundingBox != null && lastBoundingBox != null) {
             val dx = abs(boundingBox.centerX() - lastBoundingBox!!.centerX())
             val dy = abs(boundingBox.centerY() - lastBoundingBox!!.centerY())
@@ -1075,22 +1066,6 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
         recentScans.add(Pair(fullName, currentTime))
         lastBoundingBox = boundingBox
 
-        // Get potential card numbers for special handling
-        val potentialNumbers = allPotentialCardNumbers ?: emptyList()
-        
-        // Special handling for known cards
-        val finalSetCode = setCode
-        
-        // Special handling for Nightmare Shepherd (DSC #149)
-        val finalCardNumber = if (name.contains("Nightmare", ignoreCase = true) && 
-                                 name.contains("Shepherd", ignoreCase = true) && 
-                                 setCode == "DSC" && cardNumber == null) {
-            Log.d(TAG, "Detected Nightmare Shepherd, forcing card number to 149")
-            "149"
-        } else {
-            cardNumber
-        }
-
         val params = Arguments.createMap().apply {
             putString("text", fullName)
             putString("mainName", name)
@@ -1098,32 +1073,25 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                 putString("subtype", subtype)
             }
             putBoolean("isLorcana", isLorcana)
-            
-            if (finalSetCode != null) {
-                putString("setCode", finalSetCode)
-                Log.d(TAG, "Set code added to event: $finalSetCode")
+
+            if (setCode != null) {
+                putString("setCode", setCode)
+                Log.d(TAG, "Set code added to event: $setCode")
             }
-            
-            if (finalCardNumber != null) {
-                putString("cardNumber", finalCardNumber)
-                Log.d(TAG, "Card number added to event: $finalCardNumber")
+
+            if (cardNumber != null) {
+                putString("cardNumber", cardNumber)
+                Log.d(TAG, "Card number added to event: $cardNumber")
             }
-        }
-        
-        Log.d(TAG, "Emitting OCR result: mainName=$name, subtype=$subtype, isLorcana=$isLorcana, setCode=$finalSetCode, cardNumber=$finalCardNumber")
-        
-        if (finalSetCode != null && finalCardNumber != null) {
-            // Show a toast to give immediate feedback about detected set code and number
-            val activity = reactApplicationContext.currentActivity
-            activity?.runOnUiThread {
-                Toast.makeText(
-                    reactApplicationContext,
-                    "Detected: $finalSetCode #$finalCardNumber",
-                    Toast.LENGTH_SHORT
-                ).show()
+
+            if (setNumber != null) {
+                putInt("setNumber", setNumber)
+                Log.d(TAG, "Set number added to event: $setNumber")
             }
         }
-        
+
+        Log.d(TAG, "Emitting OCR result: mainName=$name, subtype=$subtype, isLorcana=$isLorcana, setCode=$setCode, cardNumber=$cardNumber, setNumber=$setNumber")
+
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit("LiveOcrResult", params)
@@ -1132,13 +1100,9 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     /**
-     * Convert a YUV_420_888 image to a cropped Bitmap.
-     *
-     * This refactored version uses the YuvImage.compressToJpeg() method with a crop rectangle
-     * so that only the area of interest (AOI) is converted, which can be much faster.
+     * Convert a YUV_420_888 image to a cropped Bitmap (AOI only).
      */
     private fun cropImage(image: Image, left: Int, top: Int, width: Int, height: Int): Bitmap {
-        // Convert YUV_420_888 to NV21 format.
         val yBuffer = image.planes[0].buffer
         val uBuffer = image.planes[1].buffer
         val vBuffer = image.planes[2].buffer
@@ -1155,24 +1119,31 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
 
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
         val out = ByteArrayOutputStream()
-        // Compress only the AOI directly.
         val cropRect = Rect(left, top, left + width, top + height)
-        yuvImage.compressToJpeg(cropRect, 100, out)
-        return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+        yuvImage.compressToJpeg(cropRect, 95, out)
+        val raw = BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
+        return enhanceBitmap(raw)
     }
 
     /**
-     * Drain extra images from the ImageReader to prevent a backlog.
+     * Apply a mild contrast boost to help ML Kit distinguish card text from the background.
      */
-    private fun drainExtraImages(reader: ImageReader) {
-        try {
-            // Only try to acquire latest image once, to avoid exceptions
-            val extraImage = reader.acquireLatestImage()
-            extraImage?.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error draining images: ${e.message}")
-            // Don't try to continue draining if we hit an exception
-        }
+    private fun enhanceBitmap(source: Bitmap): Bitmap {
+        val output = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint()
+        val scale = 1.25f
+        val offset = -30f
+        val cm = ColorMatrix(floatArrayOf(
+            scale, 0f,    0f,    0f, offset,
+            0f,    scale, 0f,    0f, offset,
+            0f,    0f,    scale, 0f, offset,
+            0f,    0f,    0f,    1f, 0f
+        ))
+        paint.colorFilter = ColorMatrixColorFilter(cm)
+        canvas.drawBitmap(source, 0f, 0f, paint)
+        source.recycle()
+        return output
     }
 
     @ReactMethod
@@ -1223,7 +1194,6 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
                 zoomLevel > MAX_ZOOM_LEVEL -> MAX_ZOOM_LEVEL
                 else -> zoomLevel
             }
-            
             applyZoom()
             promise.resolve(currentZoomLevel)
         } catch (e: Exception) {
@@ -1270,58 +1240,7 @@ class LiveOcr(reactContext: ReactApplicationContext) : ReactContextBaseJavaModul
     }
 
     private fun applyZoom() {
-        try {
-            val captureSession = this.captureSession ?: return
-            val cameraDevice = this.cameraDevice ?: return
-            
-            val captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-            
-            previewSurface?.let { captureRequestBuilder.addTarget(it) }
-            imageReader?.surface?.let { captureRequestBuilder.addTarget(it) }
-            
-            // Set up basic preview settings
-            captureRequestBuilder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-            captureRequestBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-            
-            // Apply zoom
-            if (currentZoomLevel > 0.0f) {
-                // A simplified approach to digital zoom
-                val manager = reactApplicationContext.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-                val cameraId = cameraDevice.id
-                val characteristics = manager.getCameraCharacteristics(cameraId)
-                val maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1.0f
-                
-                // Calculate zoom ratio based on our zoom level
-                val zoomRatio = 1.0f + currentZoomLevel * (maxZoom - 1.0f) / MAX_ZOOM_LEVEL
-                
-                if (zoomRatio > 1.0f) {
-                    // Get the active array size
-                    val activeRect = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
-                    if (activeRect != null) {
-                        // Calculate the crop region
-                        val xCenter = activeRect.width() / 2
-                        val yCenter = activeRect.height() / 2
-                        val halfWidth = (activeRect.width() / (2 * zoomRatio)).toInt()
-                        val halfHeight = (activeRect.height() / (2 * zoomRatio)).toInt()
-                        
-                        val cropRegion = Rect(
-                            xCenter - halfWidth,
-                            yCenter - halfHeight,
-                            xCenter + halfWidth,
-                            yCenter + halfHeight
-                        )
-                        
-                        captureRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, cropRegion)
-                        Log.d(TAG, "Applied zoom: level=$currentZoomLevel, ratio=$zoomRatio")
-                    }
-                }
-            }
-            
-            // Use the existing session to update the repeating request
-            captureSession.setRepeatingRequest(captureRequestBuilder.build(), null, backgroundHandler)
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error applying zoom", e)
-        }
+        val linearZoom = (currentZoomLevel / MAX_ZOOM_LEVEL).coerceIn(0f, 1f)
+        camera?.cameraControl?.setLinearZoom(linearZoom)
     }
 }

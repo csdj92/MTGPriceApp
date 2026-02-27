@@ -7,22 +7,22 @@ import com.facebook.react.uimanager.ViewManager
 
 class OcrPackage : ReactPackage {
     private lateinit var ocrModule: LiveOcr
-    private lateinit var classifierModule: LiveImageClassifier
-    private var currentPreviewModule: PreviewModule? = null
 
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        ocrModule = LiveOcr(reactContext)
-        classifierModule = LiveImageClassifier(reactContext)
-        // Default to OCR module
-        currentPreviewModule = ocrModule
-        return listOf(ocrModule, classifierModule)
+        if (!::ocrModule.isInitialized) {
+            ocrModule = LiveOcr(reactContext)
+        }
+        return listOf(ocrModule)
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
+        if (!::ocrModule.isInitialized) {
+            ocrModule = LiveOcr(reactContext)
+        }
         return listOf(
             LiveOcrPreviewManager().apply { 
-                setPreviewModules(ocrModule, classifierModule)
+                setPreviewModules(ocrModule, ocrModule)
             }
         )
     }
-} 
+}

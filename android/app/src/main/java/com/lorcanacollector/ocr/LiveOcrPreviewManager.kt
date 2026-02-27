@@ -59,9 +59,6 @@ class LiveOcrPreviewManager : SimpleViewManager<LiveOcrPreviewView>() {
 
     override fun onAfterUpdateTransaction(view: LiveOcrPreviewView) {
         super.onAfterUpdateTransaction(view)
-        if (view.isSurfaceValid()) {
-            currentModule?.setPreviewSurface(view.getSurface())
-        }
     }
 }
 

@@ -11,7 +11,6 @@ import PriceLookupScreen from '../screens/price/PriceLookupScreen.refactored';
 import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScreen';
 import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
 import LorcanaCardDetailsScreen from '../screens/LorcanaCardDetailsScreen';
-import CameraTest from '../components/test';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 import type { PartialLorcanaCardWithPrice } from '../types/lorcana';
@@ -27,7 +26,6 @@ export type RootStackParamList = {
         card: PartialLorcanaCardWithPrice;
         collectionId: string;
     };
-    CameraTest: undefined;
 };
 
 export type MainTabParamList = {
@@ -119,14 +117,6 @@ const AppNavigator = () => {
                 name="LorcanaCardDetails"
                 component={LorcanaCardDetailsScreen}
                 options={{ title: 'Lorcana Card Details' }}
-            />
-            <Stack.Screen
-                name="CameraTest"
-                component={CameraTest}
-                options={{
-                    title: 'Camera Test',
-                    headerShown: false
-                }}
             />
         </Stack.Navigator>
     );

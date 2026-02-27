@@ -1,7 +1,7 @@
 package com.lorcanacollector.ocr
 
-import android.view.Surface
+import androidx.camera.view.PreviewView
 
 interface PreviewModule {
-    fun setPreviewSurface(surface: Surface?)
-} 
+    fun setPreviewView(previewView: PreviewView?)
+}

@@ -7,6 +7,7 @@ export interface OcrResult {
     isLorcana: boolean;
     setCode?: string | null;
     cardNumber?: string | null;
+    setNumber?: number | null;
 }
 
 export interface LorcanaCard {

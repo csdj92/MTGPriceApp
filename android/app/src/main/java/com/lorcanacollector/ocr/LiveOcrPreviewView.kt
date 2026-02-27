@@ -2,143 +2,149 @@ package com.lorcanacollector.ocr
 
 import android.content.Context
 import android.util.Log
-import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import java.util.concurrent.atomic.AtomicBoolean
-import android.view.View
-import android.view.Surface
+import androidx.camera.view.PreviewView
 
 class LiveOcrPreviewView(context: Context, private var previewModule: PreviewModule?) : FrameLayout(context) {
     companion object {
-        private const val TAG = "LiveOcrPreviewView"
+        const val TAG = "LiveOcrPreviewView"
     }
 
     private var isActive = false
-    private var isSurfaceValid = false
-    private val isPreviewSetup = AtomicBoolean(false)
-    private val surfaceView: SurfaceView = SurfaceView(context)
-    
+
+    val previewView: PreviewView = PreviewView(context).apply {
+        implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+        scaleType = PreviewView.ScaleType.FILL_CENTER
+    }
+
+    // React Native's Yoga layout engine intercepts and swallows requestLayout() calls from
+    // child views (including CameraX's PreviewView and its internal SurfaceView). This means
+    // the SurfaceView never gets properly measured/laid out, so its surface is never created
+    // and the preview stays black. Rotation works because a configuration change forces a full
+    // Activity layout pass that bypasses Yoga entirely.
+    //
+    // Fix: override requestLayout() and manually post a measure+layout pass so the SurfaceView
+    // always gets valid dimensions regardless of what Yoga does.
+    private val measureAndLayout = Runnable {
+        measure(
+            MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
+        )
+        layout(left, top, right, bottom)
+    }
+
+    override fun requestLayout() {
+        super.requestLayout()
+        post(measureAndLayout)
+    }
+
     init {
-        Log.d(TAG, "Initializing LiveOcrPreviewView")
+        Log.d(TAG, "init: creating view")
         layoutParams = LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
-        
-        surfaceView.layoutParams = LayoutParams(
+        previewView.layoutParams = LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
+        addView(previewView)
+        Log.d(TAG, "init: previewView added, implementationMode=PERFORMANCE")
+    }
 
-        surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) {
-                Log.d(TAG, "Surface created - width: ${holder.surfaceFrame.width()}, height: ${holder.surfaceFrame.height()}")
-                synchronized(this@LiveOcrPreviewView) {
-                    isSurfaceValid = true
-                    if (isActive) {
-                        Log.d(TAG, "Surface created and view is active, setting up preview")
-                        setupPreview()
-                    } else {
-                        Log.d(TAG, "Surface created but view is not active")
-                    }
-                }
-            }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        Log.d(TAG, "onAttachedToWindow: size=${width}x${height}, visibility=${visibilityName(visibility)}")
+        logSurfaceViewState("onAttachedToWindow")
+    }
 
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                Log.d(TAG, "Surface changed: format=$format, width=$width, height=$height")
-                synchronized(this@LiveOcrPreviewView) {
-                    if (width > 0 && height > 0) {
-                        isSurfaceValid = true
-                        if (isActive) {
-                            Log.d(TAG, "Surface changed and view is active, setting up preview")
-                            setupPreview()
-                        } else {
-                            Log.d(TAG, "Surface changed but view is not active")
-                        }
-                    } else {
-                        Log.w(TAG, "Invalid surface dimensions: width=$width, height=$height")
-                        isSurfaceValid = false
-                    }
-                }
-            }
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        Log.d(TAG, "onDetachedFromWindow")
+    }
 
-            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                Log.d(TAG, "Surface destroyed")
-                synchronized(this@LiveOcrPreviewView) {
-                    isSurfaceValid = false
-                    isPreviewSetup.set(false)
-                    releasePreview()
-                }
-            }
-        })
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        val w = right - left
+        val h = bottom - top
+        Log.d(TAG, "onLayout: changed=$changed size=${w}x${h} previewView=${previewView.width}x${previewView.height}")
+        logSurfaceViewState("onLayout")
+    }
 
-        addView(surfaceView)
-        visibility = View.INVISIBLE
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        Log.d(TAG, "onWindowVisibilityChanged: ${visibilityName(visibility)}")
+        logSurfaceViewState("onWindowVisibilityChanged")
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        Log.d(TAG, "onVisibilityChanged: changedView=${changedView.javaClass.simpleName} visibility=${visibilityName(visibility)}")
+    }
+
+    fun logSurfaceViewState(caller: String) {
+        val sv = findSurfaceView(previewView)
+        if (sv != null) {
+            val surfaceValid = try { sv.holder.surface.isValid } catch (e: Exception) { false }
+            Log.d(TAG, "[$caller] SurfaceView: attached=${sv.isAttachedToWindow}, " +
+                    "visibility=${visibilityName(sv.visibility)}, " +
+                    "size=${sv.width}x${sv.height}, " +
+                    "surfaceValid=$surfaceValid, " +
+                    "holderSurface=${sv.holder.surface}")
+        } else {
+            Log.d(TAG, "[$caller] No SurfaceView found inside PreviewView (may be TextureView mode)")
+        }
+    }
+
+    private fun findSurfaceView(group: ViewGroup): SurfaceView? {
+        for (i in 0 until group.childCount) {
+            val child = group.getChildAt(i)
+            if (child is SurfaceView) return child
+            if (child is ViewGroup) findSurfaceView(child)?.let { return it }
+        }
+        return null
+    }
+
+    private fun visibilityName(v: Int) = when (v) {
+        View.VISIBLE -> "VISIBLE"
+        View.INVISIBLE -> "INVISIBLE"
+        View.GONE -> "GONE"
+        else -> "UNKNOWN($v)"
     }
 
     fun setPreviewModule(module: PreviewModule?) {
-        synchronized(this) {
-            if (previewModule != module) {
-                // Release the old preview
-                releasePreview()
-                previewModule = module
-                if (isActive && isSurfaceValid) {
-                    post { setupPreview() }  // Post to main thread
-                }
+        if (previewModule != module) {
+            Log.d(TAG, "setPreviewModule: switching module")
+            previewModule?.setPreviewView(null)
+            previewModule = module
+            if (isActive) {
+                previewModule?.setPreviewView(previewView)
             }
         }
     }
 
     fun setIsActive(active: Boolean) {
-        synchronized(this) {
-            if (isActive != active) {
-                isActive = active
-                visibility = if (active) View.VISIBLE else View.INVISIBLE
-                
-                // First release the old preview if needed
-                if (!active) {
-                    releasePreview()
-                }
-                
-                // Then setup the new preview if needed
-                if (active && isSurfaceValid) {
-                    post { setupPreview() }  // Post to main thread
-                }
-            }
-        }
-    }
-
-    fun isSurfaceValid(): Boolean = isSurfaceValid
-
-    fun getSurface(): Surface? = if (isSurfaceValid) surfaceView.holder.surface else null
-
-    private fun setupPreview() {
-        synchronized(this) {
-            if (isActive && isSurfaceValid && !isPreviewSetup.get()) {
-                try {
-                    previewModule?.setPreviewSurface(surfaceView.holder.surface)
-                    isPreviewSetup.set(true)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error setting up preview", e)
-                    isPreviewSetup.set(false)
-                }
+        if (isActive != active) {
+            isActive = active
+            Log.d(TAG, "setIsActive=$active attached=${isAttachedToWindow} size=${width}x${height}")
+            logSurfaceViewState("setIsActive=$active")
+            if (active) {
+                previewModule?.setPreviewView(previewView)
+            } else {
+                previewModule?.setPreviewView(null)
             }
         }
     }
 
     fun releasePreview() {
-        synchronized(this) {
-            if (isPreviewSetup.get()) {
-                try {
-                    previewModule?.setPreviewSurface(null)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error releasing preview", e)
-                } finally {
-                    isPreviewSetup.set(false)
-                }
-            }
+        try {
+            Log.d(TAG, "releasePreview")
+            previewModule?.setPreviewView(null)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error releasing preview", e)
         }
     }
-} 
+}

@@ -1,5 +1,6 @@
-import { NativeEventEmitter } from 'react-native';
+import { NativeEventEmitter, NativeModules } from 'react-native';
 import { LiveOcrModule } from '../types/NativeModules';
+import type { LiveOcrFrameEvent } from '../types/NativeModules';
 
 // Utility for safer native module calls
 const safeNativeCall = async <T>(
@@ -15,8 +16,10 @@ const safeNativeCall = async <T>(
   }
 };
 
-// Create emitter only if module exists
-const liveOcrEmitter = LiveOcrModule ? new NativeEventEmitter(LiveOcrModule) : null;
+// Create emitter only from the real native module; avoid passing mock objects.
+const liveOcrEmitter = NativeModules.LiveOcr
+  ? new NativeEventEmitter(NativeModules.LiveOcr)
+  : null;
 
 export const CameraService = {
   // Session management
@@ -101,12 +104,18 @@ export const CameraService = {
     ),
   
   // Preview size
-  getPreviewSize: () => 
-    safeNativeCall(
-      () => LiveOcrModule.getPreviewSize(),
-      { width: 0, height: 0 },
-      'Failed to get preview size'
-    ),
+  getPreviewSize: async () => {
+    try {
+      return await LiveOcrModule.getPreviewSize();
+    } catch (error: any) {
+      // During startup, native preview size may not be available until first frame.
+      if (error?.code === 'NO_SIZE') {
+        return { width: 0, height: 0 };
+      }
+      console.error('Failed to get preview size', error);
+      return { width: 0, height: 0 };
+    }
+  },
   
   // Event management
   addOcrListener: (callback: (result: any) => void) => {
@@ -115,6 +124,10 @@ export const CameraService = {
   
   addPreviewSizeListener: (callback: (size: { width: number; height: number }) => void) => {
     return liveOcrEmitter?.addListener('PreviewSize', callback);
+  },
+
+  addOcrFrameListener: (callback: (frame: LiveOcrFrameEvent) => void) => {
+    return liveOcrEmitter?.addListener('LiveOcrFrame', callback);
   }
 };
 

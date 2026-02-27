@@ -2,6 +2,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal } from 'react-native';
 import FastImage from "@d11/react-native-fast-image";
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import LinearGradient from 'react-native-linear-gradient';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
 import { useTheme } from '../../context/ThemeContext';
@@ -10,7 +11,11 @@ import {
     formatLorcanaRarity,
     getLorcanaRarityColor,
 } from '../../utils/formatters';
-import { updateLorcanaCardQuantity, getLorcanaCardQuantity } from '../../services/LorcanaService';
+import {
+    updateLorcanaCardQuantity,
+    getLorcanaCardQuantity,
+    resolveMissingCardColor,
+} from '../../services/LorcanaService';
 
 const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
@@ -18,19 +23,55 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     color: string;
 }>;
 
+const LORCANA_BADGE_COLOR_MAP: Record<string, string> = {
+    amber: '#FFA500',
+    amethyst: '#9966CC',
+    emerald: '#50C878',
+    ruby: '#E0115F',
+    sapphire: '#0F52BA',
+    steel: '#71797E',
+};
+
+const tokenizeColorString = (color: string | undefined): string[] => {
+    if (typeof color !== 'string' || !color.trim()) return [];
+
+    const normalized = color.toLowerCase();
+
+    // First pass: extract known Lorcana inks from any string format
+    const keywordMatches = normalized.match(/\b(amber|amethyst|emerald|ruby|sapphire|steel)\b/g);
+    if (keywordMatches && keywordMatches.length > 0) {
+        return keywordMatches;
+    }
+
+    // Fallback for unusual delimiters/legacy formats
+    return normalized
+        .replace(/[\/|&+]/g, ',')
+        .split(',')
+        .map(token => token.trim())
+        .filter(Boolean);
+};
+
+const getBadgeGradientColors = (color: string | undefined): string[] => {
+    const resolvedColors: string[] = [];
+
+    for (const token of tokenizeColorString(color)) {
+        const mapped = LORCANA_BADGE_COLOR_MAP[token];
+        if (!mapped) continue;
+
+        if (!resolvedColors.includes(mapped)) {
+            resolvedColors.push(mapped);
+        }
+
+        if (resolvedColors.length === 2) break;
+    }
+
+    return resolvedColors;
+};
+
 // Helper functions for color coding
 const getColorForBadge = (color: string | undefined): string => {
-    if (!color) return '#999999';
-    
-    switch(color.toLowerCase()) {
-        case 'amber': return '#FFA500';
-        case 'amethyst': return '#9966CC';
-        case 'emerald': return '#50C878';
-        case 'ruby': return '#E0115F';
-        case 'sapphire': return '#0F52BA';
-        case 'steel': return '#71797E';
-        default: return '#999999';
-    }
+    const gradientColors = getBadgeGradientColors(color);
+    return gradientColors[0] || '#999999';
 };
 
 const getRarityColor = (rarity: string | undefined): string =>
@@ -62,6 +103,9 @@ const CardHeaderDisplay: React.FC<CardHeaderDisplayProps> = React.memo(({
     handleImageLoad,
     handleImageError,
 }) => {
+    const colorLabel = card.Color?.trim() || 'Unknown';
+    const colorBadgeGradient = getBadgeGradientColors(card.Color);
+
     return (
         <View style={styles.cardHeader}>
             <View style={styles.cardImageContainer}>
@@ -78,9 +122,20 @@ const CardHeaderDisplay: React.FC<CardHeaderDisplayProps> = React.memo(({
                 <Text style={[styles.cardName, { color: theme.text }]}>{card.Name}</Text>
                 
                 <View style={styles.badgeContainer}>
-                    <View style={[styles.badge, { backgroundColor: getColorForBadge(card.Color) }]}>
-                        <Text style={styles.badgeText}>{card.Color}</Text>
-                    </View>
+                    {colorBadgeGradient.length >= 2 ? (
+                        <LinearGradient
+                            colors={[colorBadgeGradient[0], colorBadgeGradient[1]]}
+                            start={{ x: 0, y: 0.5 }}
+                            end={{ x: 1, y: 0.5 }}
+                            style={styles.badge}
+                        >
+                            <Text style={styles.badgeText}>{colorLabel}</Text>
+                        </LinearGradient>
+                    ) : (
+                        <View style={[styles.badge, { backgroundColor: getColorForBadge(card.Color) }]}>
+                            <Text style={styles.badgeText}>{colorLabel}</Text>
+                        </View>
+                    )}
                     <View style={[styles.badge, { backgroundColor: getRarityColor(card.Rarity) }]}>
                         <Text style={styles.badgeText}>{formatLorcanaRarity(card.Rarity)}</Text>
                     </View>
@@ -410,6 +465,7 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
     onQuantityChange
 }) => {
     const { theme } = useTheme();
+    const [resolvedColor, setResolvedColor] = useState<string | null>(null);
     if (!card) return null;
 
     const handleImageLoad = useCallback(() => {
@@ -423,6 +479,48 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
     const handleImageError = useCallback(() => {
         handleImageLoadError(card.Image, card.Name);
     }, [card.Image, card.Name]);
+
+    useEffect(() => {
+        let isActive = true;
+
+        const currentColor = typeof card.Color === 'string' ? card.Color.trim() : '';
+        if (currentColor.length > 0) {
+            setResolvedColor(currentColor);
+            return () => {
+                isActive = false;
+            };
+        }
+
+        setResolvedColor(null);
+
+        resolveMissingCardColor({
+            Unique_ID: card.Unique_ID,
+            Set_ID: card.Set_ID,
+            Set_Num: card.Set_Num,
+            Card_Num: card.Card_Num,
+            Color: card.Color,
+        })
+            .then(color => {
+                if (!isActive) return;
+                if (color) {
+                    console.log('[LorcanaCardModal] Resolved missing card color from API:', {
+                        uniqueId: card.Unique_ID,
+                        name: card.Name,
+                        color,
+                    });
+                    setResolvedColor(color);
+                }
+            })
+            .catch(error => {
+                console.log('[LorcanaCardModal] Failed to resolve missing card color:', error);
+            });
+
+        return () => {
+            isActive = false;
+        };
+    }, [card.Unique_ID, card.Set_ID, card.Set_Num, card.Card_Num, card.Color, card.Name]);
+
+    const displayCard = resolvedColor ? { ...card, Color: resolvedColor } : card;
 
     // Use priceData if present, otherwise fallback to card.prices
     const price = priceData?.usd ?? card.price_usd ?? card.prices?.usd;
@@ -448,7 +546,7 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
                     <ScrollView style={styles.modalScrollView}>
                         {/* Card Header with Image and Basic Info */}
                         <CardHeaderDisplay 
-                            card={card} 
+                            card={displayCard} 
                             theme={theme} 
                             handleImageLoad={handleImageLoad} 
                             handleImageError={handleImageError} 

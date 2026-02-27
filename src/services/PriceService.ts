@@ -38,6 +38,19 @@ const normalizePriceValue = (value: unknown): string | null => {
     return String(value);
 };
 
+const toPositiveInt = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return null;
+    }
+
+    return Math.trunc(parsed);
+};
+
 const splitCardName = (name: string): { baseName: string; version: string } => {
     const parts = name.split(' - ');
     return {
@@ -135,7 +148,9 @@ class PriceService {
         const candidateName = candidate?.name || '';
         const candidateVersion = candidate?.version || '';
         const candidateCollectorNumber = candidate?.collector_number || '';
-        const targetCollectorNumber = card.Card_Num !== undefined ? String(card.Card_Num) : '';
+        const normalizedCardNumber = toPositiveInt(card.Card_Num);
+        const normalizedSetNumber = toPositiveInt(card.Set_Num);
+        const targetCollectorNumber = normalizedCardNumber !== null ? String(normalizedCardNumber) : '';
 
         let score = 0;
 
@@ -165,8 +180,8 @@ class PriceService {
             score += 20;
         }
 
-        if (card.Set_Num !== undefined) {
-            const setAsString = String(card.Set_Num);
+        if (normalizedSetNumber !== null) {
+            const setAsString = String(normalizedSetNumber);
             if (
                 candidate?.set?.id === setAsString ||
                 candidate?.set?.code?.toUpperCase() === setAsString.toUpperCase()
@@ -199,8 +214,11 @@ class PriceService {
     }
 
     private async findCardFromLorcast(card: PriceLookupCard): Promise<LorcastCard | null> {
-        if (card.Set_Num !== undefined && card.Card_Num !== undefined) {
-            const direct = await lorcastAPI.fetchCard(card.Set_Num, card.Card_Num);
+        const normalizedSetNumber = toPositiveInt(card.Set_Num);
+        const normalizedCardNumber = toPositiveInt(card.Card_Num);
+
+        if (normalizedSetNumber !== null && normalizedCardNumber !== null) {
+            const direct = await lorcastAPI.fetchCard(normalizedSetNumber, normalizedCardNumber);
             if (direct) {
                 return direct;
             }
@@ -210,7 +228,7 @@ class PriceService {
         const queryParts = [
             `name:"${escapeQueryText(baseName)}"`,
             version ? `version:"${escapeQueryText(version)}"` : '',
-            card.Set_Num !== undefined ? `set:${card.Set_Num}` : '',
+            normalizedSetNumber !== null ? `set:${normalizedSetNumber}` : '',
             card.Rarity ? `rarity:${normalizeRarity(card.Rarity)}` : '',
         ].filter(Boolean);
 
@@ -325,15 +343,19 @@ class PriceService {
 
     async getCardPrice(
         card: PriceLookupCard,
-        options: { forceRefresh?: boolean; maxAgeHours?: number } = {}
+        options: { forceRefresh?: boolean; maxAgeHours?: number; skipRecentCacheLookup?: boolean } = {}
     ): Promise<LorcanaPrice> {
-        const { forceRefresh = false, maxAgeHours = DEFAULT_CACHE_HOURS } = options;
+        const {
+            forceRefresh = false,
+            maxAgeHours = DEFAULT_CACHE_HOURS,
+            skipRecentCacheLookup = false,
+        } = options;
 
         if (!card || !card.Name) {
             return { usd: null, usd_foil: null, tcgplayer_id: null };
         }
 
-        if (card.Unique_ID && !forceRefresh) {
+        if (card.Unique_ID && !forceRefresh && !skipRecentCacheLookup) {
             const cached = await this.getCachedPriceByCardId(card.Unique_ID, maxAgeHours);
             if (cached) {
                 return cached;
