@@ -115,7 +115,6 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
     };
 
     const renderCollectionItem = ({ item }: { item: Collection }) => (
-        console.log('[CollectionSelector] item:', item),
         <TouchableOpacity
             style={styles.collectionItem}
             onPress={() => onSelectCollection(item)}

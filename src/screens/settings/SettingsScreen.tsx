@@ -8,19 +8,15 @@ import {
     ScrollView,
     Alert,
     ActivityIndicator,
-    InteractionManager,
 } from 'react-native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any;
-import { databaseService } from '../../services/DatabaseService';
-import { fixCardNames, getNewSetCards, safeRefreshLorcanaCards,fixCardSetIdentifiers,deleteAllSet10Cards, updateAllLorcanaPrices,reloadLorcanaCards, fetchAndStoreEnchantedCards, cleanupDuplicateCards, clearAllLorcanaCards} from '../../services/LorcanaService';
-import { cardImportService } from '../../services/CardImportService';
+import {
+    forceRefreshAllLorcanaCards,
+    getLorcanaCards,
+} from '../../services/LorcanaService';
 import { useTheme } from '../../context/ThemeContext';
-import SQLite from 'react-native-sqlite-storage';
-import { AddSetNumberToLorcanaCollections } from '../../database/migrations/002_AddSetNumberToLorcanaCollections';
-import { MigrationManager } from '../../database/migrations/MigrationManager';
 import { imageCacheService, type DownloadProgress, type CacheStats } from '../../services/ImageCacheService';
-import { getLorcanaCards } from '../../services/LorcanaService';
 
 
 interface SettingsSectionProps {
@@ -84,13 +80,8 @@ const SettingsScreen = () => {
     const [notifications, setNotifications] = useState(true);
     const [priceAlerts, setPriceAlerts] = useState(true);
     const { isDark, setDarkMode, theme } = useTheme();
-    const [isRebuilding, setIsRebuilding] = useState(false);
-    const [isFixingNames, setIsFixingNames] = useState(false);
-    const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
     const [isImportingCards, setIsImportingCards] = useState(false);
     const [importProgress, setImportProgress] = useState<string>('');
-    const [isCleaningDuplicates, setIsCleaningDuplicates] = useState(false);
-    const [isClearingAllCards, setIsClearingAllCards] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
     const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
     const [isDownloadingImages, setIsDownloadingImages] = useState(false);
@@ -193,94 +184,14 @@ const SettingsScreen = () => {
         );
     };
 
-    const resyncLorcana = async () => {
-        // await getNewSetCards();
-        // await deleteAllSet7Cards();
-        // await fixCardSetIdentifiers('7');
-        await fetchAndStoreEnchantedCards();
-    };
-
-    const handleCleanupDuplicateCards = async () => {
-        Alert.alert(
-            'Clean Up Duplicate Cards',
-            'This will remove duplicate cards that were created during import (cards with old numeric Set_ID format). This operation cannot be undone. Continue?',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Clean Up',
-                    style: 'destructive',
-                    onPress: async () => {
-                        setIsCleaningDuplicates(true);
-                        try {
-                            const result = await cleanupDuplicateCards();
-                            Alert.alert(
-                                'Cleanup Complete',
-                                `Removed ${result.deleted} duplicate cards.\n${result.remaining} cards remaining in database.`
-                            );
-                        } catch (error) {
-                            console.error('Error cleaning up duplicates:', error);
-                            Alert.alert('Error', 'Failed to clean up duplicate cards. Please try again.');
-                        } finally {
-                            setIsCleaningDuplicates(false);
-                        }
-                    }
-                }
-            ]
-        );
-    };
-
-    const handleClearAllCards = async () => {
-        Alert.alert(
-            '⚠️ CLEAR ALL CARDS ⚠️',
-            'This will PERMANENTLY DELETE ALL Lorcana cards from your database, including your collection and all card data. This operation CANNOT be undone!\n\nOnly your user-created collections will remain.\n\nAre you ABSOLUTELY sure?',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'I understand - Clear Everything',
-                    style: 'destructive',
-                    onPress: () => {
-                        Alert.alert(
-                            'FINAL WARNING',
-                            'This is your LAST CHANCE to cancel. All card data will be lost forever.\n\nType "DELETE" to confirm:',
-                            [
-                                { text: 'Cancel', style: 'cancel' },
-                                {
-                                    text: 'Delete All Cards',
-                                    style: 'destructive',
-                                    onPress: async () => {
-                                        setIsClearingAllCards(true);
-                                        try {
-                                            const result = await clearAllLorcanaCards();
-                                            Alert.alert(
-                                                'All Cards Cleared',
-                                                `Removed ${result.cleared} cards and all related data from database.\n\nYou can now re-import cards if needed.`
-                                            );
-                                        } catch (error) {
-                                            console.error('Error clearing all cards:', error);
-                                            Alert.alert('Error', 'Failed to clear all cards. Please try again.');
-                                        } finally {
-                                            setIsClearingAllCards(false);
-                                        }
-                                    }
-                                }
-                            ],
-                            { cancelable: false }
-                        );
-                    }
-                }
-            ],
-            { cancelable: false }
-        );
-    };
-
     const handleImportAllLorcanaCards = async () => {
         console.log('[Settings] ========================================');
         console.log('[Settings] IMPORT STARTED - handleImportAllLorcanaCards called');
         console.log('[Settings] ========================================');
 
         Alert.alert(
-            'Import All Lorcana Cards',
-            'This will fetch ALL Lorcana cards from all sets including Enchanted, Epic, and Iconic rarities. This may take a few minutes. Continue?',
+            'Force Refresh All Lorcana Cards',
+            'This will re-pull every Lorcana set from the API and overwrite existing card data in the database, including colors, text, and images. This may take a few minutes. Continue?',
             [
                 { text: 'Cancel', style: 'cancel', onPress: () => {
                     console.log('[Settings] User cancelled import');
@@ -293,9 +204,9 @@ const SettingsScreen = () => {
                         setImportProgress('Starting import...');
 
                         try {
-                            console.log('[Settings] Calling cardImportService.importAllSets...');
+                            console.log('[Settings] Calling forceRefreshAllLorcanaCards...');
 
-                            const result = await cardImportService.importAllSets((progress) => {
+                            const result = await forceRefreshAllLorcanaCards((progress) => {
                                 const progressText = `Set ${progress.currentSet}/${progress.totalSets}: ${progress.setName}\n${progress.processedCards}/${progress.totalCards} cards`;
                                 setImportProgress(progressText);
                                 console.log('[Settings] ✓ Import progress:', {
@@ -351,114 +262,6 @@ const SettingsScreen = () => {
         );
     };
 
-    const handleRebuildDatabase = async () => {
-        Alert.alert(
-            'Rebuild Database',
-            'Are you sure you want to rebuild the MTG database? This will download the latest data from MTGJson and update prices. This process may take several minutes.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Rebuild',
-                    style: 'destructive',
-                    onPress: () => {
-                        setIsRebuilding(true);
-                        InteractionManager.runAfterInteractions(async () => {
-                            try {
-                                // Lorcana-only compatibility path: just reinitialize and verify.
-                                await databaseService.initDatabase();
-
-                                const isHealthy = await databaseService.verifyDatabaseState();
-                                if (!isHealthy) {
-                                    throw new Error('Database integrity check failed.');
-                                }
-
-                                Alert.alert('Success', 'Database has been rebuilt successfully.');
-                            } catch (error: any) {
-                                console.error('Error rebuilding database:', error);
-                                Alert.alert('Error', error.message || 'Failed to rebuild database. Please try again.');
-                            } finally {
-                                setIsRebuilding(false);
-                            }
-                        });
-                    },
-                },
-            ]
-        );
-    };
-
-    const handleFixCardNames = async () => {
-        try {
-            setIsFixingNames(true);
-            
-            // Use InteractionManager to ensure UI remains responsive
-            InteractionManager.runAfterInteractions(async () => {
-                try {
-                    const fixedCount = await fixCardNames();
-                    
-                    if (fixedCount > 0) {
-                        Alert.alert(
-                            'Success',
-                            `Fixed ${fixedCount} cards with "Name - undefined" issue.`
-                        );
-                    } else {
-                        Alert.alert(
-                            'No Issues Found',
-                            'No cards with "Name - undefined" were found in the database.'
-                        );
-                    }
-                } catch (error) {
-                    console.error('Error fixing card names:', error);
-                    Alert.alert('Error', 'Failed to fix card names. Please try again.');
-                } finally {
-                    setIsFixingNames(false);
-                }
-            });
-        } catch (error) {
-            console.error('Error fixing card names:', error);
-            setIsFixingNames(false);
-            Alert.alert('Error', 'Failed to fix card names. Please try again.');
-        }
-    };
-
-    const updateLorcanaSetNumbers = async () => {
-        // Mapping of set codes to release numbers
-        const setCodeToNumber: Record<string, number> = {
-            'TFC': 1, // The First Chapter
-            'ROF': 2, // Rise of the Floodborn
-            'INK': 3, // Into the Inklands
-            'URS': 4, // Ursula's Return
-            'SSK': 5, // Shimmering Skies
-            'ARI': 6, // Archazia's Island
-            'AZS': 7, // Azurite Sea
-            'JAF': 8, // Reign of the Jafar
-            'FAB': 9, // Fabled
-        };
-        try {
-            const db = await SQLite.openDatabase({ name: 'lorcana.db', location: 'default' });
-            await db.executeSql('ALTER TABLE lorcana_collections ADD COLUMN set_number INTEGER');
-            const [results] = await db.executeSql('SELECT id, description FROM lorcana_collections');
-            let updated = 0;
-            for (let i = 0; i < results.rows.length; i++) {
-                const row = results.rows.item(i);
-                if (row.description) {
-                    const match = row.description.match(/\(([A-Z]{3})\)$/);
-                    if (match) {
-                        const setCode = match[1];
-                        const setNumber = setCodeToNumber[setCode];
-                        if (setNumber) {
-                            await db.executeSql('UPDATE lorcana_collections SET set_number = ? WHERE id = ?', [setNumber, row.id]);
-                            updated++;
-                        }
-                    }
-                }
-            }
-            Alert.alert('Set Numbers Updated', `Updated set_number for ${updated} Lorcana collections.`);
-        } catch (error) {
-            console.error('Error updating Lorcana set numbers:', error);
-            Alert.alert('Error', 'Failed to update Lorcana set numbers.');
-        }
-    };
-
     return (
         <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
             <SettingsSection title="Preferences">
@@ -487,95 +290,15 @@ const SettingsScreen = () => {
 
             <SettingsSection title="Database Management">
                 <SettingsItem
-                    icon="database-refresh"
-                    title="Rebuild Database"
-                    subtitle="Download latest MTG data"
-                    onPress={handleRebuildDatabase}
-                />
-                <SettingsItem
-                    icon="database-refresh"
-                    title="Resync Lorcana"
-                    subtitle="Resync Lorcana data"
-                    onPress={resyncLorcana}
-                />
-                <SettingsItem
                     icon="cloud-download"
-                    title="Import All Lorcana Cards"
-                    subtitle="Fetch all sets including Enchanted, Epic & Iconic"
+                    title="Force Refresh All Lorcana Cards"
+                    subtitle="Re-pull all sets and overwrite existing card data"
                     onPress={handleImportAllLorcanaCards}
                 />
                 {isImportingCards && (
                     <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
                         <ActivityIndicator size="small" color={theme.primary} />
                         <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>{importProgress || 'Importing cards...'}</Text>
-                    </View>
-                )}
-                <SettingsItem
-                    icon="delete-sweep"
-                    title="Clean Up Duplicate Cards"
-                    subtitle="Remove duplicate cards from import (old numeric format)"
-                    onPress={handleCleanupDuplicateCards}
-                />
-                {isCleaningDuplicates && (
-                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
-                        <ActivityIndicator size="small" color={theme.primary} />
-                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Cleaning up duplicates...</Text>
-                    </View>
-                )}
-                <SettingsItem
-                    icon="delete-alert"
-                    title="Clear ALL Cards"
-                    subtitle="⚠️ PERMANENTLY delete all Lorcana cards (nuclear option)"
-                    onPress={handleClearAllCards}
-                />
-                {isClearingAllCards && (
-                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
-                        <ActivityIndicator size="small" color={theme.primary} />
-                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Clearing all cards...</Text>
-                    </View>
-                )}
-                <SettingsItem
-                    icon="cash-sync"
-                    title="Refresh Lorcana Prices"
-                    subtitle="Update all Lorcana card prices"
-                    onPress={async () => {
-                        try {
-                            setIsUpdatingPrices(true);
-                            const result = await updateAllLorcanaPrices(0); // Pass 0 to force update all prices
-                            Alert.alert(
-                                'Price Update Complete',
-                                `Updated: ${result.updated} cards\nSkipped: ${result.skipped} cards`
-                            );
-                        } catch (error) {
-                            console.error('Error updating prices:', error);
-                            Alert.alert('Error', 'Failed to update prices. Please try again.');
-                        } finally {
-                            setIsUpdatingPrices(false);
-                        }
-                    }}
-                />
-                {isUpdatingPrices && (
-                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
-                        <ActivityIndicator size="small" color={theme.primary} />
-                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Updating prices...</Text>
-                    </View>
-                )}
-                {isRebuilding && (
-                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
-                        <ActivityIndicator size="small" color={theme.primary} />
-                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Rebuilding database...</Text>
-                    </View>
-                )}
-                <SettingsItem
-                    icon="card-text-outline"
-                    title="Fix Card Names"
-                    subtitle="Fix cards with 'Name - undefined' issue"
-                    onPress={handleFixCardNames}
-                />
-                {isFixingNames && (
-                    <View style={[styles.rebuildingContainer, { backgroundColor: theme.background }]}>
-                        <ActivityIndicator size="small" color={theme.primary} />
-                        <Text style={[styles.rebuildingText, { color: theme.textSecondary }]}>Fixing card names...</Text>
                     </View>
                 )}
             </SettingsSection>
@@ -600,24 +323,6 @@ const SettingsScreen = () => {
                     onPress={handleClearData}
                 />
                 
-            </SettingsSection>
-
-            <SettingsSection title="Lorcana Database Tools">
-                <SettingsItem
-                    icon="numeric"
-                    title="Update Lorcana Set Numbers"
-                    subtitle="Populate set_number for all Lorcana sets (release order)"
-                    onPress={() => {
-                        Alert.alert(
-                            'Update Lorcana Set Numbers',
-                            'This will update the set_number field for all Lorcana set collections. Continue?',
-                            [
-                                { text: 'Cancel', style: 'cancel' },
-                                { text: 'Update', style: 'destructive', onPress: updateLorcanaSetNumbers },
-                            ]
-                        );
-                    }}
-                />
             </SettingsSection>
 
             <SettingsSection title="About">

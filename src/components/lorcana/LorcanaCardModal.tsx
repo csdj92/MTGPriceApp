@@ -1,7 +1,6 @@
 import React, { useCallback, useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal } from 'react-native';
+import { Alert, View, Text, TouchableOpacity, ScrollView, StyleSheet, Modal, TextInput } from 'react-native';
 import FastImage from "@d11/react-native-fast-image";
-import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import LinearGradient from 'react-native-linear-gradient';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
@@ -10,63 +9,18 @@ import { LorcanaPriceDetails } from './LorcanaPriceDetails';
 import {
     formatLorcanaRarity,
     getLorcanaRarityColor,
+    getBadgeGradientColors,
 } from '../../utils/formatters';
 import {
     updateLorcanaCardQuantity,
-    getLorcanaCardQuantity,
     resolveMissingCardColor,
 } from '../../services/LorcanaService';
-
-const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
-    name: string;
-    size: number;
-    color: string;
-}>;
-
-const LORCANA_BADGE_COLOR_MAP: Record<string, string> = {
-    amber: '#FFA500',
-    amethyst: '#9966CC',
-    emerald: '#50C878',
-    ruby: '#E0115F',
-    sapphire: '#0F52BA',
-    steel: '#71797E',
-};
-
-const tokenizeColorString = (color: string | undefined): string[] => {
-    if (typeof color !== 'string' || !color.trim()) return [];
-
-    const normalized = color.toLowerCase();
-
-    // First pass: extract known Lorcana inks from any string format
-    const keywordMatches = normalized.match(/\b(amber|amethyst|emerald|ruby|sapphire|steel)\b/g);
-    if (keywordMatches && keywordMatches.length > 0) {
-        return keywordMatches;
-    }
-
-    // Fallback for unusual delimiters/legacy formats
-    return normalized
-        .replace(/[\/|&+]/g, ',')
-        .split(',')
-        .map(token => token.trim())
-        .filter(Boolean);
-};
-
-const getBadgeGradientColors = (color: string | undefined): string[] => {
-    const resolvedColors: string[] = [];
-
-    for (const token of tokenizeColorString(color)) {
-        const mapped = LORCANA_BADGE_COLOR_MAP[token];
-        if (!mapped) continue;
-
-        if (!resolvedColors.includes(mapped)) {
-            resolvedColors.push(mapped);
-        }
-
-        if (resolvedColors.length === 2) break;
-    }
-
-    return resolvedColors;
-};
+import {
+    getWatchlistEntry,
+    upsertWatchlistEntry,
+    removeFromWatchlist,
+} from '../../services/WatchlistService';
+import { Icon } from '../../utils/icons';
 
 // Helper functions for color coding
 const getColorForBadge = (color: string | undefined): string => {
@@ -84,6 +38,7 @@ interface LorcanaCardModalProps {
     onDelete: () => void;
     onAddToCollection?: () => void;
     onRemoveFromCollection?: () => void;
+    addLabel?: string;
     priceData?: any;
     isPriceLoading?: boolean;
     collectionId?: string;
@@ -414,11 +369,123 @@ const QuantityControls: React.FC<QuantityControlsProps> = React.memo(({
     );
 });
 
+const WatchButton: React.FC<{ cardId: string; theme: any }> = ({ cardId, theme }) => {
+    const [watched, setWatched] = useState(false);
+    const [showModal, setShowModal] = useState(false);
+    const [buyText, setBuyText] = useState('');
+    const [sellText, setSellText] = useState('');
+
+    useEffect(() => {
+        let active = true;
+        getWatchlistEntry(cardId).then(entry => {
+            if (!active) return;
+            setWatched(!!entry);
+            setBuyText(entry?.target_buy?.toFixed(2) ?? '');
+            setSellText(entry?.target_sell?.toFixed(2) ?? '');
+        });
+        return () => { active = false; };
+    }, [cardId]);
+
+    const handleOpen = () => setShowModal(true);
+
+    const handleSave = async () => {
+        const buy = buyText.trim() ? parseFloat(buyText) : null;
+        const sell = sellText.trim() ? parseFloat(sellText) : null;
+        await upsertWatchlistEntry(cardId, buy, sell);
+        setWatched(true);
+        setShowModal(false);
+    };
+
+    const handleRemove = async () => {
+        await removeFromWatchlist(cardId);
+        setWatched(false);
+        setBuyText('');
+        setSellText('');
+        setShowModal(false);
+    };
+
+    return (
+        <>
+            <TouchableOpacity
+                style={[watchStyles.btn, { borderColor: watched ? '#FF9800' : theme.border }]}
+                onPress={handleOpen}
+            >
+                <Icon name={watched ? 'eye' : 'eye-outline'} size={16} color={watched ? '#FF9800' : (theme.textSecondary || theme.text)} />
+                <Text style={[watchStyles.btnText, { color: watched ? '#FF9800' : (theme.textSecondary || theme.text) }]}>
+                    {watched ? 'Watching' : 'Watch price'}
+                </Text>
+            </TouchableOpacity>
+
+            <Modal visible={showModal} transparent animationType="fade" onRequestClose={() => setShowModal(false)}>
+                <View style={watchStyles.overlay}>
+                    <View style={[watchStyles.box, { backgroundColor: theme.surface }]}>
+                        <Text style={[watchStyles.title, { color: theme.text }]}>Set price targets</Text>
+                        <Text style={[watchStyles.label, { color: theme.text }]}>Buy below ($)</Text>
+                        <TextInput
+                            style={[watchStyles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                            value={buyText}
+                            onChangeText={setBuyText}
+                            keyboardType="decimal-pad"
+                            placeholder="e.g. 5.00"
+                            placeholderTextColor={theme.textSecondary || '#999'}
+                        />
+                        <Text style={[watchStyles.label, { color: theme.text }]}>Sell above ($)</Text>
+                        <TextInput
+                            style={[watchStyles.input, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                            value={sellText}
+                            onChangeText={setSellText}
+                            keyboardType="decimal-pad"
+                            placeholder="e.g. 20.00"
+                            placeholderTextColor={theme.textSecondary || '#999'}
+                        />
+                        <View style={watchStyles.row}>
+                            {watched && (
+                                <TouchableOpacity style={[watchStyles.actBtn, { backgroundColor: '#dc354520' }]} onPress={handleRemove}>
+                                    <Text style={{ color: '#dc3545', fontWeight: '600' }}>Remove</Text>
+                                </TouchableOpacity>
+                            )}
+                            <TouchableOpacity style={[watchStyles.actBtn, { borderColor: theme.border, borderWidth: 1 }]} onPress={() => setShowModal(false)}>
+                                <Text style={{ color: theme.text, fontWeight: '600' }}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[watchStyles.actBtn, { backgroundColor: theme.primary }]} onPress={handleSave}>
+                                <Text style={{ color: '#fff', fontWeight: '600' }}>Save</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+        </>
+    );
+};
+
+const watchStyles = StyleSheet.create({
+    btn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1,
+        alignSelf: 'center',
+        marginBottom: 12,
+    },
+    btnText: { fontSize: 13, fontWeight: '600' },
+    overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 32 },
+    box: { width: '100%', borderRadius: 16, padding: 24, elevation: 8 },
+    title: { fontSize: 18, fontWeight: 'bold', marginBottom: 16 },
+    label: { fontSize: 13, fontWeight: '600', marginBottom: 6 },
+    input: { borderWidth: 1, borderRadius: 8, padding: 10, fontSize: 16, marginBottom: 16 },
+    row: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 4 },
+    actBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 },
+});
+
 interface CollectionActionButtonsProps {
     card: LorcanaCardWithPrice;
     theme: ReturnType<typeof useTheme>['theme'];
     onAddToCollection?: () => void;
     onRemoveFromCollection?: () => void;
+    addLabel?: string;
 }
 
 const CollectionActionButtons: React.FC<CollectionActionButtonsProps> = React.memo(({
@@ -426,6 +493,7 @@ const CollectionActionButtons: React.FC<CollectionActionButtonsProps> = React.me
     theme,
     onAddToCollection,
     onRemoveFromCollection,
+    addLabel = 'Add to Collection',
 }) => {
     return (
         <View style={styles.buttonContainer}>
@@ -435,7 +503,7 @@ const CollectionActionButtons: React.FC<CollectionActionButtonsProps> = React.me
                     onPress={onAddToCollection}
                 >
                     <Icon name="plus-circle" size={18} color="#ffffff" />
-                    <Text style={[styles.buttonText, { color: '#ffffff' }]}>Add to Collection</Text>
+                    <Text style={[styles.buttonText, { color: '#ffffff' }]}>{addLabel}</Text>
                 </TouchableOpacity>
             )}
 
@@ -459,6 +527,7 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
     onDelete,
     onAddToCollection,
     onRemoveFromCollection,
+    addLabel,
     priceData,
     isPriceLoading,
     collectionId,
@@ -466,21 +535,23 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
 }) => {
     const { theme } = useTheme();
     const [resolvedColor, setResolvedColor] = useState<string | null>(null);
-    if (!card) return null;
 
     const handleImageLoad = useCallback(() => {
-        handleImageLoadSuccess(card.Image, { 
-            name: card.Name, 
+        if (!card) return;
+        handleImageLoadSuccess(card.Image, {
+            name: card.Name,
             id: card.Unique_ID,
             context: 'modal'
         });
-    }, [card.Image, card.Name, card.Unique_ID]);
+    }, [card?.Image, card?.Name, card?.Unique_ID]);
 
     const handleImageError = useCallback(() => {
+        if (!card) return;
         handleImageLoadError(card.Image, card.Name);
-    }, [card.Image, card.Name]);
+    }, [card?.Image, card?.Name]);
 
     useEffect(() => {
+        if (!card) return;
         let isActive = true;
 
         const currentColor = typeof card.Color === 'string' ? card.Color.trim() : '';
@@ -518,7 +589,48 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
         return () => {
             isActive = false;
         };
-    }, [card.Unique_ID, card.Set_ID, card.Set_Num, card.Card_Num, card.Color, card.Name]);
+    }, [card?.Unique_ID, card?.Set_ID, card?.Set_Num, card?.Card_Num, card?.Color, card?.Name]);
+
+    useEffect(() => {
+        if (!visible || !card) return;
+
+        console.log('[LorcanaCardModal] Received card for render:', {
+            uniqueId: card.Unique_ID,
+            name: card.Name,
+            setId: card.Set_ID,
+            setName: card.Set_Name,
+            setNum: card.Set_Num,
+            cardNum: card.Card_Num,
+            color: card.Color,
+            rarity: card.Rarity,
+            type: card.Type,
+            image: card.Image,
+            collected: card.collected,
+            quantityNormal: card.quantity_normal,
+            quantityFoil: card.quantity_foil,
+            hasBodyText: Boolean(card.Body_Text),
+            hasFlavorText: Boolean(card.Flavor_Text),
+        });
+    }, [
+        visible,
+        card?.Unique_ID,
+        card?.Name,
+        card?.Set_ID,
+        card?.Set_Name,
+        card?.Set_Num,
+        card?.Card_Num,
+        card?.Color,
+        card?.Rarity,
+        card?.Type,
+        card?.Image,
+        card?.collected,
+        card?.quantity_normal,
+        card?.quantity_foil,
+        card?.Body_Text,
+        card?.Flavor_Text,
+    ]);
+
+    if (!card) return null;
 
     const displayCard = resolvedColor ? { ...card, Color: resolvedColor } : card;
 
@@ -617,6 +729,8 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
                                 </View>
                             )}
                         </View>
+                        {/* Watch price button */}
+                        <WatchButton cardId={card.Unique_ID} theme={theme} />
                     </ScrollView>
 
                     {/* Collection management buttons */}
@@ -625,6 +739,7 @@ const LorcanaCardModal: React.FC<LorcanaCardModalProps> = React.memo(({
                         theme={theme}
                         onAddToCollection={onAddToCollection}
                         onRemoveFromCollection={onRemoveFromCollection}
+                        addLabel={addLabel}
                     />
                 </View>
             </View>

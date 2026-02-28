@@ -1,10 +1,8 @@
 import { Share, Alert, Platform } from 'react-native';
 import RNFS from 'react-native-fs';
-import { databaseService } from './DatabaseService';
 import { getLorcanaCollectionCards, getLorcanaSetCollections, getDB } from './LorcanaService';
 import { collectionCacheService } from './CollectionCacheService';
-import type { LorcanaCardWithPrice, LorcanaPrice, PartialLorcanaCardWithPrice } from '../types/lorcana';
-import type { ResultSet, Transaction } from 'react-native-sqlite-storage';
+import type { LorcanaPrice, PartialLorcanaCardWithPrice } from '../types/lorcana';
 import { NativeModules, DeviceEventEmitter } from 'react-native';
 
 // Use the DeviceEventEmitter directly for collection updates
@@ -51,7 +49,18 @@ interface LorcanaExportCard {
   prices?: LorcanaPrice;
 }
 
+interface PreparedImportCollection extends LorcanaExportCollection {
+  cards: LorcanaExportCard[];
+}
+
+interface ImportExecutionSummary {
+  importedCollections: number;
+  importedCards: number;
+}
+
 class ExportService {
+  private readonly queryChunkSize = 250;
+
   // Use a platform-specific directory path
   private getExportDirectory(): string {
     // On Android, use directories that are accessible without special permissions
@@ -597,6 +606,268 @@ class ExportService {
     }
   }
 
+  private chunkValues<T>(values: T[]): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < values.length; i += this.queryChunkSize) {
+      chunks.push(values.slice(i, i + this.queryChunkSize));
+    }
+    return chunks;
+  }
+
+  private async loadExistingIds(
+    db: any,
+    tableName: string,
+    columnName: string,
+    values: string[]
+  ): Promise<Set<string>> {
+    const existingValues = new Set<string>();
+    if (values.length === 0) {
+      return existingValues;
+    }
+
+    for (const chunk of this.chunkValues([...new Set(values)])) {
+      const placeholders = chunk.map(() => '?').join(', ');
+      const [result] = await db.executeSql(
+        `SELECT ${columnName} AS value FROM ${tableName} WHERE ${columnName} IN (${placeholders})`,
+        chunk
+      );
+
+      for (let i = 0; i < result.rows.length; i++) {
+        const row = result.rows.item(i);
+        if (row?.value) {
+          existingValues.add(String(row.value));
+        }
+      }
+    }
+
+    return existingValues;
+  }
+
+  private async loadExistingCollectionCardKeys(db: any, collectionIds: string[]): Promise<Set<string>> {
+    const existingLinks = new Set<string>();
+    if (collectionIds.length === 0) {
+      return existingLinks;
+    }
+
+    for (const chunk of this.chunkValues([...new Set(collectionIds)])) {
+      const placeholders = chunk.map(() => '?').join(', ');
+      const [result] = await db.executeSql(
+        `SELECT collection_id, card_id
+         FROM lorcana_collection_cards
+         WHERE collection_id IN (${placeholders})`,
+        chunk
+      );
+
+      for (let i = 0; i < result.rows.length; i++) {
+        const row = result.rows.item(i);
+        if (row?.collection_id && row?.card_id) {
+          existingLinks.add(this.buildCollectionCardKey(String(row.collection_id), String(row.card_id)));
+        }
+      }
+    }
+
+    return existingLinks;
+  }
+
+  private buildCollectionCardKey(collectionId: string, cardId: string): string {
+    return `${collectionId}::${cardId}`;
+  }
+
+  private getImportedCardQuantities(card: LorcanaExportCard): {
+    quantity: number;
+    quantityNormal: number;
+    quantityFoil: number;
+  } {
+    const parsedQuantity = Number(card.quantity);
+    const quantity = Number.isFinite(parsedQuantity) && parsedQuantity > 0
+      ? Math.floor(parsedQuantity)
+      : 1;
+
+    return {
+      quantity,
+      quantityNormal: quantity,
+      quantityFoil: 0,
+    };
+  }
+
+  private prepareImportCollections(importData: LorcanaExportData): {
+    collections: PreparedImportCollection[];
+    skippedCards: number;
+  } {
+    let skippedCards = 0;
+
+    const collections = importData.collections.map((collection) => {
+      const normalizedCards = collection.cards
+        .map((card) => this.validateAndNormalizeCard(card))
+        .filter((card): card is LorcanaExportCard => {
+          const isValid = card !== null;
+          if (!isValid) {
+            skippedCards++;
+          }
+          return isValid;
+        });
+
+      return {
+        ...collection,
+        cards: normalizedCards,
+      };
+    });
+
+    return { collections, skippedCards };
+  }
+
+  private async executeImport(
+    db: any,
+    collections: PreparedImportCollection[]
+  ): Promise<ImportExecutionSummary> {
+    const collectionIds = collections.map((collection) => collection.id);
+    const cardIds = collections.flatMap((collection) => collection.cards.map((card) => card.Unique_ID));
+
+    const existingCollectionIds = await this.loadExistingIds(db, 'lorcana_collections', 'id', collectionIds);
+    const existingCardIds = await this.loadExistingIds(db, 'lorcana_cards', 'Unique_ID', cardIds);
+    const existingCollectionCardKeys = await this.loadExistingCollectionCardKeys(db, collectionIds);
+
+    let importedCollections = 0;
+    let importedCards = 0;
+    let transactionStarted = false;
+
+    try {
+      await db.executeSql('BEGIN IMMEDIATE TRANSACTION');
+      transactionStarted = true;
+
+      for (const collection of collections) {
+        const collectionTimestamp = collection.updatedAt || collection.createdAt || new Date().toISOString();
+
+        if (!existingCollectionIds.has(collection.id)) {
+          await db.executeSql(
+            `INSERT INTO lorcana_collections
+             (id, name, description, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              collection.id,
+              collection.name,
+              collection.description || '',
+              collection.createdAt || collectionTimestamp,
+              collectionTimestamp,
+            ]
+          );
+          existingCollectionIds.add(collection.id);
+          importedCollections++;
+        } else {
+          await db.executeSql(
+            `UPDATE lorcana_collections
+             SET name = ?, description = ?, updated_at = ?
+             WHERE id = ?`,
+            [
+              collection.name,
+              collection.description || '',
+              collectionTimestamp,
+              collection.id,
+            ]
+          );
+        }
+
+        for (const card of collection.cards) {
+          const cardTimestamp = new Date().toISOString();
+          if (!existingCardIds.has(card.Unique_ID)) {
+            await db.executeSql(
+              `INSERT OR IGNORE INTO lorcana_cards (
+                Unique_ID, Name, Set_ID, Set_Name, Type, Color, Rarity,
+                Card_Num, Strength, Willpower, Artist, Flavor_Text,
+                collected, price_usd, price_usd_foil, last_updated
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                card.Unique_ID,
+                card.Name,
+                card.Set_ID,
+                card.Set_Name,
+                card.Type,
+                card.Color,
+                card.Rarity,
+                card.Card_Num || null,
+                card.Strength || null,
+                card.Willpower || null,
+                card.Artist || null,
+                card.Flavor_Text || null,
+                card.collected ? 1 : 0,
+                card.prices?.usd || null,
+                card.prices?.usd_foil || null,
+                cardTimestamp,
+              ]
+            );
+            existingCardIds.add(card.Unique_ID);
+          }
+
+          if (card.prices?.usd != null || card.prices?.usd_foil != null) {
+            await db.executeSql(
+              `INSERT OR REPLACE INTO lorcana_card_prices
+               (card_id, usd, usd_foil, tcgplayer_id, last_updated)
+               VALUES (?, ?, ?, ?, ?)`,
+              [
+                card.Unique_ID,
+                card.prices?.usd ?? null,
+                card.prices?.usd_foil ?? null,
+                card.prices?.tcgplayer_id ?? null,
+                cardTimestamp,
+              ]
+            );
+          }
+
+          const linkKey = this.buildCollectionCardKey(collection.id, card.Unique_ID);
+          const { quantity, quantityNormal, quantityFoil } = this.getImportedCardQuantities(card);
+          if (!existingCollectionCardKeys.has(linkKey)) {
+            await db.executeSql(
+              `INSERT INTO lorcana_collection_cards
+               (collection_id, card_id, quantity, quantity_normal, quantity_foil, added_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [
+                collection.id,
+                card.Unique_ID,
+                quantity,
+                quantityNormal,
+                quantityFoil,
+                cardTimestamp,
+              ]
+            );
+            existingCollectionCardKeys.add(linkKey);
+            importedCards++;
+          } else {
+            await db.executeSql(
+              `UPDATE lorcana_collection_cards
+               SET quantity = ?, quantity_normal = ?, quantity_foil = ?, added_at = ?
+               WHERE collection_id = ? AND card_id = ?`,
+              [
+                quantity,
+                quantityNormal,
+                quantityFoil,
+                cardTimestamp,
+                collection.id,
+                card.Unique_ID,
+              ]
+            );
+          }
+        }
+      }
+
+      await db.executeSql('COMMIT');
+      transactionStarted = false;
+
+      return {
+        importedCollections,
+        importedCards,
+      };
+    } catch (error) {
+      if (transactionStarted) {
+        try {
+          await db.executeSql('ROLLBACK');
+        } catch (rollbackError) {
+          console.error('[ExportService] Failed to roll back import transaction:', rollbackError);
+        }
+      }
+      throw error;
+    }
+  }
+
   async importLorcanaCollections(filePath: string): Promise<void> {
     try {
       console.log(`[ExportService] Importing collections from: ${filePath}`);
@@ -604,6 +875,7 @@ class ExportService {
       // Read the file
       const fileContent = await RNFS.readFile(filePath, 'utf8');
       const importData: LorcanaExportData = JSON.parse(fileContent);
+      const preparedImport = this.prepareImportCollections(importData);
       
       // Show alert to confirm import
       Alert.alert(
@@ -618,197 +890,25 @@ class ExportService {
             text: 'Import',
             onPress: async () => {
               try {
-                // Get the Lorcana database instance
                 const db = await getDB();
-                
-                // Begin a transaction
-                await new Promise<void>((resolve, reject) => {
-                  db.transaction((tx: Transaction) => {
-                    // Process each collection
-                    for (const collection of importData.collections) {
-                      console.log(`[ExportService] Importing collection: ${collection.name}`);
-                      
-                      // Check if the collection exists
-                      tx.executeSql(
-                        'SELECT id FROM lorcana_collections WHERE id = ?',
-                        [collection.id],
-                        (_, result: ResultSet) => {
-                          if (result.rows.length === 0) {
-                            // Create the collection if it doesn't exist
-                            tx.executeSql(
-                              `INSERT INTO lorcana_collections 
-                              (id, name, description, created_at, updated_at) 
-                              VALUES (?, ?, ?, ?, ?)`,
-                              [
-                                collection.id, 
-                                collection.name, 
-                                collection.description,
-                                collection.createdAt,
-                                collection.updatedAt
-                              ],
-                              (_, insertResult) => {
-                                console.log(`[ExportService] Created collection: ${collection.name}`);
-                              },
-                              (_, error) => {
-                                console.error('[ExportService] Error creating collection:', error);
-                                return false;
-                              }
-                            );
-                          } else {
-                            console.log(`[ExportService] Collection already exists: ${collection.name}`);
-                          }
-                          
-                          // Add each card to the collection
-                          collection.cards.forEach(cardFromFile => {
-                            // Validate and normalize the card data
-                            const normalizedCard = this.validateAndNormalizeCard(cardFromFile);
-                            if (!normalizedCard) {
-                              return; // Skip invalid cards
-                            }
+                const importSummary = await this.executeImport(db, preparedImport.collections);
+                await this.runPostImportCleanup();
+                collectionCacheService.clearCache();
+                void collectionCacheService.preloadCollections();
 
-                            const correctedUniqueId = normalizedCard.Unique_ID;
-
-                            // First check if the card exists in lorcana_cards table
-                            tx.executeSql(
-                              'SELECT Unique_ID FROM lorcana_cards WHERE Unique_ID = ?',
-                              [correctedUniqueId], // Use corrected ID
-                              (_, cardExistsResult: ResultSet) => {
-                                // If card doesn't exist in the cards table, add it first
-                                if (cardExistsResult.rows.length === 0) {
-                                  tx.executeSql(
-                                    `INSERT OR IGNORE INTO lorcana_cards (
-                                      Unique_ID, Name, Set_ID, Set_Name, Type, Color, Rarity,
-                                      Card_Num, Strength, Willpower, Artist, Flavor_Text,
-                                      collected, price_usd, price_usd_foil, last_updated
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                                    [
-                                      correctedUniqueId, // Use corrected ID
-                                      normalizedCard.Name,
-                                      normalizedCard.Set_ID, // Use normalized Set_ID
-                                      normalizedCard.Set_Name,
-                                      normalizedCard.Type,
-                                      normalizedCard.Color,
-                                      normalizedCard.Rarity,
-                                      normalizedCard.Card_Num,
-                                      normalizedCard.Strength || null,
-                                      normalizedCard.Willpower || null,
-                                      normalizedCard.Artist || null,
-                                      normalizedCard.Flavor_Text || null,
-                                      normalizedCard.collected ? 1 : 0,
-                                      normalizedCard.prices?.usd || null,
-                                      normalizedCard.prices?.usd_foil || null,
-                                      new Date().toISOString()
-                                    ],
-                                    (_, insertCardResult) => {
-                                      console.log(`[ExportService] Added new card to database: ${normalizedCard.Name} (${correctedUniqueId})`);
-                                    },
-                                    (_, error) => {
-                                      console.error('[ExportService] Error adding card to database:', error);
-                                      return false;
-                                    }
-                                  );
-                                }
-                                
-                                // Now handle the collection card relationship
-                                tx.executeSql(
-                                  'SELECT card_id FROM lorcana_collection_cards WHERE card_id = ? AND collection_id = ?',
-                                  [correctedUniqueId, collection.id], // Use corrected ID
-                                  (_, cardResult: ResultSet) => {
-                                    if (cardResult.rows.length === 0) {
-                                      // Add the card if it doesn't exist in the collection
-                                      tx.executeSql(
-                                        `INSERT INTO lorcana_collection_cards 
-                                        (collection_id, card_id, added_at) 
-                                        VALUES (?, ?, ?)`,
-                                        [
-                                          collection.id,
-                                          correctedUniqueId, // Use corrected ID
-                                          new Date().toISOString()
-                                        ],
-                                        (_, insertCardResult) => {
-                                          console.log(`[ExportService] Added card: ${normalizedCard.Name} (${correctedUniqueId}) to collection: ${collection.name}`);
-                                        },
-                                        (_, error) => {
-                                          console.error('[ExportService] Error adding card:', error);
-                                          return false;
-                                        }
-                                      );
-                                    } else {
-                                      // Update the existing card
-                                      tx.executeSql(
-                                        `UPDATE lorcana_collection_cards 
-                                        SET added_at = ? 
-                                        WHERE card_id = ? AND collection_id = ?`,
-                                        [
-                                          new Date().toISOString(),
-                                          correctedUniqueId, // Use corrected ID
-                                          collection.id
-                                        ],
-                                        (_, updateCardResult) => {
-                                          console.log(`[ExportService] Updated card: ${normalizedCard.Name} (${correctedUniqueId}) in collection: ${collection.name}`);
-                                        },
-                                        (_, error) => {
-                                          console.error('[ExportService] Error updating card:', error);
-                                          return false;
-                                        }
-                                      );
-                                    }
-                                  },
-                                  (_, error) => {
-                                    console.error('[ExportService] Error checking card:', error);
-                                    return false;
-                                  }
-                                );
-                              },
-                              (_, error) => {
-                                console.error('[ExportService] Error checking if card exists:', error);
-                                return false;
-                              }
-                            );
-                          });
-                        },
-                        (_, error) => {
-                          console.error('[ExportService] Error checking collection:', error);
-                          return false;
-                        }
-                      );
-                    }
-                    
-                    // Commit the transaction
-                    resolve();
-                  }, 
-                  error => {
-                    console.error('[ExportService] Transaction error:', error);
-                    reject(new Error('Failed to import collections'));
-                  },
-                  () => {
-                    console.log('[ExportService] Import transaction completed successfully');
-                    // Refresh the collections cache
-                    if (collectionCacheService.preloadCollections) {
-                      collectionCacheService.preloadCollections();
-                    }
-                    
-                    // Emit an event to notify that collections have been updated
-                    collectionEventEmitter.emit('collectionsUpdated', {
-                      type: 'import',
-                      timestamp: new Date().toISOString(),
-                      collectionsCount: importData.collections.length
-                    });
-                    
-                    // Run post-import cleanup (fire and forget - don't await in transaction callback)
-                    console.log('[ExportService] Scheduling post-import cleanup...');
-                    setTimeout(() => {
-                      this.runPostImportCleanup()
-                        .then(() => console.log('[ExportService] Post-import cleanup completed'))
-                        .catch(cleanupError => console.warn('[ExportService] Post-import cleanup failed, but import may still be successful:', cleanupError));
-                    }, 100);
-
-                    Alert.alert(
-                      'Import Successful',
-                      `Imported ${importData.collections.length} collections successfully. Your collection screens will refresh automatically with the new data.`
-                    );
-                  });
+                collectionEventEmitter.emit('collectionsUpdated', {
+                  type: 'import',
+                  timestamp: new Date().toISOString(),
+                  collectionsCount: preparedImport.collections.length
                 });
+
+                Alert.alert(
+                  'Import Successful',
+                  `Imported ${preparedImport.collections.length} collections and ${importSummary.importedCards} cards successfully.` +
+                  (preparedImport.skippedCards > 0
+                    ? ` Skipped ${preparedImport.skippedCards} invalid cards.`
+                    : '')
+                );
               } catch (error) {
                 console.error('[ExportService] Error in import process:', error);
                 Alert.alert('Import Error', 'Failed to import collections. Please try again.');
@@ -835,40 +935,22 @@ class ExportService {
 
       // Clean up any cards that might have inconsistent Set_ID formats
       console.log('[ExportService] Cleaning up any inconsistent Set_ID formats...');
-      await new Promise<void>((resolve, reject) => {
-        db.transaction((tx) => {
-          // Fix any cards that still have numeric Set_IDs (shouldn't happen with new import, but safety check)
-          const numericToTextMapping: { [key: string]: string } = {
-            '1': 'TFC', '2': 'ROF', '3': 'INK', '4': 'URS',
-            '5': 'SSK', '6': 'AZS', '7': 'ARI', '8': 'ROJ',
-            '9': 'FAB', '10': 'WHI'
-          };
+      const numericToTextMapping: { [key: string]: string } = {
+        '1': 'TFC', '2': 'ROF', '3': 'INK', '4': 'URS',
+        '5': 'SSK', '6': 'AZS', '7': 'ARI', '8': 'ROJ',
+        '9': 'FAB', '10': 'WHI'
+      };
 
-          // Update any cards with numeric Set_IDs
-          Object.entries(numericToTextMapping).forEach(([numeric, text]) => {
-            tx.executeSql(
-              'UPDATE lorcana_cards SET Set_ID = ? WHERE Set_ID = ?',
-              [text, numeric],
-              () => console.log(`[ExportService] Fixed Set_ID ${numeric} → ${text}`),
-              (_, error) => console.warn(`[ExportService] Error fixing Set_ID ${numeric}:`, error)
-            );
-          });
+      for (const [numeric, text] of Object.entries(numericToTextMapping)) {
+        await db.executeSql(
+          'UPDATE lorcana_cards SET Set_ID = ? WHERE Set_ID = ?',
+          [text, numeric]
+        );
+      }
 
-          // Clean up any set_ prefixed IDs that might have slipped through
-          tx.executeSql(
-            'UPDATE lorcana_cards SET Set_ID = UPPER(REPLACE(Set_ID, "set_", "")) WHERE Set_ID LIKE "set_%"',
-            [],
-            (_, result) => {
-              if (result.rowsAffected && result.rowsAffected > 0) {
-                console.log(`[ExportService] Cleaned up ${result.rowsAffected} set_ prefixed Set_IDs`);
-              }
-            },
-            (_, error) => console.warn('[ExportService] Error cleaning set_ prefixes:', error)
-          );
-
-          resolve();
-        });
-      });
+      await db.executeSql(
+        'UPDATE lorcana_cards SET Set_ID = UPPER(REPLACE(Set_ID, "set_", "")) WHERE Set_ID LIKE "set_%"'
+      );
 
     } catch (error) {
       console.warn('[ExportService] Post-import cleanup encountered errors:', error);

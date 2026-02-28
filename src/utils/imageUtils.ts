@@ -1,6 +1,7 @@
 import FastImage from '@d11/react-native-fast-image';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 import { getPreferredLorcastImageUrl, toLorcastLargeJpg } from './lorcastImage';
+import { imageCacheService } from '../services/ImageCacheService';
 
 // Keep track of failed image loading attempts
 const failedImageAttempts: Record<string, { count: number, lastAttempt: number }> = {};
@@ -101,44 +102,40 @@ export const getImageSource = (imageUrl: string | null | undefined) => {
     logDebug(`Stripped query parameters from URL for caching: ${finalUri}`);
   }
 
-  // Check if we already have this image in our cache
+  // Check in-memory disk cache first — use local file if already downloaded
+  const localPath = imageCacheService.getCachedImagePathSync(finalUri);
+  if (localPath) {
+    return { uri: localPath };
+  }
+
+  // Check if we already have this image in our (network) source cache
   if (processedImageCache.has(finalUri)) {
     return processedImageCache.get(finalUri);
   }
 
-  // Log using finalUri if not already logged
-  if (!loggedImageUrls.has(finalUri)) {
-    logDebug(`Loading full URL: ${finalUri}`);
-    loggedImageUrls.add(finalUri);
-  }
+  logDebug(`Loading full URL: ${finalUri}`);
 
   // Check if this image has failed too many times recently
   const failRecord = failedImageAttempts[finalUri];
   if (failRecord && failRecord.count >= MAX_RETRY_COUNT) {
     const now = Date.now();
     const timeSinceLastAttempt = now - failRecord.lastAttempt;
-    
+
     if (timeSinceLastAttempt < RETRY_COOLDOWN) {
       logDebug(`Skipping recently failed image (in cooldown): ${finalUri.substring(0, 30)}...`);
       return null;
     }
-    
-    // Reset the failure count if we're trying again after cooldown
-    logDebug(`Retry cooled-down image: ${finalUri.substring(0, 30)}...`);
+
     failedImageAttempts[finalUri].count = 0;
   }
 
-  // Create the source object with minimal properties to avoid errors
   const source = {
     uri: finalUri,
     priority: FastImage.priority.high,
-    cache: FastImage.cacheControl.immutable
-    // Remove headers completely to avoid formatting issues
+    cache: FastImage.cacheControl.immutable,
   };
 
-  // Store it in our cache
   processedImageCache.set(finalUri, source);
-  
   return source;
 };
 

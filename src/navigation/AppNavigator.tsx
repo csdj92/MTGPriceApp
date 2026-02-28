@@ -11,6 +11,10 @@ import PriceLookupScreen from '../screens/price/PriceLookupScreen.refactored';
 import CollectionDetailsScreen from '../screens/collection/CollectionDetailsScreen';
 import SetCompletionScreen from '../screens/collection/SetCompletionScreen';
 import LorcanaCardDetailsScreen from '../screens/LorcanaCardDetailsScreen';
+import DeckListScreen from '../screens/deck/DeckListScreen';
+import DeckDetailScreen from '../screens/deck/DeckDetailScreen';
+import WatchlistScreen from '../screens/watchlist/WatchlistScreen';
+import LoreTrackerScreen from '../screens/game/LoreTrackerScreen';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 const Icon = MaterialCommunityIcons as any; // Temporary type assertion
 import type { PartialLorcanaCardWithPrice } from '../types/lorcana';
@@ -26,11 +30,15 @@ export type RootStackParamList = {
         card: PartialLorcanaCardWithPrice;
         collectionId: string;
     };
+    DeckDetail: { deckId: string; deckName: string };
+    Watchlist: undefined;
 };
 
 export type MainTabParamList = {
     Collection: undefined;
     Search: undefined;
+    Decks: undefined;
+    Game: undefined;
     Settings: undefined;
     PriceLookup: undefined;
 };
@@ -42,6 +50,8 @@ const getTabIconName = (routeName: string): string => {
     const icons: Record<string, string> = {
         Collection: 'cards',
         Search: 'card-search',
+        Decks: 'cards-variant',
+        Game: 'sword-cross',
         Settings: 'cog',
         PriceLookup: 'cash-multiple',
     };
@@ -74,6 +84,8 @@ const MainTabs = () => {
         >
             <Tab.Screen name="Collection" component={CollectionScreen} />
             <Tab.Screen name="Search" component={SearchScreen} />
+            <Tab.Screen name="Decks" component={DeckListScreen} />
+            <Tab.Screen name="Game" component={LoreTrackerScreen} />
             <Tab.Screen name="Settings" component={SettingsScreen} />
             <Tab.Screen name="PriceLookup" component={PriceLookupScreen} />
         </Tab.Navigator>
@@ -117,6 +129,16 @@ const AppNavigator = () => {
                 name="LorcanaCardDetails"
                 component={LorcanaCardDetailsScreen}
                 options={{ title: 'Lorcana Card Details' }}
+            />
+            <Stack.Screen
+                name="DeckDetail"
+                component={DeckDetailScreen}
+                options={({ route }) => ({ title: (route.params as any).deckName })}
+            />
+            <Stack.Screen
+                name="Watchlist"
+                component={WatchlistScreen}
+                options={{ title: 'Price Watchlist' }}
             />
         </Stack.Navigator>
     );

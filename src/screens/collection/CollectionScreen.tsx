@@ -3,6 +3,7 @@ import { createMaterialTopTabNavigator } from '@react-navigation/material-top-ta
 import { SafeAreaView, StyleSheet } from 'react-native';
 import SetCompletionScreen from './SetCompletionScreen';
 import CollectionsTab from './CollectionsTab';
+import TopCardsScreen from './TopCardsScreen';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
 import { useTheme } from '../../context/ThemeContext';
@@ -39,11 +40,18 @@ const CollectionScreen: React.FC<CollectionScreenProps> = () => {
                         tabBarLabel: 'Set Completion'
                     }}
                 />
-                <Tab.Screen 
-                    name="Collections" 
+                <Tab.Screen
+                    name="Collections"
                     component={CollectionsTab}
                     options={{
                         tabBarLabel: 'Collections'
+                    }}
+                />
+                <Tab.Screen
+                    name="TopCards"
+                    component={TopCardsScreen}
+                    options={{
+                        tabBarLabel: 'Top 10'
                     }}
                 />
             </Tab.Navigator>

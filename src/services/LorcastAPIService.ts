@@ -119,7 +119,19 @@ class LorcastAPIService {
             console.log('[LorcastAPI] ← Has "results" key:', 'results' in data);
 
             const sets = data.results || data; // Handle both array and {results: []} formats
+            if (!Array.isArray(sets)) {
+                console.error('[LorcastAPI] ✖ Unexpected /sets payload shape:', data);
+                throw new Error('Unexpected /sets response shape from Lorcast API');
+            }
+
             console.log(`[LorcastAPI] ✓ Successfully parsed ${sets.length} sets`);
+            console.log('[LorcastAPI] Parsed sets summary:', sets.map((set: LorcastSet) => ({
+                id: set.id,
+                code: set.code,
+                name: set.name,
+                card_count: set.card_count,
+                released_at: set.released_at,
+            })));
 
             if (sets.length > 0) {
                 console.log('[LorcastAPI] First set example:', {
@@ -171,15 +183,41 @@ class LorcastAPIService {
         try {
             await this.enforceRateLimit();
 
+            const url = `${LORCAST_BASE_URL}/sets/${setIdOrCode}/cards`;
             console.log(`[LorcastAPI] Fetching cards for set: ${setIdOrCode}`);
-            const response = await fetch(`${LORCAST_BASE_URL}/sets/${setIdOrCode}/cards`);
+            console.log(`[LorcastAPI] → Making request to: ${url}`);
+            const response = await fetch(url);
+
+            console.log(`[LorcastAPI] ← Response status for set ${setIdOrCode}: ${response.status} ${response.statusText}`);
+            console.log(`[LorcastAPI] ← Response headers for set ${setIdOrCode}:`, {
+                contentType: response.headers.get('content-type'),
+                contentLength: response.headers.get('content-length'),
+            });
 
             if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`[LorcastAPI] ✖ Card request failed for set ${setIdOrCode}: ${response.status}`);
+                console.error(`[LorcastAPI] Error response body for set ${setIdOrCode}:`, errorText);
                 throw new Error(`API request failed: ${response.status}`);
             }
 
-            const cards = await response.json();
+            const data = await response.json();
+            const cards = data.results || data;
+            if (!Array.isArray(cards)) {
+                console.error(`[LorcastAPI] ✖ Unexpected /sets/${setIdOrCode}/cards payload shape:`, data);
+                throw new Error(`Unexpected /sets/${setIdOrCode}/cards response shape from Lorcast API`);
+            }
+
             console.log(`[LorcastAPI] Fetched ${cards.length} cards for set ${setIdOrCode}`);
+            if (cards.length > 0) {
+                console.log(`[LorcastAPI] First card example for set ${setIdOrCode}:`, {
+                    id: cards[0].id,
+                    name: cards[0].name,
+                    collector_number: cards[0].collector_number,
+                    set_code: cards[0]?.set?.code,
+                    set_name: cards[0]?.set?.name,
+                });
+            }
 
             // Validate cards
             const validCards = cards.filter((card: any) => {

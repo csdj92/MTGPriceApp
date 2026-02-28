@@ -1,18 +1,11 @@
 import React, { memo, useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import FastImage from "@d11/react-native-fast-image";
-import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import { getImageSource, handleImageLoadError, handleImageLoadSuccess } from '../../utils/imageUtils';
 import { useTheme } from '../../context/ThemeContext';
 import { imageCacheService } from '../../services/ImageCacheService';
-
-// Fix the Icon type with a proper type assertion
-const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
-    name: string;
-    size: number;
-    color: string;
-}>;
+import { Icon } from '../../utils/icons';
 
 interface LorcanaCardProps {
     card: LorcanaCardWithPrice;
@@ -29,51 +22,21 @@ const LorcanaCard: React.FC<LorcanaCardProps> = ({ card, onPress, onLongPress, p
     const { theme } = useTheme();
     const isCollected = card.collected || false;
     const cardImage = card.Image;
-    
-    // State for cached image
-    const [imageSource, setImageSource] = useState<{ uri: string; cache?: any } | null>(null);
-    const [imageLoading, setImageLoading] = useState(true);
 
-    // Load cached image or fallback to network
+    // getImageSource checks the in-memory disk cache synchronously,
+    // so we get a local file:// URI immediately if available.
+    const [imageSource, setImageSource] = useState(() => getImageSource(cardImage));
+
+    // When the card URL changes, refresh the source and kick off a
+    // background download so the image is available next time.
     useEffect(() => {
+        setImageSource(getImageSource(cardImage));
         if (cardImage) {
-            loadImage();
+            imageCacheService.downloadImage(cardImage).then(localPath => {
+                if (localPath) setImageSource({ uri: localPath });
+            }).catch(() => {});
         }
     }, [cardImage]);
-
-    const loadImage = async () => {
-        if (!cardImage) return;
-        
-        try {
-            // Check if image is cached
-            const cachedPath = await imageCacheService.getCachedImagePath(cardImage);
-            
-            if (cachedPath) {
-                // Use cached image
-                setImageSource({ uri: cachedPath });
-                setImageLoading(false);
-            } else {
-                // Use network image and trigger background download
-                setImageSource({
-                    uri: cardImage,
-                    cache: FastImage.cacheControl.immutable
-                });
-                setImageLoading(false);
-                
-                // Download in background for future use
-                imageCacheService.downloadImage(cardImage).catch(error => {
-                    console.log('[LorcanaCard] Background download failed:', error);
-                });
-            }
-        } catch (error) {
-            // Fallback to network image
-            setImageSource({
-                uri: cardImage,
-                cache: FastImage.cacheControl.immutable
-            });
-            setImageLoading(false);
-        }
-    };
 
     // Use normal price if available, otherwise use foil price
     const normalPrice = priceData?.usd ?? card.prices?.usd;

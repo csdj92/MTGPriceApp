@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { LorcanaCardWithPrice } from '../types/lorcana';
+import { tokenizeColorString } from '../utils/formatters';
 
 export type SortOption = 'name' | 'price' | 'number';
 export type SortDirection = 'asc' | 'desc';
@@ -77,7 +78,10 @@ export const useLorcanaFilters = ({ cards, priceCache = {} }: UseLorcanaFiltersP
     const { sortBy, sortDirection } = sortState;
     const debouncedSearch = useDebouncedValue(filters.search.trim().toLowerCase(), SEARCH_DEBOUNCE_MS);
     const raritySet = useMemo(() => new Set(filters.rarities), [filters.rarities]);
-    const colorSet = useMemo(() => new Set(filters.colors), [filters.colors]);
+    const colorSet = useMemo(
+        () => new Set(filters.colors.map(color => color.trim().toLowerCase()).filter(Boolean)),
+        [filters.colors]
+    );
     const minPrice = filters.priceRange.min;
     const maxPrice = filters.priceRange.max;
     const needsPriceData = sortBy === 'price' || minPrice !== null || maxPrice !== null;
@@ -144,8 +148,11 @@ export const useLorcanaFilters = ({ cards, priceCache = {} }: UseLorcanaFiltersP
                 continue;
             }
 
-            if (hasColorFilter && !colorSet.has(card.Color || '')) {
-                continue;
+            if (hasColorFilter) {
+                const cardColors = tokenizeColorString(card.Color);
+                if (!cardColors.some(color => colorSet.has(color))) {
+                    continue;
+                }
             }
 
             if (hasMinPrice || hasMaxPrice) {

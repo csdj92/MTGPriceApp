@@ -3,7 +3,7 @@
  * Handles set discovery, card fetching, data mapping, and database storage
  */
 
-import { lorcastAPI, LorcastCard, LorcastSet } from './LorcastAPIService';
+import { lorcastAPI, LorcastCard } from './LorcastAPIService';
 import { getLorcanaDatabase } from './DatabaseAccess';
 import {
     buildLorcanaUniqueId,
@@ -11,6 +11,7 @@ import {
     getLorcanaSetNumberFromIdentifier,
 } from '../utils/lorcanaSetMapping';
 import { getPreferredLorcastImageUrl } from '../utils/lorcastImage';
+import { buildLorcanaColorString } from '../utils/formatters';
 
 export interface ImportProgress {
     totalSets: number;
@@ -35,25 +36,20 @@ export interface ImportResult {
 }
 
 class CardImportService {
-    private getPrimaryInkColor(card: LorcastCard): string | null {
-        if (Array.isArray(card.inks) && card.inks.length > 0) {
-            const firstInk = card.inks.find(ink => typeof ink === 'string' && ink.trim().length > 0);
-            if (firstInk) {
-                return firstInk.trim();
-            }
-        }
+    private readonly batchSize = 50;
+    private readonly progressUpdateInterval = 10;
+    private readonly verboseLogging = typeof __DEV__ !== 'undefined' && __DEV__;
 
-        if (typeof card.ink === 'string' && card.ink.trim().length > 0) {
-            return card.ink.trim();
+    private debugLog(message: string, ...args: unknown[]): void {
+        if (this.verboseLogging) {
+            console.log(message, ...args);
         }
-
-        return null;
     }
 
     /**
      * Map Lorcast card data to database format
      */
-    private mapCardToDbFormat(card: LorcastCard): any {
+    private mapCardToDbFormat(card: LorcastCard, timestamp: string = new Date().toISOString()): any {
         // Validate required fields
         if (!card) {
             throw new Error('Card data is null or undefined');
@@ -93,7 +89,7 @@ class CardImportService {
             Artist: card.illustrators && Array.isArray(card.illustrators) && card.illustrators.length > 0 ? card.illustrators[0] : null,
             Body_Text: card.text,
             Classifications: card.classifications && Array.isArray(card.classifications) && card.classifications.length > 0 ? card.classifications.join(', ') : null,
-            Color: this.getPrimaryInkColor(card),
+            Color: buildLorcanaColorString(card),
             Cost: card.cost,
             Flavor_Text: card.flavor_text,
             Franchise: '', // Not provided by Lorcast API
@@ -106,9 +102,9 @@ class CardImportService {
             Willpower: card.willpower,
 
             // Timestamps
-            Date_Added: card.released_at || new Date().toISOString(),
-            Date_Modified: new Date().toISOString(),
-            last_updated: new Date().toISOString(),
+            Date_Added: card.released_at || timestamp,
+            Date_Modified: timestamp,
+            last_updated: timestamp,
 
             // Prices
             price_usd: card.prices?.usd || null,
@@ -119,34 +115,41 @@ class CardImportService {
         };
     }
 
+    private async loadExistingCardIds(db: any, setCode: string): Promise<Set<string>> {
+        const result = await db.executeSql(
+            'SELECT Unique_ID FROM lorcana_cards WHERE UPPER(Set_ID) = UPPER(?)',
+            [setCode]
+        );
+
+        const existingCardIds = new Set<string>();
+        const rows = result[0].rows;
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows.item(i);
+            if (row?.Unique_ID) {
+                existingCardIds.add(String(row.Unique_ID));
+            }
+        }
+
+        return existingCardIds;
+    }
+
     /**
      * Import or update a single card in the database
      */
-    private async importCard(db: any, card: LorcastCard): Promise<'added' | 'updated' | 'skipped'> {
-        const dbCard = this.mapCardToDbFormat(card);
-        console.log(`[CardImport] → Processing card: ${dbCard.Name || 'Unknown'} (${dbCard.Unique_ID})`);
+    private async importCard(
+        db: any,
+        dbCard: any,
+        tcgplayerId: string | number | null | undefined,
+        existsInDatabase: boolean
+    ): Promise<'added' | 'updated'> {
+        this.debugLog(
+            `[CardImport] → Processing card: ${dbCard.Name || 'Unknown'} (${dbCard.Unique_ID}), exists=${existsInDatabase}`
+        );
 
-        // Check if card exists - use promise-based executeSql
-        let result;
-        try {
-            result = await db.executeSql(
-                'SELECT Unique_ID, collected FROM lorcana_cards WHERE Unique_ID = ?',
-                [dbCard.Unique_ID]
-            );
-            console.log(`[CardImport]   SELECT result for ${dbCard.Unique_ID}: ${result[0].rows.length} rows`);
-        } catch (error) {
-            console.error(`[CardImport]   SELECT failed for ${dbCard.Unique_ID}:`, error);
-            throw error;
-        }
-        const rows = result[0].rows;
-
-        console.log(`[CardImport]   Card exists in DB: ${rows.length > 0}`);
-
-        if (rows.length === 0) {
+        if (!existsInDatabase) {
             // Insert new card
-            console.log(`[CardImport]   ✓ Inserting new card: ${dbCard.Name}`);
+            this.debugLog(`[CardImport]   Inserting new card: ${dbCard.Name}`);
 
-            // Use promise-based executeSql
             try {
                 await db.executeSql(
                     `INSERT INTO lorcana_cards (
@@ -165,7 +168,6 @@ class CardImportService {
                         dbCard.price_usd, dbCard.price_usd_foil
                     ]
                 );
-                console.log(`[CardImport]   ✓ INSERT success for ${dbCard.Name}`);
             } catch (error) {
                 console.error(`[CardImport]   ✗ INSERT failed for ${dbCard.Name}:`, error);
                 throw error;
@@ -182,25 +184,21 @@ class CardImportService {
                             dbCard.Unique_ID,
                             dbCard.price_usd,
                             dbCard.price_usd_foil,
-                            card.tcgplayer_id,
-                            new Date().toISOString()
+                            tcgplayerId,
+                            dbCard.last_updated
                         ]
                     );
-                    console.log(`[CardImport]   ✓ Price INSERT success for ${dbCard.Name}`);
                 } catch (error) {
                     console.error(`[CardImport]   ✗ Price INSERT failed for ${dbCard.Name}:`, error);
                     throw error;
                 }
             }
 
-            console.log(`[CardImport]   ✓ Insert completed, returning 'added'`);
             return 'added';
         } else {
             // Update existing card (preserve collected status)
-            console.log(`[CardImport]   Updating existing card...`);
-            const wasCollected = rows.item(0).collected === 1;
+            this.debugLog(`[CardImport]   Updating existing card...`);
 
-            // Use promise-based executeSql
             try {
                 await db.executeSql(
                     `UPDATE lorcana_cards SET
@@ -221,7 +219,6 @@ class CardImportService {
                         dbCard.Unique_ID
                     ]
                 );
-                console.log(`[CardImport]   ✓ UPDATE success for ${dbCard.Name}`);
             } catch (error) {
                 console.error(`[CardImport]   ✗ UPDATE failed for ${dbCard.Name}:`, error);
                 throw error;
@@ -238,18 +235,16 @@ class CardImportService {
                             dbCard.Unique_ID,
                             dbCard.price_usd,
                             dbCard.price_usd_foil,
-                            card.tcgplayer_id,
-                            new Date().toISOString()
+                            tcgplayerId,
+                            dbCard.last_updated
                         ]
                     );
-                    console.log(`[CardImport]   ✓ Price UPDATE success for ${dbCard.Name}`);
                 } catch (error) {
                     console.error(`[CardImport]   ✗ Price UPDATE failed for ${dbCard.Name}:`, error);
                     throw error;
                 }
             }
 
-            console.log(`[CardImport]   ✓ Update completed, returning 'updated'`);
             return 'updated';
         }
     }
@@ -279,78 +274,76 @@ class CardImportService {
 
             console.log(`[CardImport] → Getting database connection...`);
             const db = await getLorcanaDatabase();
-            console.log(`[CardImport] ✓ Database connection obtained`);
-
-            // Skip table verification for now - proceed directly to test INSERT
+            const canonicalSetCode =
+                getCanonicalSetCodeForStorage(cards[0]?.set?.code || String(setIdOrCode)) ||
+                String(setIdOrCode).trim().toUpperCase();
+            const existingCardIds = await this.loadExistingCardIds(db, canonicalSetCode);
+            console.log(
+                `[CardImport] ✓ Database connection obtained, found ${existingCardIds.size} existing cards for ${canonicalSetCode}`
+            );
 
             let added = 0;
             let updated = 0;
             let skipped = 0;
 
-            // Test basic INSERT functionality
-            console.log(`[CardImport] → Testing basic INSERT functionality...`);
-            try {
-                await db.executeSql(
-                    "INSERT OR REPLACE INTO lorcana_cards (Unique_ID, Name, Set_ID, Card_Num, collected, last_updated) VALUES (?, ?, ?, ?, ?, ?)",
-                    ['TEST-999', 'Test Card', 'TEST', 999, 0, new Date().toISOString()]
-                );
-                console.log(`[CardImport] ✓ Test INSERT successful`);
+            // Process cards in batches to keep progress updates responsive.
+            // Avoid async transaction callbacks here; the promise-based executeSql
+            // path is more reliable for startup imports.
+            const totalBatches = Math.ceil(cards.length / this.batchSize);
+            console.log(
+                `[CardImport] → Processing ${cards.length} cards in ${totalBatches} batches (${this.batchSize} cards per batch)...`
+            );
 
-                // Clean up test record
-                await db.executeSql(
-                    "DELETE FROM lorcana_cards WHERE Unique_ID = ?",
-                    ['TEST-999']
-                );
-                console.log(`[CardImport] ✓ Test record cleaned up`);
-            } catch (error) {
-                console.error(`[CardImport] Basic INSERT test failed:`, error);
-                throw error;
-            }
+            for (let i = 0; i < cards.length; i += this.batchSize) {
+                const batchNum = Math.floor(i / this.batchSize) + 1;
+                const batch = cards.slice(i, Math.min(i + this.batchSize, cards.length));
 
-            // Process cards in batches to avoid long transactions
-            const batchSize = 50;
-            const totalBatches = Math.ceil(cards.length / batchSize);
-            console.log(`[CardImport] → Processing ${cards.length} cards in ${totalBatches} batches (${batchSize} cards per batch)...`);
+                this.debugLog(`[CardImport] → Batch ${batchNum}/${totalBatches}: Processing ${batch.length} cards...`);
 
-            for (let i = 0; i < cards.length; i += batchSize) {
-                const batchNum = Math.floor(i / batchSize) + 1;
-                const batch = cards.slice(i, Math.min(i + batchSize, cards.length));
+                for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
+                    const card = batch[batchIndex];
 
-                console.log(`[CardImport] → Batch ${batchNum}/${totalBatches}: Processing ${batch.length} cards...`);
+                    try {
+                        const dbCard = this.mapCardToDbFormat(card);
+                        const existsInDatabase = existingCardIds.has(dbCard.Unique_ID);
+                        const result = await this.importCard(db, dbCard, card.tcgplayer_id, existsInDatabase);
 
-                await db.transaction(async (tx: any) => {
-                    for (let batchIndex = 0; batchIndex < batch.length; batchIndex++) {
-                        const card = batch[batchIndex];
+                        if (result === 'added') {
+                            added++;
+                            existingCardIds.add(dbCard.Unique_ID);
+                        } else if (result === 'updated') {
+                            updated++;
+                        }
+                        else skipped++;
 
-                        try {
-                            const result = await this.importCard(tx, card);
-                            console.log(`[CardImport]     Result for ${card.name}: ${result}`);
+                        const processedCards = i + batchIndex + 1;
+                        if (onProgress) {
+                            const shouldReportProgress =
+                                processedCards === cards.length ||
+                                processedCards % this.progressUpdateInterval === 0;
 
-                            if (result === 'added') added++;
-                            else if (result === 'updated') updated++;
-                            else skipped++;
-
-                            // Report progress
-                            if (onProgress) {
+                            if (shouldReportProgress) {
                                 onProgress({
                                     totalSets: 1,
                                     currentSet: 1,
                                     setName: card.set.name,
                                     totalCards: cards.length,
-                                    processedCards: i + batchIndex + 1,
+                                    processedCards,
                                     addedCards: added,
                                     updatedCards: updated,
                                     skippedCards: skipped
                                 });
                             }
-                        } catch (error) {
-                            const cardName = card?.name || card?.id || 'Unknown Card';
-                            console.error(`[CardImport] Error importing card ${cardName}:`, error);
-                            skipped++;
                         }
+                    } catch (error) {
+                        const cardName = card?.name || card?.id || 'Unknown Card';
+                        console.error(`[CardImport] Error importing card ${cardName}:`, error);
+                        skipped++;
                     }
-                });
-                console.log(`[CardImport]   Batch ${batchNum} complete. Running totals - Added: ${added}, Updated: ${updated}, Skipped: ${skipped}`);
+                }
+                this.debugLog(
+                    `[CardImport] Batch ${batchNum} complete. Running totals - Added: ${added}, Updated: ${updated}, Skipped: ${skipped}`
+                );
             }
 
             console.log(`[CardImport] ✓ Set ${setIdOrCode} complete: ${added} added, ${updated} updated, ${skipped} skipped`);
@@ -380,7 +373,7 @@ class CardImportService {
             const sets = await lorcastAPI.fetchAllSets();
 
             console.log(`[CardImport] ✓ Successfully fetched ${sets.length} sets from API`);
-            console.log('[CardImport] Sets:', sets.map(s => `${s.name} (${s.code})`).join(', '));
+            this.debugLog('[CardImport] Sets:', sets.map(s => `${s.name} (${s.code})`).join(', '));
 
             for (let i = 0; i < sets.length; i++) {
                 const set = sets[i];

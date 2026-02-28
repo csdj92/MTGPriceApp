@@ -54,7 +54,9 @@
       "Bash(cd:*)",
       "mcp__plugin_serena_serena__list_dir",
       "Bash(node:*)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(xargs grep:*)"
     ],
     "deny": [],
     "ask": []

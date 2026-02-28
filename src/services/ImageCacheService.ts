@@ -34,6 +34,9 @@ class ImageCacheService {
     enableBulkDownload: false,
   };
 
+  // In-memory set of filenames that exist on disk — enables sync lookups
+  private cachedFileNames: Set<string> = new Set();
+
   constructor() {
     this.cacheDir = `${RNFS.DocumentDirectoryPath}/lorcana_images`;
     this.initializeCache();
@@ -44,6 +47,12 @@ class ImageCacheService {
       const exists = await RNFS.exists(this.cacheDir);
       if (!exists) {
         await RNFS.mkdir(this.cacheDir);
+      } else {
+        // Populate the in-memory set from what's already on disk
+        const files = await RNFS.readDir(this.cacheDir);
+        for (const file of files) {
+          this.cachedFileNames.add(file.name);
+        }
       }
     } catch (error) {
       console.error('[ImageCacheService] Failed to initialize cache directory:', error);
@@ -101,7 +110,30 @@ class ImageCacheService {
     try {
       const localPath = await this.getImageLocalPath(imageUrl, quality);
       const exists = await RNFS.exists(localPath);
-      return exists ? `file://${localPath}` : null;
+      if (exists) {
+        // Keep in-memory set in sync
+        this.cachedFileNames.add(this.getImageFileName(imageUrl, quality));
+        return `file://${localPath}`;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Synchronous cache check using the in-memory filename set.
+   * Returns the local file:// URI if already downloaded, otherwise null.
+   * Safe to call during render — no async I/O.
+   */
+  getCachedImagePathSync(imageUrl: string, quality?: string): string | null {
+    if (!imageUrl) return null;
+    try {
+      const fileName = this.getImageFileName(imageUrl, quality);
+      if (this.cachedFileNames.has(fileName)) {
+        return `file://${this.cacheDir}/${fileName}`;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -134,8 +166,9 @@ class ImageCacheService {
       }).promise;
 
       if (downloadResult.statusCode === 200) {
-        // Optionally compress the image here based on quality setting
         await this.compressImageIfNeeded(localPath, quality);
+        // Register in the in-memory set so sync lookups find it immediately
+        this.cachedFileNames.add(this.getImageFileName(normalizedUrl, quality));
         return `file://${localPath}`;
       } else {
         throw new Error(`Download failed with status: ${downloadResult.statusCode}`);
@@ -261,6 +294,7 @@ class ImageCacheService {
         await RNFS.unlink(this.cacheDir);
         await RNFS.mkdir(this.cacheDir);
       }
+      this.cachedFileNames.clear();
     } catch (error) {
       console.error('[ImageCacheService] Failed to clear cache:', error);
     }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, ScrollView, Dimensions, ViewStyle, TextStyle } from 'react-native';
+import { View, Text, ActivityIndicator, LayoutChangeEvent, ViewStyle, TextStyle } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { 
     getLorcanaPriceHistory, 
@@ -195,6 +195,12 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = React.mem
     const [error, setError] = useState<string | null>(null);
     const [priceHistory, setPriceHistory] = useState<LorcanaPriceHistoryEntry[]>([]);
     const [priceStats, setPriceStats] = useState<LorcanaPriceHistoryStats | null>(null);
+    const [chartContainerWidth, setChartContainerWidth] = useState(0);
+
+    const onChartContainerLayout = useCallback((e: LayoutChangeEvent) => {
+        // chartContainer has padding: 16 on each side, so subtract 32
+        setChartContainerWidth(e.nativeEvent.layout.width - 32);
+    }, []);
 
     useEffect(() => {
         const performLoad = async () => {
@@ -321,19 +327,17 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = React.mem
     }
 
     return (
-        <ScrollView style={styles.container}>
-            <Text style={styles.cardName}>{cardName}</Text>
-            
-            <View style={styles.chartContainer}>
+        <View style={styles.container}>
+            <View style={styles.chartContainer} onLayout={onChartContainerLayout}>
                 <Text style={styles.chartTitle}>Price History</Text>
-                <LineChart
+                {chartContainerWidth > 0 && <LineChart
                     areaChart
                     data={chartData.normalData}
                     data2={chartData.foilData}
                     height={200}
-                    width={Dimensions.get('window').width - 40}
+                    width={chartContainerWidth}
                     noOfSections={5}
-                    maxValue={maxValue * 1.1}
+                    maxValue={maxValue > 0 ? maxValue * 1.1 : 1}
                     yAxisLabelSuffix="$"
                     yAxisTextStyle={{ color: isDark ? '#fff' : '#000' }}
                     xAxisLabelTextStyle={{ color: isDark ? '#fff' : '#000' }}
@@ -353,7 +357,7 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = React.mem
                     rulesType="solid"
                     showVerticalLines
                     verticalLinesColor={isDark ? '#333' : '#e0e0e0'}
-                />
+                />}
             </View>
             
             <View style={styles.legend}>
@@ -386,18 +390,15 @@ export const LorcanaPriceDetails: React.FC<LorcanaPriceDetailsProps> = React.mem
             />
             
             <PriceHistoryTable priceHistory={priceHistory} formatDate={formatDate} formatPrice={formatPrice} styles={styles} />
-        </ScrollView>
+        </View>
     );
 });
 
 const useStyles = () => useThemedStyles((theme) => ({
     container: {
-        flex: 1,
-        padding: 16,
         backgroundColor: theme.background,
     } as ViewStyle,
     loadingContainer: {
-        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
         padding: 20,
@@ -408,7 +409,6 @@ const useStyles = () => useThemedStyles((theme) => ({
         color: theme.textSecondary,
     } as TextStyle,
     errorContainer: {
-        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
         padding: 20,

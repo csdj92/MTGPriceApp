@@ -1,6 +1,18 @@
-import { Platform } from 'react-native';
 import DatabaseInitializer from './DatabaseInitializer';
 import Logger from './Logger';
+import {
+  initializeLorcanaDatabase,
+  LorcanaInitializationStatus,
+} from './LorcanaService';
+
+export interface AppStartupOptions {
+  onStatusChange?: (status: LorcanaInitializationStatus) => void;
+}
+
+export interface AppStartupResult {
+  didImportCards: boolean;
+  importedSetNames: string[];
+}
 
 /**
  * AppStartup handles initialization of all services and databases
@@ -9,15 +21,11 @@ import Logger from './Logger';
 class AppStartup {
   private static instance: AppStartup;
   private static initialized = false;
-  private static initializing = false;
+  private static initPromise: Promise<AppStartupResult> | null = null;
+  private static lastResult: AppStartupResult = { didImportCards: false, importedSetNames: [] };
 
-  private constructor() {
-    // Private constructor to enforce singleton pattern
-  }
+  private constructor() {}
 
-  /**
-   * Get singleton instance
-   */
   public static getInstance(): AppStartup {
     if (!AppStartup.instance) {
       AppStartup.instance = new AppStartup();
@@ -25,113 +33,63 @@ class AppStartup {
     return AppStartup.instance;
   }
 
-  /**
-   * Initialize all app services
-   */
-  public async initialize(): Promise<void> {
+  public async initialize(options: AppStartupOptions = {}): Promise<AppStartupResult> {
     if (AppStartup.initialized) {
       Logger.info('[AppStartup] App already initialized, skipping');
-      return;
+      return AppStartup.lastResult;
     }
 
-    if (AppStartup.initializing) {
+    if (AppStartup.initPromise) {
       Logger.info('[AppStartup] Initialization already in progress, waiting...');
-      await this.waitForInitialization();
-      return;
+      return AppStartup.initPromise;
     }
 
+    AppStartup.initPromise = this.runInitialization(options);
+    return AppStartup.initPromise;
+  }
+
+  private async runInitialization(options: AppStartupOptions): Promise<AppStartupResult> {
     try {
-      AppStartup.initializing = true;
       Logger.info('[AppStartup] Starting app initialization');
 
-      // Initialize all databases
-      await this.initializeDatabases();
-
-      // Perform platform-specific initialization
-      await this.platformSpecificSetup();
-
-      // You can add more initialization steps here, for example:
-      // - Initialize authentication services
-      // - Load user preferences
-      // - Set up analytics
-      // - Initialize third-party services
-
-      AppStartup.initialized = true;
-      Logger.info('[AppStartup] App initialization completed successfully');
-    } catch (error) {
-      Logger.error('[AppStartup] Error during app initialization', error);
-      // Reset for retry on next attempt
-      AppStartup.initialized = false;
-      throw error;
-    } finally {
-      AppStartup.initializing = false;
-    }
-  }
-
-  /**
-   * Initialize all databases
-   */
-  private async initializeDatabases(): Promise<void> {
-    try {
       Logger.info('[AppStartup] Initializing databases');
       await DatabaseInitializer.initializeAllDatabases();
-      Logger.info('[AppStartup] Database initialization completed');
-    } catch (error) {
-      Logger.error('[AppStartup] Database initialization failed', error);
-      throw error;
-    }
-  }
 
-  /**
-   * Perform platform-specific setup
-   */
-  private async platformSpecificSetup(): Promise<void> {
-    try {
-      if (Platform.OS === 'android') {
-        // Android-specific setup
-        Logger.info('[AppStartup] Performing Android-specific setup');
-        // Add Android-specific initialization if needed
-      } else if (Platform.OS === 'ios') {
-        // iOS-specific setup
-        Logger.info('[AppStartup] Performing iOS-specific setup');
-        // Add iOS-specific initialization if needed
+      const lorcanaResult = await initializeLorcanaDatabase(options.onStatusChange);
+      Logger.info('[AppStartup] Lorcana initialization result', lorcanaResult);
+
+      if (!lorcanaResult.success) {
+        throw new Error('Lorcana data initialization failed');
       }
+
+      const result: AppStartupResult = {
+        didImportCards: lorcanaResult.didImportCards,
+        importedSetNames: lorcanaResult.importedSetNames,
+      };
+
+      AppStartup.initialized = true;
+      AppStartup.lastResult = result;
+      Logger.info('[AppStartup] App initialization completed successfully');
+      return result;
     } catch (error) {
-      Logger.error(`[AppStartup] Error during ${Platform.OS}-specific setup`, error);
+      Logger.error('[AppStartup] Error during app initialization', error);
+      AppStartup.initialized = false;
+      AppStartup.lastResult = { didImportCards: false, importedSetNames: [] };
       throw error;
+    } finally {
+      AppStartup.initPromise = null;
     }
   }
 
-  /**
-   * Wait for any in-progress initialization to complete
-   */
-  private async waitForInitialization(): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const checkInitialization = () => {
-        if (!AppStartup.initializing) {
-          resolve();
-        } else {
-          setTimeout(checkInitialization, 100);
-        }
-      };
-      checkInitialization();
-    });
-  }
-
-  /**
-   * Check if app is fully initialized
-   */
   public isInitialized(): boolean {
     return AppStartup.initialized;
   }
 
-  /**
-   * Reset initialization state for testing purposes
-   */
   public reset(): void {
     AppStartup.initialized = false;
-    AppStartup.initializing = false;
+    AppStartup.initPromise = null;
+    AppStartup.lastResult = { didImportCards: false, importedSetNames: [] };
   }
 }
 
-export default AppStartup; 
+export default AppStartup;

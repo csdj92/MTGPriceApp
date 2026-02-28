@@ -4,6 +4,7 @@ import { View, FlatList, ActivityIndicator, Alert } from 'react-native';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import LorcanaCard from './LorcanaCard';
 import LorcanaCardModal from './LorcanaCardModal';
+import LorcanaCardShowcase from './LorcanaCardShowcase';
 import LorcanaVersionModal from './LorcanaVersionModal';
 import LorcanaFilters from './LorcanaFilters';
 import QuickQuantityModal from './QuickQuantityModal';
@@ -49,6 +50,8 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
     const styles = useStyles();
 
     const [showFilters, setShowFilters] = useState(false);
+    const [viewMode, setViewMode] = useState<'grid' | 'showcase'>('grid');
+    const [showcaseIndex, setShowcaseIndex] = useState(0);
 
     // Existing hooks
     const { addToCollection, refreshCollectionStatus } = useLorcanaCollection({ onCardsUpdate });
@@ -98,9 +101,12 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         if (isSelectionMode) {
             toggleCardSelection(card.Unique_ID);
         } else {
+            // Track position for showcase mode
+            const idx = filteredAndSortedCards.findIndex(c => c.Unique_ID === card.Unique_ID);
+            if (idx !== -1) setShowcaseIndex(idx);
             openCardDetail(card);
         }
-    }, [isSelectionMode, toggleCardSelection, openCardDetail]);
+    }, [isSelectionMode, toggleCardSelection, openCardDetail, filteredAndSortedCards]);
 
     const handleCardLongPress = useCallback(async (card: LorcanaCardWithPrice) => {
         if (isSelectionMode) {
@@ -170,6 +176,11 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                         cardCount={cardCount}
                         totalValue={totalValue}
                         showStats={cardCount !== undefined && totalValue !== undefined}
+                        viewMode={viewMode}
+                        onViewModeChange={(mode) => {
+                            setViewMode(mode);
+                            if (mode === 'showcase') setShowFilters(false);
+                        }}
                     />
                 </View>
             )}
@@ -183,20 +194,34 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 />
             )}
 
-            <FlatList
-                data={filteredAndSortedCards}
-                renderItem={renderCard}
-                keyExtractor={keyExtractor}
-                numColumns={3}
-                contentContainerStyle={styles.grid}
-                onEndReachedThreshold={0.5}
-                initialNumToRender={9}
-                maxToRenderPerBatch={4}
-                windowSize={7}
-                removeClippedSubviews={false}
-                updateCellsBatchingPeriod={20}
-                extraData={filteredAndSortedCards}
-            />
+            {viewMode === 'showcase' ? (
+                <LorcanaCardShowcase
+                    cards={filteredAndSortedCards}
+                    initialIndex={showcaseIndex}
+                    priceCache={priceCache}
+                    priceLoading={priceLoading}
+                    onCardPress={(card) => {
+                        openCardDetail(card);
+                    }}
+                    onClose={() => setViewMode('grid')}
+                    newToCollectionCards={newToCollectionCards}
+                />
+            ) : (
+                <FlatList
+                    data={filteredAndSortedCards}
+                    renderItem={renderCard}
+                    keyExtractor={keyExtractor}
+                    numColumns={3}
+                    contentContainerStyle={styles.grid}
+                    onEndReachedThreshold={0.5}
+                    initialNumToRender={9}
+                    maxToRenderPerBatch={4}
+                    windowSize={7}
+                    removeClippedSubviews={false}
+                    updateCellsBatchingPeriod={20}
+                    extraData={filteredAndSortedCards}
+                />
+            )}
 
             {selectedCard && (
                 <Suspense fallback={<ActivityIndicator size="small" color={theme.primary} />}>

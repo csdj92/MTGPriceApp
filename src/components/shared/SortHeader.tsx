@@ -22,6 +22,8 @@ interface SortHeaderProps {
     cardCount?: number;
     totalValue?: string;
     showStats?: boolean;
+    viewMode?: 'grid' | 'showcase';
+    onViewModeChange?: (mode: 'grid' | 'showcase') => void;
 }
 
 const sortOptionsConfig: { label: string; value: SortOption }[] = [
@@ -39,7 +41,9 @@ const SortHeader: React.FC<SortHeaderProps> = ({
     showExportButton,
     cardCount,
     totalValue,
-    showStats
+    showStats,
+    viewMode = 'grid',
+    onViewModeChange,
 }) => {
     const styles = useStyles();
     const { theme } = useTheme();
@@ -70,6 +74,21 @@ const SortHeader: React.FC<SortHeaderProps> = ({
                     >
                         <Icon name="export-variant" size={20} color={theme.primary} />
                         <Text style={styles.buttonText}>Export</Text>
+                    </TouchableOpacity>
+                )}
+                {onViewModeChange && (
+                    <TouchableOpacity
+                        style={[styles.controlButton, styles.viewToggleBtn, viewMode === 'showcase' && styles.viewToggleBtnActive]}
+                        onPress={() => onViewModeChange(viewMode === 'grid' ? 'showcase' : 'grid')}
+                    >
+                        <Icon
+                            name={viewMode === 'showcase' ? 'view-grid' : 'card-text'}
+                            size={20}
+                            color={viewMode === 'showcase' ? theme.card ?? '#fff' : theme.primary}
+                        />
+                        <Text style={[styles.buttonText, viewMode === 'showcase' && styles.viewToggleTextActive]}>
+                            {viewMode === 'showcase' ? 'Grid' : 'Showcase'}
+                        </Text>
                     </TouchableOpacity>
                 )}
             </View>
@@ -174,6 +193,18 @@ const useStyles = () => useThemedStyles((theme: Theme) => ({
     sortControlTextActive: {
         color: theme.card,
         fontWeight: 'bold' as 'bold',
+    },
+    viewToggleBtn: {
+        borderRadius: 6,
+        borderWidth: 1,
+        borderColor: theme.border,
+    },
+    viewToggleBtnActive: {
+        backgroundColor: theme.primary,
+        borderColor: theme.primary,
+    },
+    viewToggleTextActive: {
+        color: theme.card ?? '#fff',
     },
 }));
 
