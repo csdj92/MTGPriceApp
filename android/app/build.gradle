@@ -2,6 +2,10 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+def bundledLorcanaDbSource = rootProject.file("../prebuilt/lorcana.db")
+def bundledLorcanaDbAssetsDir = file("$projectDir/src/main/assets/www")
+def bundledLorcanaDbAsset = file("$bundledLorcanaDbAssetsDir/lorcana.db")
+
 // React Native Config
 react {
     root = file("../../")
@@ -67,6 +71,39 @@ android {
     tasks.withType(com.android.build.gradle.internal.lint.AndroidLintTask) {
         dependsOn ':app:copyReactNativeVectorIconFonts'
     }
+}
+
+tasks.register("stageBundledLorcanaDb") {
+    inputs.property("bundledLorcanaDbPresent", bundledLorcanaDbSource.exists())
+    inputs.property("bundledLorcanaDbLastModified", bundledLorcanaDbSource.exists() ? bundledLorcanaDbSource.lastModified() : 0L)
+    inputs.property("bundledLorcanaDbSize", bundledLorcanaDbSource.exists() ? bundledLorcanaDbSource.length() : 0L)
+    outputs.file(bundledLorcanaDbAsset)
+
+    doLast {
+        bundledLorcanaDbAssetsDir.mkdirs()
+
+        if (bundledLorcanaDbSource.exists()) {
+            copy {
+                from bundledLorcanaDbSource
+                into bundledLorcanaDbAssetsDir
+                rename { "lorcana.db" }
+            }
+            println("[stageBundledLorcanaDb] Packaged ${bundledLorcanaDbSource} into ${bundledLorcanaDbAsset}")
+            return
+        }
+
+        if (bundledLorcanaDbAsset.exists()) {
+            bundledLorcanaDbAsset.delete()
+            println("[stageBundledLorcanaDb] Removed stale bundled asset because ${bundledLorcanaDbSource} was not found")
+            return
+        }
+
+        println("[stageBundledLorcanaDb] No prebuilt Lorcana database found at ${bundledLorcanaDbSource}; build will use runtime API import.")
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("stageBundledLorcanaDb")
 }
 
 dependencies {

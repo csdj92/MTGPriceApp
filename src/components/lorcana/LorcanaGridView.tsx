@@ -1,6 +1,8 @@
 // LorcanaGridView component - orchestrator
-import React, { useState, useCallback, Suspense } from 'react';
-import { View, FlatList, ActivityIndicator, Alert } from 'react-native';
+import React, { useState, useCallback, Suspense, useLayoutEffect, useRef } from 'react';
+import { View, FlatList, ActivityIndicator, Alert, TouchableOpacity, StyleSheet as RNStyleSheet } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
 import LorcanaCard from './LorcanaCard';
 import LorcanaCardModal from './LorcanaCardModal';
@@ -9,6 +11,8 @@ import LorcanaVersionModal from './LorcanaVersionModal';
 import LorcanaFilters from './LorcanaFilters';
 import QuickQuantityModal from './QuickQuantityModal';
 import SelectionHeader from './SelectionHeader';
+import BuyListFAB from './BuyListFAB';
+import { addToBuyList } from '../../services/BuyListService';
 import { useLorcanaCollection } from '../../hooks/useLorcanaCollection';
 import { useLorcanaPrices } from '../../hooks/useLorcanaPrices';
 import { useLorcanaFilters } from '../../hooks/useLorcanaFilters';
@@ -20,6 +24,8 @@ import SortHeader from '../shared/SortHeader';
 import { useTheme } from '../../context/ThemeContext';
 import useThemedStyles from '../../hooks/useThemedStyles';
 import type { Theme } from '../../context/ThemeContext';
+
+const Icon = MaterialCommunityIcons as any;
 
 interface LorcanaGridViewProps {
     cards: LorcanaCardWithPrice[];
@@ -48,10 +54,17 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 }) => {
     const { theme } = useTheme();
     const styles = useStyles();
+    const navigation = useNavigation();
 
     const [showFilters, setShowFilters] = useState(false);
     const [viewMode, setViewMode] = useState<'grid' | 'showcase'>('grid');
     const [showcaseIndex, setShowcaseIndex] = useState(0);
+
+    // Keep refs so the header button callbacks always see current state
+    const showFiltersRef = useRef(showFilters);
+    showFiltersRef.current = showFilters;
+    const viewModeRef = useRef(viewMode);
+    viewModeRef.current = viewMode;
 
     // Existing hooks
     const { addToCollection, refreshCollectionStatus } = useLorcanaCollection({ onCardsUpdate });
@@ -86,6 +99,59 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
 
     useVisibleCardPrices({ filteredAndSortedCards, getPrice, priceCache, setPriceCache });
 
+    // ── Push action buttons into the React Navigation header ──
+    useLayoutEffect(() => {
+        navigation.setOptions({
+            headerRight: () => (
+                <View style={navStyles.headerBtns}>
+                    {/* Filter */}
+                    <TouchableOpacity
+                        style={navStyles.btn}
+                        onPress={() => setShowFilters(f => !f)}
+                        activeOpacity={0.7}
+                    >
+                        <Icon
+                            name={showFiltersRef.current ? 'filter' : 'filter-variant'}
+                            size={22}
+                            color={showFiltersRef.current ? theme.primary : theme.text}
+                        />
+                    </TouchableOpacity>
+
+                    {/* Showcase toggle */}
+                    <TouchableOpacity
+                        style={[
+                            navStyles.btn,
+                            viewModeRef.current === 'showcase' && { backgroundColor: theme.primary + '22' },
+                        ]}
+                        onPress={() => {
+                            const next = viewModeRef.current === 'grid' ? 'showcase' : 'grid';
+                            setViewMode(next);
+                            if (next === 'showcase') setShowFilters(false);
+                        }}
+                        activeOpacity={0.7}
+                    >
+                        <Icon
+                            name={viewModeRef.current === 'showcase' ? 'view-grid' : 'card-text-outline'}
+                            size={22}
+                            color={viewModeRef.current === 'showcase' ? theme.primary : theme.text}
+                        />
+                    </TouchableOpacity>
+
+                    {/* Export */}
+                    {onExportCollection && (
+                        <TouchableOpacity
+                            style={navStyles.btn}
+                            onPress={onExportCollection}
+                            activeOpacity={0.7}
+                        >
+                            <Icon name="export-variant" size={22} color={theme.text} />
+                        </TouchableOpacity>
+                    )}
+                </View>
+            ),
+        });
+    }, [navigation, showFilters, viewMode, onExportCollection, theme]);
+
     // Callbacks
     const handleCardPress = useCallback((card: LorcanaCardWithPrice) => {
         const action = isSelectionMode ? 'toggle-selection' : 'open-detail';
@@ -101,7 +167,6 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
         if (isSelectionMode) {
             toggleCardSelection(card.Unique_ID);
         } else {
-            // Track position for showcase mode
             const idx = filteredAndSortedCards.findIndex(c => c.Unique_ID === card.Unique_ID);
             if (idx !== -1) setShowcaseIndex(idx);
             openCardDetail(card);
@@ -131,6 +196,24 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
             enterSelectionMode(card.Unique_ID);
         }
     }, [isSelectionMode, collectionId, toggleCardSelection, openQuickQuantity, enterSelectionMode]);
+
+    const handleBulkBuyList = useCallback(() => {
+        const selectedCards = filteredAndSortedCards.filter(c => selectedCardIds.has(c.Unique_ID));
+        selectedCards.forEach(card => {
+            const cached = priceCache[card.Unique_ID || card.Name];
+            const price = cached?.usd ? parseFloat(cached.usd) : undefined;
+            addToBuyList({
+                id: card.Unique_ID,
+                name: card.Name,
+                setName: card.Set_Name,
+                color: card.Color,
+                price,
+                imageUrl: card.Image,
+                tcgplayerId: cached?.tcgplayer_id,
+            });
+        });
+        handleCancelSelection();
+    }, [filteredAndSortedCards, selectedCardIds, priceCache, handleCancelSelection]);
 
     const renderCard = useCallback(({ item }: { item: LorcanaCardWithPrice }) => (
         <LorcanaCard
@@ -163,6 +246,7 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                     onBulkAdd={handleBulkAddToCollection}
                     onBulkDelete={handleBulkDelete}
                     onCancel={handleCancelSelection}
+                    onBulkBuyList={handleBulkBuyList}
                 />
             ) : (
                 <View style={styles.headerControlsContainer}>
@@ -170,17 +254,9 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                         sortBy={sortBy}
                         sortDirection={sortDirection}
                         onSortChange={toggleSort}
-                        onFilterPress={() => setShowFilters(!showFilters)}
-                        onExportPress={onExportCollection}
-                        showExportButton={!!onExportCollection}
                         cardCount={cardCount}
                         totalValue={totalValue}
                         showStats={cardCount !== undefined && totalValue !== undefined}
-                        viewMode={viewMode}
-                        onViewModeChange={(mode) => {
-                            setViewMode(mode);
-                            if (mode === 'showcase') setShowFilters(false);
-                        }}
                     />
                 </View>
             )}
@@ -264,22 +340,35 @@ const LorcanaGridView: React.FC<LorcanaGridViewProps> = ({
                 collectionId={collectionId}
                 onQuantityChange={handleQuantityChange}
             />
+
+            <BuyListFAB />
         </View>
     );
 };
+
+// Static styles for the nav header buttons (not theme-dependent for StyleSheet.create)
+const navStyles = RNStyleSheet.create({
+    headerBtns: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginRight: 4,
+    },
+    btn: {
+        width: 38,
+        height: 38,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+});
 
 const useStyles = () => useThemedStyles((theme: Theme) => ({
     container: {
         flex: 1,
     },
     headerControlsContainer: {
-        flexDirection: 'row' as 'row',
-        alignItems: 'center' as 'center',
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.border,
-        backgroundColor: theme.surface,
+        width: '100%' as any,
     },
     loadingContainer: {
         flex: 1,

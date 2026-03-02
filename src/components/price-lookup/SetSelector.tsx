@@ -6,8 +6,8 @@ import {
   Modal,
   StyleSheet,
   FlatList,
-  SafeAreaView
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { setNames } from '../../services/LorcanaService';
 
 type SetOption = {

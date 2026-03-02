@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
-import { SafeAreaView, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import SetCompletionScreen from './SetCompletionScreen';
 import CollectionsTab from './CollectionsTab';
 import TopCardsScreen from './TopCardsScreen';
@@ -20,7 +20,7 @@ const CollectionScreen: React.FC<CollectionScreenProps> = () => {
     const styles = useMemo(() => createStyles(theme), [theme]);
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={styles.container}>
             <Tab.Navigator
                 screenOptions={{
                     tabBarStyle: {
@@ -55,7 +55,7 @@ const CollectionScreen: React.FC<CollectionScreenProps> = () => {
                     }}
                 />
             </Tab.Navigator>
-        </SafeAreaView>
+        </View>
     );
 };
 

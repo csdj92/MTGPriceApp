@@ -9,6 +9,7 @@ import {
     Dimensions,
     FlatList,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FastImage from '@d11/react-native-fast-image';
 import LinearGradient from 'react-native-linear-gradient';
 import type { LorcanaCardWithPrice } from '../../types/lorcana';
@@ -59,6 +60,7 @@ const LorcanaCardShowcase: React.FC<LorcanaCardShowcaseProps> = ({
     newToCollectionCards = new Set(),
 }) => {
     const { theme } = useTheme();
+    const insets = useSafeAreaInsets();
 
     const safeInitial = Math.min(Math.max(0, initialIndex), cards.length - 1);
     const [currentIndex, setCurrentIndex] = useState(safeInitial);
@@ -260,7 +262,7 @@ const LorcanaCardShowcase: React.FC<LorcanaCardShowcaseProps> = ({
             />
 
             {/* Header */}
-            <View style={styles.header}>
+            <View style={[styles.header, { paddingTop: 14 + insets.top }]}>
                 <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.8}>
                     <Icon name="arrow-left" size={20} color="rgba(255,255,255,0.9)" />
                 </TouchableOpacity>
@@ -414,7 +416,7 @@ const LorcanaCardShowcase: React.FC<LorcanaCardShowcaseProps> = ({
             </Animated.View>
 
             {/* Filmstrip navigator */}
-            <View style={styles.filmstripContainer}>
+            <View style={[styles.filmstripContainer, { paddingBottom: 10 + insets.bottom, height: 58 + insets.bottom }]}>
                 <FlatList
                     ref={filmstripRef}
                     data={cards}
@@ -456,7 +458,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 16,
-        paddingTop: 14,
         paddingBottom: 6,
     },
     closeBtn: {
@@ -633,8 +634,7 @@ const styles = StyleSheet.create({
 
     // Filmstrip
     filmstripContainer: {
-        height: 58,
-        paddingBottom: 10,
+        // height and paddingBottom are applied inline with safe area insets
     },
     filmstripContent: {
         paddingHorizontal: 16,

@@ -1,3 +1,23 @@
+# Lorcana Collector
+
+## Bundled Lorcana Database (Android)
+
+Android builds can now ship a prebuilt `lorcana.db` so first launch does not need to download the full card catalog.
+
+1. Stage the snapshot into `prebuilt/lorcana.db`:
+
+```powershell
+.\scripts\stage-lorcana-db.ps1 C:\path\to\lorcana.db
+```
+
+2. Build the app normally.
+3. `:app:preBuild` copies `prebuilt/lorcana.db` to `android/app/src/main/assets/www/lorcana.db`.
+4. On first launch, SQLite opens that bundled DB via `createFromLocation: 1`.
+
+If `prebuilt/lorcana.db` is missing, the build skips the asset and the app falls back to the current runtime API import path.
+
+Close and checkpoint the source DB before staging it. If `lorcana.db-wal` or `lorcana.db-shm` still exist next to the source file, the staged snapshot may be incomplete.
+
 This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
 # Getting Started

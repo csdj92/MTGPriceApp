@@ -83,7 +83,7 @@ const THEME_PREFERENCE_KEY = '@theme_preference';
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const deviceTheme = useColorScheme();
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(deviceTheme === 'dark');
 
   // Load saved theme preference
   useEffect(() => {

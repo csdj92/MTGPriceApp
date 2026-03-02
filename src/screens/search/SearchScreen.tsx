@@ -4,9 +4,9 @@ import {
     StyleSheet,
     Alert,
     Modal,
-    SafeAreaView,
     TouchableOpacity,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/AppNavigator';
@@ -14,9 +14,11 @@ import type { LorcanaCard } from '../../types/lorcana';
 import CardSearch from '../../components/CardSearch';
 import LorcanaCardList from '../../components/LorcanaCardList';
 import CollectionSelectionModal from '../../components/CollectionSelectionModal';
+import BuyListFAB from '../../components/lorcana/BuyListFAB';
 import { databaseService } from '../../services/DatabaseService';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
-const Icon = MaterialCommunityIcons as any; // Temporary type assertion
+import { useTheme } from '../../context/ThemeContext';
+const Icon = MaterialCommunityIcons as any;
 
 type SearchScreenNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -25,6 +27,7 @@ const SearchScreen = () => {
     const [isCollectionModalVisible, setIsCollectionModalVisible] = useState(false);
     const [isCardDetailsVisible, setIsCardDetailsVisible] = useState(false);
     const navigation = useNavigation<SearchScreenNavigationProp>();
+    const { theme } = useTheme();
 
     const handleCardSelect = (card: LorcanaCard) => {
         setSelectedCard(card);
@@ -41,7 +44,6 @@ const SearchScreen = () => {
         if (!selectedCard) return;
 
         try {
-            // TODO: Implement Lorcana card collection handling
             Alert.alert(
                 'Success',
                 `Added ${selectedCard.Name} to collection`,
@@ -57,10 +59,7 @@ const SearchScreen = () => {
             );
         } catch (error) {
             console.error('Error adding card to collection:', error);
-            Alert.alert(
-                'Error',
-                'Failed to add card to collection'
-            );
+            Alert.alert('Error', 'Failed to add card to collection');
         } finally {
             setIsCollectionModalVisible(false);
             setSelectedCard(null);
@@ -73,13 +72,13 @@ const SearchScreen = () => {
             animationType="slide"
             onRequestClose={() => setIsCardDetailsVisible(false)}
         >
-            <SafeAreaView style={styles.modalContainer}>
-                <View style={styles.modalHeader}>
+            <SafeAreaView style={[styles.modalContainer, { backgroundColor: theme.background }]}>
+                <View style={[styles.modalHeader, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
                     <TouchableOpacity
                         onPress={() => setIsCardDetailsVisible(false)}
                         style={styles.closeButton}
                     >
-                        <Icon name="close" size={24} color="#666" />
+                        <Icon name="close" size={24} color={theme.textSecondary} />
                     </TouchableOpacity>
                 </View>
                 {selectedCard && (
@@ -99,8 +98,8 @@ const SearchScreen = () => {
     );
 
     return (
-        <SafeAreaView style={styles.safeArea}>
-            <View style={styles.container}>
+        <View style={[styles.root, { backgroundColor: theme.background }]}>
+            <View style={[styles.container, { backgroundColor: theme.background }]}>
                 <View style={styles.searchContainer}>
                     <CardSearch
                         onCardSelect={handleCardSelect}
@@ -119,18 +118,18 @@ const SearchScreen = () => {
 
                 {renderCardDetailsModal()}
             </View>
-        </SafeAreaView>
+
+            <BuyListFAB />
+        </View>
     );
 };
 
 const styles = StyleSheet.create({
-    safeArea: {
+    root: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
     },
     container: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
     },
     searchContainer: {
         flex: 1,
@@ -139,19 +138,16 @@ const styles = StyleSheet.create({
     },
     modalContainer: {
         flex: 1,
-        backgroundColor: '#f5f5f5',
     },
     modalHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         padding: 16,
-        backgroundColor: 'white',
         borderBottomWidth: 1,
-        borderBottomColor: '#e0e0e0',
     },
     closeButton: {
         padding: 8,
     },
 });
 
-export default SearchScreen; 
+export default SearchScreen;

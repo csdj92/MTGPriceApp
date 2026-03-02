@@ -1,5 +1,8 @@
 import { LorcanaCard as LorcanaDbCard } from './lorcana';
 
+// Re-export the database card type for use in components
+export type { LorcanaDbCard };
+
 export interface OcrResult {
     text: string;
     mainName?: string | null;
@@ -74,7 +77,7 @@ export type LorcanaScannedCard = {
     rarity?: string;
     prices?: CardPrices;
     scannedAt?: number;
-    card: LorcanaCard;
+    card: LorcanaDbCard;
     normalCount: number;
     foilCount: number;
     isFoil: boolean;

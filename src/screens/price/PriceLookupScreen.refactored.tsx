@@ -11,12 +11,12 @@ import {
   Platform,
   ToastAndroid,
   Alert,
+  StyleSheet,
 } from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../../context/ThemeContext';
-import useThemedStyles from '../../hooks/useThemedStyles';
-import type { Theme } from '../../context/ThemeContext';
 
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/AppNavigator';
@@ -24,7 +24,6 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { useLorcanaScanHistory } from '../../hooks/useLorcanaScanHistory';
 import UnifiedScannedList from '../../components/price-lookup/UnifiedScannedList';
 import { searchLorcanaCards } from '../../services/LorcanaService';
-import SortHeader from '../../components/shared/SortHeader';
 import CardScanner from '../../components/CardScanner';
 import { OcrService } from '../../services/OcrService';
 import { CardSearchService } from '../../services/CardSearchService';
@@ -47,8 +46,7 @@ type Props = {
 
 const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
   const { theme } = useTheme();
-  const styles = useStyles();
-  /* ----------------------- scan-history state ---------------------- */
+
   const {
     lorcanaScannedCards,
     totalPrice,
@@ -60,88 +58,50 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
     toggleFoil,
   } = useLorcanaScanHistory();
 
-  /* --------------------------- search UI --------------------------- */
-  const [search, setSearch] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-
-  /* ------------------------- camera / OCR ------------------------- */
-  const [cameraActive, setCameraActive] = useState(false);
+  const [search, setSearch]                     = useState('');
+  const [isLoading, setIsLoading]               = useState(false);
+  const [cameraActive, setCameraActive]         = useState(false);
   const [cameraModalShown, setCameraModalShown] = useState(false);
-  // multiple Lorcana matches modal
   const [multiModalVisible, setMultiModalVisible] = useState(false);
-  const [multiCards, setMultiCards] = useState<LorcanaDbCard[]>([]);
-  // Lorcana set filter (for camera scanning)
-  const [selectedSet, setSelectedSet] = useState<string | null>(null);
-  const [setFilterLoaded, setSetFilterLoaded] = useState(false);
-  // pause/verification state
+  const [multiCards, setMultiCards]             = useState<LorcanaDbCard[]>([]);
+  const [selectedSet, setSelectedSet]           = useState<string | null>(null);
+  const [setFilterLoaded, setSetFilterLoaded]   = useState(false);
   const [isScanningPaused, setIsScanningPaused] = useState(false);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const isVerifyingRef = useRef(false);
-  const [reviewVisible, setReviewVisible] = useState(false);
+  const [isVerifying, setIsVerifying]           = useState(false);
+  const isVerifyingRef                          = useRef(false);
+  const [reviewVisible, setReviewVisible]       = useState(false);
   const [newToCollectionCards, setNewToCollectionCards] = useState<Set<string>>(new Set());
 
   const showScanFeedback = (message: string) => {
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(message, ToastAndroid.SHORT);
-      return;
-    }
+    if (Platform.OS === 'android') { ToastAndroid.show(message, ToastAndroid.SHORT); return; }
     Alert.alert('Scanner', message);
   };
 
-  // Back handler to close camera on hardware back press
   useEffect(() => {
     if (!cameraActive) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (cameraActive) {
-        setCameraModalShown(false);
-        setCameraActive(false);
-        return true; // handled
-      }
+      if (cameraActive) { setCameraModalShown(false); setCameraActive(false); return true; }
       return false;
     });
     return () => sub.remove();
   }, [cameraActive]);
 
-  useEffect(() => {
-    if (!cameraActive) {
-      setCameraModalShown(false);
-    }
-  }, [cameraActive]);
+  useEffect(() => { if (!cameraActive) setCameraModalShown(false); }, [cameraActive]);
 
   useEffect(() => {
     let mounted = true;
-    const loadSelectedSet = async () => {
-      try {
-        const savedSet = await AsyncStorage.getItem(LORCANA_SET_FILTER_KEY);
-        if (!mounted) return;
-        setSelectedSet(savedSet || null);
-      } catch (error) {
-        console.error('[PriceLookup] Failed to load set filter', error);
-      } finally {
-        if (mounted) setSetFilterLoaded(true);
-      }
-    };
-    loadSelectedSet();
-    return () => {
-      mounted = false;
-    };
+    AsyncStorage.getItem(LORCANA_SET_FILTER_KEY).then(saved => {
+      if (!mounted) return;
+      setSelectedSet(saved || null);
+    }).catch(err => console.error('[PriceLookup] Failed to load set filter', err))
+      .finally(() => { if (mounted) setSetFilterLoaded(true); });
+    return () => { mounted = false; };
   }, []);
 
   useEffect(() => {
     if (!setFilterLoaded) return;
-
-    const saveSelectedSet = async () => {
-      try {
-        if (selectedSet) {
-          await AsyncStorage.setItem(LORCANA_SET_FILTER_KEY, selectedSet);
-        } else {
-          await AsyncStorage.removeItem(LORCANA_SET_FILTER_KEY);
-        }
-      } catch (error) {
-        console.error('[PriceLookup] Failed to persist set filter', error);
-      }
-    };
-    saveSelectedSet();
+    if (selectedSet) AsyncStorage.setItem(LORCANA_SET_FILTER_KEY, selectedSet).catch(() => {});
+    else AsyncStorage.removeItem(LORCANA_SET_FILTER_KEY).catch(() => {});
   }, [selectedSet, setFilterLoaded]);
 
   const handleSearch = async () => {
@@ -151,7 +111,7 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
     setIsLoading(true);
     try {
       const results = await searchLorcanaCards(q);
-      results.forEach((c) => addLorcanaCard(c));
+      results.forEach(c => addLorcanaCard(c));
     } catch (err) {
       console.error('[PriceLookup] search error', err);
     } finally {
@@ -161,37 +121,19 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
 
   const handleOcrScan = async (result: OcrResult) => {
     if (isVerifyingRef.current || isVerifying) return;
-
     try {
       if (!result?.text?.trim()) return;
-
       const preprocessed = OcrService.preprocessText(result.text);
-      const mainName = result.isLorcana
-        ? OcrService.preprocessText(result.mainName ?? '')
-        : preprocessed;
-
+      const mainName = result.isLorcana ? OcrService.preprocessText(result.mainName ?? '') : preprocessed;
       if (!mainName) return;
-
       const duplicateKey = result.cardNumber
         ? `${result.cardNumber}-${result.setNumber ?? selectedSet ?? ''}`
         : mainName.toLowerCase().trim();
       if (OcrService.checkDuplicate(duplicateKey)) return;
-
       isVerifyingRef.current = true;
       setIsVerifying(true);
-
-      const found = await CardSearchService.findLorcanaCard(
-        mainName,
-        result.subtype,
-        selectedSet,
-        result.cardNumber,
-        result.setNumber,
-      );
-      if (!found) {
-        showScanFeedback('Card not recognised');
-        return;
-      }
-
+      const found = await CardSearchService.findLorcanaCard(mainName, result.subtype, selectedSet, result.cardNumber, result.setNumber);
+      if (!found) { showScanFeedback('Card not recognised'); return; }
       if (found.kind === 'multiple') {
         if (found.cards.length === 1) {
           const card = found.cards[0] as LorcanaDbCard;
@@ -218,44 +160,54 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
     }
   };
 
-  /* ---------------------------- render ----------------------------- */
+  const hasCards = lorcanaScannedCards.length > 0;
+
   return (
-    <View style={styles.container}>
-      {/* header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Price Lookup</Text>
-        <TouchableOpacity onPress={() => setReviewVisible(true)} style={styles.recentBtn}>
-          <Icon name="history" size={20} color={theme.primary} />
-          <Text style={styles.recentBtnText}>Recent Scans</Text>
-        </TouchableOpacity>
-        <View style={styles.priceChip}>
-          <Icon name="currency-usd" size={18} color="#fff" />
-          <Text style={styles.priceText}>{totalPrice.toFixed(2)}</Text>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
+      {/* ── Header ── */}
+      <LinearGradient colors={['#0D0D1A', '#1A1A2E']} style={styles.header}>
+        {/* Top row: title + history */}
+        <View style={styles.headerTopRow}>
+          <Text style={styles.screenTitle}>Price Lookup</Text>
+          <TouchableOpacity onPress={() => setReviewVisible(true)} style={styles.historyBtn} activeOpacity={0.8}>
+            <Icon name="history" size={18} color="rgba(255,255,255,0.7)" />
+            <Text style={styles.historyBtnText}>History</Text>
+          </TouchableOpacity>
         </View>
-      </View>
 
-      {/* search */}
-      <View style={styles.searchRow}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder={'Search Lorcana…'}
-          value={search}
-          onChangeText={setSearch}
-          onSubmitEditing={handleSearch}
-          returnKeyType="search"
-        />
-        <TouchableOpacity style={styles.searchBtn} onPress={handleSearch}>
-          <Icon name="magnify" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
+        {/* Session total */}
+        <View style={styles.totalBlock}>
+          <Text style={styles.totalLabel}>SESSION TOTAL</Text>
+          <Text style={styles.totalValue}>${totalPrice.toFixed(2)}</Text>
+          {hasCards && (
+            <Text style={styles.totalSub}>{lorcanaScannedCards.length} card{lorcanaScannedCards.length !== 1 ? 's' : ''}</Text>
+          )}
+        </View>
 
-      {/* sort header placeholder */}
-      <SortHeader sortBy={'name'} sortDirection={'asc'} onSortChange={() => {}} onFilterPress={() => {}} />
+        {/* Search bar */}
+        <View style={[styles.searchBar, { backgroundColor: 'rgba(255,255,255,0.08)' }]}>
+          <Icon name="magnify" size={20} color="rgba(255,255,255,0.45)" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search Lorcana cards…"
+            placeholderTextColor="rgba(255,255,255,0.35)"
+            value={search}
+            onChangeText={setSearch}
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
+          />
+          {isLoading ? (
+            <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
+          ) : search.trim().length > 0 ? (
+            <TouchableOpacity onPress={handleSearch} style={styles.searchGoBtn} activeOpacity={0.8}>
+              <Icon name="arrow-right" size={16} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </LinearGradient>
 
-      {/* list or loader */}
-      {isLoading ? (
-        <ActivityIndicator style={{ marginTop: 32 }} size="large" />
-      ) : (
+      {/* ── Card list or empty state ── */}
+      {hasCards ? (
         <UnifiedScannedList
           scannedCards={lorcanaScannedCards}
           lorcanaScannedCards={lorcanaScannedCards}
@@ -265,34 +217,61 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
           onToggleFoil={toggleFoil}
           newToCollectionCards={newToCollectionCards}
         />
+      ) : (
+        <View style={styles.emptyState}>
+          <View style={[styles.emptyIconRing, { borderColor: theme.border }]}>
+            <Icon name="camera-outline" size={48} color={theme.textSecondary} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: theme.text }]}>No cards yet</Text>
+          <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
+            Scan a card with your camera or search by name above
+          </Text>
+        </View>
       )}
 
-      {/* camera FAB */}
-      <TouchableOpacity
-        style={styles.cameraFab}
-        onPress={() => {
-          setCameraModalShown(false);
-          setCameraActive(true);
-        }}
-      >
-        <Icon name="camera" size={26} color="#fff" />
-      </TouchableOpacity>
+      {/* ── Bottom controls ── */}
+      <View style={[styles.bottomBar, { backgroundColor: theme.surface, borderTopColor: theme.border }]}>
+        {/* Clear button — only when cards exist */}
+        {hasCards ? (
+          <TouchableOpacity
+            style={[styles.clearBtn, { borderColor: theme.error || '#E74C3C' }]}
+            onPress={clearScans}
+            activeOpacity={0.8}
+          >
+            <Icon name="delete-outline" size={18} color={theme.error || '#E74C3C'} />
+            <Text style={[styles.clearBtnText, { color: theme.error || '#E74C3C' }]}>Clear</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.bottomSpacer} />
+        )}
 
+        {/* Camera scan FAB */}
+        <TouchableOpacity
+          style={styles.scanFab}
+          onPress={() => { setCameraModalShown(false); setCameraActive(true); }}
+          activeOpacity={0.85}
+        >
+          <LinearGradient colors={['#6C63FF', '#3D35CC']} style={styles.scanFabGradient}>
+            <Icon name="camera" size={20} color="#fff" />
+            <Text style={styles.scanFabText}>SCAN CARDS</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        <View style={styles.bottomSpacer} />
+      </View>
+
+      {/* ── Camera modal ── */}
       <Modal
         visible={cameraActive}
         animationType="slide"
         hardwareAccelerated
         statusBarTranslucent
         onShow={() => setCameraModalShown(true)}
-        onRequestClose={() => {
-          setCameraModalShown(false);
-          setCameraActive(false);
-        }}
+        onRequestClose={() => { setCameraModalShown(false); setCameraActive(false); }}
       >
         <View style={{ flex: 1 }}>
-          {/* Header info + set selector */}
           <ScanHeaderInfo
-            isLorcanaScan={true}
+            isLorcanaScan
             isVerifying={isVerifying}
             scannedCardsCount={lorcanaScannedCards.length}
             totalPrice={totalPrice}
@@ -301,11 +280,11 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
           {cameraModalShown ? (
             <CardScanner
               onScan={handleOcrScan}
-              onError={(e) => console.error(e)}
-              isLorcanaScan={true}
+              onError={e => console.error(e)}
+              isLorcanaScan
               scannedCards={lorcanaScannedCards}
               totalPrice={totalPrice}
-              onRemoveCard={(id) => removeCard(id, 'Lorcana')}
+              onRemoveCard={id => removeCard(id, 'Lorcana')}
               onToggleFoil={toggleFoil}
               onIncrementCard={incrementCard}
               onDecrementCard={decrementCard}
@@ -326,32 +305,18 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
             </View>
           )}
 
-          {/* Zoom controls on left */}
           <ZoomControls />
-
-          {/* Pause / Close controls on right */}
           <View style={{ position: 'absolute', right: 20, bottom: 80 }}>
             <CameraControls
               isScanningPaused={isScanningPaused}
-              onPausePress={() => setIsScanningPaused((p) => !p)}
-              onClosePress={() => {
-                setCameraModalShown(false);
-                setCameraActive(false);
-              }}
+              onPausePress={() => setIsScanningPaused(p => !p)}
+              onClosePress={() => { setCameraModalShown(false); setCameraActive(false); }}
             />
           </View>
         </View>
       </Modal>
 
-      {/* clear */}
-      {lorcanaScannedCards.length > 0 && (
-        <TouchableOpacity style={styles.clearBtn} onPress={clearScans}>
-          <Icon name="delete" size={20} color="#fff" />
-          <Text style={styles.clearText}>Clear Scans</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* Lorcana multiple match modal */}
+      {/* ── Lorcana multi-match modal ── */}
       <LorcanaCardSelectionModal
         visible={multiModalVisible}
         onClose={() => { setMultiModalVisible(false); setIsScanningPaused(false); }}
@@ -370,108 +335,52 @@ const PriceLookupScreenRefactored: React.FC<Props> = ({ navigation }) => {
         lorcanaScannedCards={lorcanaScannedCards}
         onIncrement={incrementCard}
         onDecrement={decrementCard}
-        onRemove={(id)=>removeCard(id,'Lorcana')}
-        onClose={()=>setReviewVisible(false)}
+        onRemove={id => removeCard(id, 'Lorcana')}
+        onClose={() => setReviewVisible(false)}
       />
     </View>
   );
 };
 
-export default PriceLookupScreenRefactored;
+const styles = StyleSheet.create({
+  container: { flex: 1 },
 
-const useStyles = () =>
-  useThemedStyles((theme: Theme) => ({
-    container: { flex: 1, backgroundColor: theme.background },
-    header: {
-      flexDirection: 'row' as const,
-      alignItems: 'center' as const,
-      justifyContent: 'space-between' as const,
-      padding: 16,
-      backgroundColor: theme.surface,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.border,
-    },
-    title: { fontSize: 22, fontWeight: 'bold' as const, color: theme.text },
-    priceChip: {
-      flexDirection: 'row' as const,
-      backgroundColor: theme.success,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-      borderRadius: 12,
-      alignItems: 'center' as const,
-    },
-    priceText: { color: '#fff', marginLeft: 4, fontWeight: 'bold' as const },
-    searchRow: {
-      flexDirection: 'row' as const,
-      paddingHorizontal: 16,
-      marginBottom: 8,
-    },
-    searchInput: {
-      flex: 1,
-      backgroundColor: theme.surface,
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      height: 40,
-      color: theme.text,
-    },
-    searchBtn: {
-      backgroundColor: theme.primary,
-      marginLeft: 8,
-      borderRadius: 8,
-      width: 40,
-      height: 40,
-      alignItems: 'center' as const,
-      justifyContent: 'center' as const,
-    },
-    recentBtn: {
-      flexDirection: 'row' as const,
-      alignItems: 'center' as const,
-      marginLeft: 12,
-    },
-    recentBtnText: {
-      marginLeft: 4,
-      color: theme.primary,
-      fontSize: 14,
-    },
-    clearBtn: {
-      position: 'absolute' as const,
-      bottom: 32,
-      right: 32,
-      flexDirection: 'row' as const,
-      backgroundColor: theme.error,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderRadius: 24,
-      alignItems: 'center' as const,
-    },
-    clearText: { color: '#fff', marginLeft: 6, fontWeight: '600' as const },
-    cameraFab: {
-      position: 'absolute' as const,
-      bottom: 100,
-      right: 32,
-      backgroundColor: theme.primary,
-      width: 56,
-      height: 56,
-      borderRadius: 28,
-      alignItems: 'center' as const,
-      justifyContent: 'center' as const,
-      elevation: 4,
-    },
-    verifyingOverlay: {
-      position: 'absolute' as const,
-      top: 0,
-      right: 0,
-      bottom: 0,
-      left: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.35)',
-      alignItems: 'center' as const,
-      justifyContent: 'center' as const,
-      zIndex: 20,
-    },
-    verifyingText: {
-      marginTop: 10,
-      fontSize: 16,
-      color: '#fff',
-      fontWeight: '600' as const,
-    },
-  })); 
+  // Header
+  header: { paddingTop: 52, paddingBottom: 16, paddingHorizontal: 20 },
+  headerTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
+  screenTitle: { color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: 0.3 },
+  historyBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)' },
+  historyBtnText: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '600' },
+
+  // Total display
+  totalBlock: { alignItems: 'center', marginBottom: 20 },
+  totalLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '700', letterSpacing: 2, textTransform: 'uppercase', marginBottom: 4 },
+  totalValue: { color: '#fff', fontSize: 40, fontWeight: '800', letterSpacing: -1 },
+  totalSub: { color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 },
+
+  // Search bar
+  searchBar: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 14, height: 46, gap: 10 },
+  searchInput: { flex: 1, color: '#fff', fontSize: 15 },
+  searchGoBtn: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+
+  // Empty state
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
+  emptyIconRing: { width: 100, height: 100, borderRadius: 50, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  emptyTitle: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  emptySubtitle: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+
+  // Bottom bar
+  bottomBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  bottomSpacer: { width: 80 },
+  clearBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, width: 80, justifyContent: 'center' },
+  clearBtnText: { fontSize: 13, fontWeight: '600' },
+  scanFab: { borderRadius: 28, overflow: 'hidden', elevation: 6, shadowColor: '#6C63FF', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10 },
+  scanFabGradient: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 24, paddingVertical: 14 },
+  scanFabText: { color: '#fff', fontSize: 13, fontWeight: '800', letterSpacing: 1 },
+
+  // Camera overlays
+  verifyingOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', zIndex: 20 },
+  verifyingText: { marginTop: 10, fontSize: 16, color: '#fff', fontWeight: '600' },
+});
+
+export default PriceLookupScreenRefactored;

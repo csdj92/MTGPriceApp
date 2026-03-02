@@ -1,14 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import DatabaseService from './src/services/DatabaseService';
 import AppNavigator from './src/navigation/AppNavigator';
 import LoadingScreen from './src/components/LoadingScreen';
 import 'react-native-reanimated';
 import { collectionCacheService } from './src/services/CollectionCacheService';
-import { ActivityIndicator, View, Text, StyleSheet, StatusBar, Alert } from 'react-native';
+import { StatusBar, Alert } from 'react-native';
 import { setupFastImage, getImageLoadingStats } from './src/utils/imageUtils';
-import FastImage from "@d11/react-native-fast-image";
 import ErrorBoundary from './src/components/ErrorBoundary';
 import DatabaseErrorScreen from './src/components/DatabaseErrorScreen';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
@@ -118,27 +116,5 @@ const App = () => {
     </ErrorBoundary>
   );
 };
-
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    padding: 20,
-  },
-  loadingText: {
-    marginTop: 20,
-    fontSize: 16,
-    color: '#333',
-    textAlign: 'center',
-  },
-  errorHint: {
-    marginTop: 10,
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-  },
-});
 
 export default App;

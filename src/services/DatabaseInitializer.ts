@@ -10,7 +10,7 @@ SQLite.enablePromise(true);
 export interface DatabaseConfig {
   name: string;
   location?: string;
-  createFromLocation?: number;
+  createFromLocation?: number | string;
 }
 
 class DatabaseInitializer {
@@ -37,6 +37,7 @@ class DatabaseInitializer {
     lorcana: {
       name: 'lorcana.db',
       location: 'default',
+      createFromLocation: 1,
     },
   };
 
@@ -82,7 +83,7 @@ class DatabaseInitializer {
 
       // Open the database
       const config = this.configs[dbType];
-      const db = await SQLite.openDatabase(config);
+      const db = await this.openDatabaseWithFallback(dbType, config);
       
       // Cache the database connection
       this.databases[dbType] = {
@@ -94,6 +95,83 @@ class DatabaseInitializer {
     } catch (error) {
       Logger.error(`[DatabaseInitializer] Error getting ${dbType} database`, error);
       throw error;
+    }
+  }
+
+  private static getWritableDatabaseConfig(config: DatabaseConfig): DatabaseConfig {
+    return {
+      name: config.name,
+      location: config.location,
+    };
+  }
+
+  private static getBundledAssetPath(config: DatabaseConfig): string | null {
+    if (config.createFromLocation === 1) {
+      return `www/${config.name}`;
+    }
+
+    if (
+      typeof config.createFromLocation === 'string' &&
+      !config.createFromLocation.startsWith('/') &&
+      !config.createFromLocation.startsWith('~')
+    ) {
+      return config.createFromLocation;
+    }
+
+    return null;
+  }
+
+  private static async hasBundledAsset(config: DatabaseConfig): Promise<boolean> {
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+
+    const assetPath = this.getBundledAssetPath(config);
+    if (!assetPath) {
+      return true;
+    }
+
+    try {
+      return await RNFS.existsAssets(assetPath);
+    } catch (error) {
+      Logger.warn(
+        `[DatabaseInitializer] Unable to verify bundled Lorcana asset at ${assetPath}. Falling back to SQLite open attempt.`,
+        error
+      );
+      return true;
+    }
+  }
+
+  private static async openDatabaseWithFallback(
+    dbType: 'mtg' | 'mtgjson' | 'lorcana',
+    config: DatabaseConfig
+  ): Promise<SQLite.SQLiteDatabase> {
+    if (dbType !== 'lorcana' || config.createFromLocation === undefined) {
+      return SQLite.openDatabase(config);
+    }
+
+    const bundledAssetPath = this.getBundledAssetPath(config);
+    const hasBundledAsset = await this.hasBundledAsset(config);
+    if (!hasBundledAsset) {
+      Logger.warn(
+        `[DatabaseInitializer] Bundled Lorcana database asset ${bundledAssetPath ?? config.name} was not packaged. Falling back to writable database.`,
+      );
+      return SQLite.openDatabase(this.getWritableDatabaseConfig(config));
+    }
+
+    if (bundledAssetPath) {
+      Logger.info(`[DatabaseInitializer] Found bundled Lorcana database asset at ${bundledAssetPath}`);
+    }
+
+    try {
+      Logger.info('[DatabaseInitializer] Attempting to open Lorcana database from bundled app asset');
+      return await SQLite.openDatabase(config);
+    } catch (error) {
+      Logger.warn(
+        '[DatabaseInitializer] Bundled Lorcana database was not available. Falling back to writable empty database.',
+        error
+      );
+      return SQLite.openDatabase(this.getWritableDatabaseConfig(config));
     }
   }
 
@@ -212,11 +290,9 @@ class DatabaseInitializer {
       // Check if tables exist by querying a simple table
       const schemaCheck = await this.checkSchemaExists(db, 'lorcana_cards');
       if (schemaCheck) {
-        Logger.info('[DatabaseInitializer] Lorcana tables already exist, skipping creation');
+        Logger.info('[DatabaseInitializer] Lorcana tables already exist, ensuring bundled/current schema is complete');
         this.databases['lorcana'].schemaInitialized = true;
-        await this.ensureLorcanaIndices(db);
-        await this.ensureLorcanaDecksSchema(db);
-        await this.ensureLorcanaWatchlistSchema(db);
+        await this.createLorcanaTables(db);
         return;
       }
 

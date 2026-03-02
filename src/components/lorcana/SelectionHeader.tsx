@@ -16,6 +16,7 @@ interface SelectionHeaderProps {
     onBulkAdd: () => void;
     onBulkDelete: () => void;
     onCancel: () => void;
+    onBulkBuyList?: () => void;
 }
 
 const SelectionHeader: React.FC<SelectionHeaderProps> = ({
@@ -23,6 +24,7 @@ const SelectionHeader: React.FC<SelectionHeaderProps> = ({
     onBulkAdd,
     onBulkDelete,
     onCancel,
+    onBulkBuyList,
 }) => {
     const { theme } = useTheme();
     const styles = useStyles();
@@ -40,6 +42,15 @@ const SelectionHeader: React.FC<SelectionHeaderProps> = ({
                     <Icon name="plus" size={20} color="#fff" />
                     <Text style={styles.actionButtonText}>Add to Collection</Text>
                 </TouchableOpacity>
+                {onBulkBuyList && (
+                    <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: '#E67E22' }]}
+                        onPress={onBulkBuyList}
+                    >
+                        <Icon name="cart-plus" size={20} color="#fff" />
+                        <Text style={styles.actionButtonText}>Buy List</Text>
+                    </TouchableOpacity>
+                )}
                 <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: theme.error }]}
                     onPress={onBulkDelete}

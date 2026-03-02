@@ -10,25 +10,21 @@ const Icon = MaterialCommunityIcons as unknown as React.ComponentType<{
     name: string;
     size: number;
     color: string;
+    style?: any;
 }>;
 
 interface SortHeaderProps {
     sortBy: SortOption;
     sortDirection: SortDirection;
     onSortChange: (option: SortOption) => void;
-    onFilterPress: () => void;
-    onExportPress?: () => void;
-    showExportButton?: boolean;
     cardCount?: number;
     totalValue?: string;
     showStats?: boolean;
-    viewMode?: 'grid' | 'showcase';
-    onViewModeChange?: (mode: 'grid' | 'showcase') => void;
 }
 
-const sortOptionsConfig: { label: string; value: SortOption }[] = [
-    { label: 'Name', value: 'name' },
-    { label: 'Price', value: 'price' },
+const SORT_OPTIONS: { label: string; value: SortOption }[] = [
+    { label: 'Name',   value: 'name'   },
+    { label: 'Price',  value: 'price'  },
     { label: 'Number', value: 'number' },
 ];
 
@@ -36,14 +32,9 @@ const SortHeader: React.FC<SortHeaderProps> = ({
     sortBy,
     sortDirection,
     onSortChange,
-    onFilterPress,
-    onExportPress,
-    showExportButton,
     cardCount,
     totalValue,
     showStats,
-    viewMode = 'grid',
-    onViewModeChange,
 }) => {
     const styles = useStyles();
     const { theme } = useTheme();
@@ -51,161 +42,140 @@ const SortHeader: React.FC<SortHeaderProps> = ({
     const directionIcon = sortDirection === 'asc' ? 'arrow-up' : 'arrow-down';
 
     return (
-        <View style={styles.header}>
-            <View style={styles.leftControls}>
-                {showStats && (
-                    <View style={styles.statsContainer}>
-                        <Text style={styles.statsText}>{cardCount} cards</Text>
-                        <Text style={[styles.statsText, styles.statsSeparator]}>·</Text>
-                        <Text style={styles.statsText}>${totalValue}</Text>
+        <View style={styles.wrapper}>
+            {/* Stats pill (left) + Sort tabs (right) — single row */}
+            <View style={styles.row}>
+                {showStats ? (
+                    <View style={styles.statsChip}>
+                        <Icon name="cards-outline" size={14} color={theme.textSecondary} />
+                        <Text style={styles.statsCount}>{cardCount}</Text>
+                        <Text style={styles.statsLabel}> cards</Text>
+                        <View style={styles.statsDivider} />
+                        <Icon name="currency-usd" size={14} color={theme.primary} />
+                        <Text style={styles.statsValue}>{totalValue}</Text>
                     </View>
+                ) : (
+                    <View />
                 )}
-                <TouchableOpacity
-                    style={styles.controlButton}
-                    onPress={onFilterPress}
-                >
-                    <Icon name="filter-variant" size={20} color={theme.primary} />
-                    <Text style={styles.buttonText}>Filter</Text>
-                </TouchableOpacity>
-                {showExportButton && onExportPress && (
-                    <TouchableOpacity
-                        style={styles.controlButton}
-                        onPress={onExportPress}
-                    >
-                        <Icon name="export-variant" size={20} color={theme.primary} />
-                        <Text style={styles.buttonText}>Export</Text>
-                    </TouchableOpacity>
-                )}
-                {onViewModeChange && (
-                    <TouchableOpacity
-                        style={[styles.controlButton, styles.viewToggleBtn, viewMode === 'showcase' && styles.viewToggleBtnActive]}
-                        onPress={() => onViewModeChange(viewMode === 'grid' ? 'showcase' : 'grid')}
-                    >
-                        <Icon
-                            name={viewMode === 'showcase' ? 'view-grid' : 'card-text'}
-                            size={20}
-                            color={viewMode === 'showcase' ? theme.card ?? '#fff' : theme.primary}
-                        />
-                        <Text style={[styles.buttonText, viewMode === 'showcase' && styles.viewToggleTextActive]}>
-                            {viewMode === 'showcase' ? 'Grid' : 'Showcase'}
-                        </Text>
-                    </TouchableOpacity>
-                )}
-            </View>
 
-            <View style={styles.sortControlsContainer}>
-                {sortOptionsConfig.map(option => (
-                    <TouchableOpacity
-                        key={option.value}
-                        style={[
-                            styles.sortControlButton,
-                            sortBy === option.value && styles.sortControlButtonActive,
-                        ]}
-                        onPress={() => onSortChange(option.value)}
-                    >
-                        <Text
-                            style={[
-                                styles.sortControlText,
-                                sortBy === option.value && styles.sortControlTextActive,
-                            ]}
-                        >
-                            {option.label}
-                        </Text>
-                        {sortBy === option.value && (
-                            <Icon name={directionIcon} size={16} color={sortBy === option.value ? theme.card : theme.primary} />
-                        )}
-                    </TouchableOpacity>
-                ))}
+                {/* Segmented sort control */}
+                <View style={styles.sortTabs}>
+                    {SORT_OPTIONS.map((opt, i) => {
+                        const isActive = sortBy === opt.value;
+                        return (
+                            <TouchableOpacity
+                                key={opt.value}
+                                style={[
+                                    styles.sortTab,
+                                    i < SORT_OPTIONS.length - 1 && styles.sortTabBorder,
+                                    isActive && styles.sortTabActive,
+                                ]}
+                                onPress={() => onSortChange(opt.value)}
+                                activeOpacity={0.75}
+                            >
+                                <Text style={[styles.sortTabText, isActive && styles.sortTabTextActive]}>
+                                    {opt.label}
+                                </Text>
+                                {isActive && (
+                                    <Icon
+                                        name={directionIcon}
+                                        size={11}
+                                        color="#fff"
+                                    />
+                                )}
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
             </View>
         </View>
     );
 };
 
 const useStyles = () => useThemedStyles((theme: Theme) => ({
-    header: {
+    wrapper: {
+        backgroundColor: theme.surface,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.border,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+    },
+
+    row: {
         flexDirection: 'row' as 'row',
         alignItems: 'center' as 'center',
         justifyContent: 'space-between' as 'space-between',
-        paddingHorizontal: 8,
-        paddingVertical: 6,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.border,
-        backgroundColor: theme.surface,
+        gap: 12,
     },
-    leftControls: {
+
+    // ── Stats pill ──
+    statsChip: {
         flexDirection: 'row' as 'row',
         alignItems: 'center' as 'center',
-        gap: 2,
-    },
-    statsContainer: {
-        flexDirection: 'row' as 'row',
-        alignItems: 'center' as 'center',
-    },
-    statsText: {
-        fontSize: 11,
-        marginHorizontal: 1,
-        color: theme.textSecondary,
-    },
-    statsSeparator: {
-        marginLeft: 3,
-        marginRight: 3,
-        color: theme.textSecondary,
-    },
-    controlButton: {
-        flexDirection: 'column' as 'column',
-        alignItems: 'center' as 'center',
-        paddingVertical: 2,
-        paddingHorizontal: 10,
-        borderRadius: 4,
-        gap: 0,
-        backgroundColor: theme.surface,
-    },
-    buttonText: {
-        fontSize: 8,
-        marginTop: 0,
-        color: theme.primary,
-    },
-    sortControlsContainer: {
-        flexDirection: 'row' as 'row',
-        alignItems: 'center' as 'center',
-        gap: 4,
-        paddingLeft: 14,
-    },
-    sortControlButton: {
-        flexDirection: 'row' as 'row',
-        alignItems: 'center' as 'center',
-        paddingVertical: 6,
-        paddingHorizontal: 8,
-        borderRadius: 4,
-        backgroundColor: theme.surface,
-        borderWidth: 1,
+        gap: 5,
+        backgroundColor: theme.background,
+        borderRadius: 24,
+        paddingHorizontal: 14,
+        paddingVertical: 9,
+        borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.border,
     },
-    sortControlButtonActive: {
-        backgroundColor: theme.primary,
-        borderColor: theme.primary,
-    },
-    sortControlText: {
-        fontSize: 12,
+    statsCount: {
+        fontSize: 15,
+        fontWeight: '700' as '700',
         color: theme.text,
-        marginRight: 4,
+        letterSpacing: -0.3,
     },
-    sortControlTextActive: {
-        color: theme.card,
-        fontWeight: 'bold' as 'bold',
+    statsLabel: {
+        fontSize: 12,
+        fontWeight: '400' as '400',
+        color: theme.textSecondary,
     },
-    viewToggleBtn: {
-        borderRadius: 6,
+    statsDivider: {
+        width: 1,
+        height: 14,
+        backgroundColor: theme.border,
+        marginHorizontal: 3,
+    },
+    statsValue: {
+        fontSize: 15,
+        fontWeight: '800' as '800',
+        color: theme.primary,
+        letterSpacing: -0.3,
+    },
+
+    // ── Sort segmented control ──
+    sortTabs: {
+        flexDirection: 'row' as 'row',
+        borderRadius: 8,
         borderWidth: 1,
         borderColor: theme.border,
+        overflow: 'hidden' as 'hidden',
     },
-    viewToggleBtnActive: {
+    sortTab: {
+        flexDirection: 'row' as 'row',
+        alignItems: 'center' as 'center',
+        justifyContent: 'center' as 'center',
+        paddingVertical: 8,
+        paddingHorizontal: 14,
+        gap: 4,
+    },
+    sortTabBorder: {
+        borderRightWidth: StyleSheet.hairlineWidth,
+        borderRightColor: theme.border,
+    },
+    sortTabActive: {
         backgroundColor: theme.primary,
-        borderColor: theme.primary,
     },
-    viewToggleTextActive: {
-        color: theme.card ?? '#fff',
+    sortTabText: {
+        fontSize: 12,
+        fontWeight: '500' as '500',
+        color: theme.textSecondary,
+    },
+    sortTabTextActive: {
+        color: '#fff',
+        fontWeight: '700' as '700',
     },
 }));
 
-export default SortHeader; 
+export default SortHeader;

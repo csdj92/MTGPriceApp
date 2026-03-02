@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SafeAreaView, StyleSheet, Button, Image, Text } from 'react-native';
+import { View, StyleSheet, Button, Image, Text } from 'react-native';
 import ImageCropPicker from 'react-native-image-crop-picker';
 
 const ManualCaptureScreen: React.FC = () => {
@@ -23,7 +23,7 @@ const ManualCaptureScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <Text style={styles.title}>Manual Image Capture</Text>
       <Button title="Take Picture & Crop" onPress={handleCaptureAndCrop} />
       
@@ -33,7 +33,7 @@ const ManualCaptureScreen: React.FC = () => {
           <Image source={{ uri: croppedImage }} style={styles.previewImage} />
         </>
       )}
-    </SafeAreaView>
+    </View>
   );
 };
 

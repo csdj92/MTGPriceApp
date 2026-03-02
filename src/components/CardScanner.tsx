@@ -9,11 +9,11 @@ import {
   TouchableOpacity,
   Modal,
   ScrollView,
-  SafeAreaView,
   ActivityIndicator,
   FlatList,
   type LayoutChangeEvent,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import LiveOcrPreviewWithOverlay from './LiveOcrPreview';
 import type { OcrResult } from '../types/card';
 import type { LorcanaCard } from '../types/lorcana';
